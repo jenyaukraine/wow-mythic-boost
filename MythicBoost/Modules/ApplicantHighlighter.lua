@@ -121,11 +121,28 @@ local function EnsureFill(frame)
     return fill
 end
 
+-- Справа у строки живут колонки «Ур. пр.» и «Рейтинг», поэтому подпись
+-- ставим в пустоту сразу за именем: там ничего не рисуется, а привязка к
+-- правому краю накрывала рейтинг кандидата.
 local function EnsureLabel(frame)
     if frame.__mbApplicantLabel then return frame.__mbApplicantLabel end
     local label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
-    label:SetJustifyH("RIGHT")
+    -- Надёжнее всего цепляться за иконку роли: она стоит на фиксированном
+    -- месте, и промежуток перед ней всегда пуст. Имя как якорь не годится —
+    -- если оно растянуто на всю ширину строки, подпись уезжает за край.
+    local anchor = frame.RoleIcon or frame.RoleIcon1 or frame.Role
+    if anchor and anchor.GetObjectType then
+        label:SetPoint("RIGHT", anchor, "LEFT", -8, 0)
+        label:SetJustifyH("RIGHT")
+    else
+        local nameField = frame.Name or frame.NameLabel
+        if nameField and nameField.GetObjectType and nameField:GetObjectType() == "FontString" then
+            label:SetPoint("LEFT", nameField, "RIGHT", 8, 0)
+        else
+            label:SetPoint("LEFT", frame, "LEFT", 150, 0)
+        end
+        label:SetJustifyH("LEFT")
+    end
     label:SetShadowColor(0, 0, 0, 1)
     label:SetShadowOffset(1, -1)
     frame.__mbApplicantLabel = label
