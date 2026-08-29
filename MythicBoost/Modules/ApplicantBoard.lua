@@ -11,7 +11,7 @@ local C = UI.colors
 -- экипировка, рейтинг и нужен ли он группе прямо сейчас.
 
 local MAX_ROWS = 14
-local ROW_HEIGHT, ROW_STEP = 34, 38
+local ROW_HEIGHT, ROW_STEP = 52, 56
 
 -- Одна таблица геометрии на заголовки и на строки, чтобы колонки не разъехались.
 local COL = {
@@ -72,6 +72,8 @@ function ApplicantBoard:Collect()
                     itemLevel = UsableNumber(itemLevel) and itemLevel or 0,
                     score = UsableNumber(score) and score or 0,
                     status = selected[applicantID .. ":" .. memberIdx],
+                    dungeons = JP.GroupSearchUI and JP.GroupSearchUI.GetDungeonSummary
+                        and JP.GroupSearchUI:GetDungeonSummary(SafeString(name), classFile) or nil,
                     numMembers = applicant.numMembers or 1,
                 }
             end
@@ -115,10 +117,19 @@ local function CreateRow(parent, index)
     row.accent:SetWidth(3)
 
     row.name = UI.Text(row, "GameFontHighlight", "", C.text)
-    row.name:SetPoint("LEFT", COL.nameLeft, 0)
-    row.name:SetPoint("RIGHT", row, "RIGHT", -COL.contentRight, 0)
+    row.name:SetPoint("TOPLEFT", COL.nameLeft, -9)
+    row.name:SetPoint("TOPRIGHT", row, "TOPRIGHT", -COL.contentRight, -9)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
+
+    -- Вторая строка: ключи кандидата по всем подземельям сезона. Ради неё
+    -- строка и стала двухэтажной — по одному рейтингу не видно, ровный ли
+    -- игрок или вытянул один ключ.
+    row.dungeons = UI.Text(row, "GameFontHighlightSmall", "", C.muted)
+    row.dungeons:SetPoint("BOTTOMLEFT", COL.nameLeft, 9)
+    row.dungeons:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -COL.contentRight, 9)
+    row.dungeons:SetJustifyH("LEFT")
+    row.dungeons:SetWordWrap(false)
 
     row.role = UI.Text(row, "GameFontHighlight", "")
     row.role:SetPoint("RIGHT", -COL.roleRight, 0)
@@ -265,6 +276,7 @@ function ApplicantBoard:Render()
             row.role:SetText(UI.RoleIcon(entry.role, 18))
             row.ilvl:SetText(entry.itemLevel > 0 and ("%.0f"):format(entry.itemLevel) or "—")
             row.rating:SetText(entry.score > 0 and tostring(math.floor(entry.score)) or "—")
+            row.dungeons:SetText(entry.dungeons or "|cff4c545eнет данных Raider.IO|r")
 
             if style then
                 row.accent:SetColorTexture(unpack(style.color))

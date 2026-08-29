@@ -352,6 +352,24 @@ local function RunsByDungeon(runs)
     return mapped
 end
 
+-- Строка «ключи игрока по всем подземельям сезона» одним куском.
+--
+-- Разбор профиля Raider.IO, порядок подземелий и раскраска уже живут здесь,
+-- поэтому таблица кандидатов берёт готовый результат, а не заводит свою
+-- копию той же логики.
+function GroupSearchUI:GetDungeonSummary(fullName, classFilename)
+    local runs = ResolveRaiderRuns(fullName, nil, classFilename)
+    if type(runs) ~= "table" or #runs == 0 then return nil end
+    local mapped = RunsByDungeon(runs)
+    local parts = {}
+    for _, column in ipairs(DungeonColumns()) do
+        local value, timed = RaiderKeyValue(mapped[column.key])
+        local color = timed and "|cff43d17a" or value == "—" and "|cff454b54" or "|cff8a8f98"
+        parts[#parts + 1] = ("|cff5b6470%s|r %s%s|r"):format(column.label, color, value)
+    end
+    return table.concat(parts, "   ")
+end
+
 local function BlizzardRunsByDungeon(scoreInfo, columns)
     local mapped = {}
     for index, entry in ipairs(type(scoreInfo) == "table" and scoreInfo or {}) do
