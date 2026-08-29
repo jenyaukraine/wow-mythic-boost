@@ -104,17 +104,32 @@ local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, s
     tooltip:Show()
 end
 
+-- В Midnight подсказка отдаёт имя и юнит защищёнными значениями. Наш аддон
+-- помечает выполнение как tainted, и после этого любая попытка передать такое
+-- значение в UnitIsPlayer или склеить его в строку бросает ошибку — она
+-- повторялась на каждой подсказке, больше двух тысяч раз за сессию.
+-- Поэтому здесь ничего не предполагаем: непригодное значение просто пропускаем.
+local function IsUsableString(value)
+    return type(value) == "string" and value ~= "" and not issecretvalue(value)
+end
+
 local function AddUnitProfile(tooltip)
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local playerName, unit = tooltip:GetUnit()
-    if not playerName or not unit or not UnitIsPlayer(unit) then return end
+    if not IsUsableString(playerName) or not IsUsableString(unit) then return end
+    if not UnitIsPlayer(unit) then return end
+
     local itemLevel
     if C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel then
         local ok, value = pcall(C_PaperDollInfo.GetInspectItemLevel, unit)
         if ok and IsUsableNumber(value) and value > 0 then itemLevel = value end
     end
+
     local name, realm = UnitFullName(unit)
-    local fullName = name and realm and realm ~= "" and (name .. "-" .. realm) or name or playerName
+    local fullName = playerName
+    if IsUsableString(name) then
+        fullName = IsUsableString(realm) and (name .. "-" .. realm) or name
+    end
     AppendProfile(tooltip, RaiderIO.GetProfile(unit), itemLevel, "unit:" .. playerName, fullName, true)
 end
 
@@ -126,7 +141,7 @@ local function AddApplicantProfile(tooltip)
     local applicantID = owner.applicantID or (parent and parent.applicantID)
     if not applicantID then return end
     local fullName, _, _, _, itemLevel = C_LFGList.GetApplicantMemberInfo(applicantID, owner.memberIdx)
-    if not fullName then return end
+    if not IsUsableString(fullName) then return end
     AppendProfile(tooltip, RaiderIO.GetProfile(fullName), itemLevel, "lfg:" .. applicantID .. ":" .. owner.memberIdx, fullName)
 end
 
@@ -135,7 +150,7 @@ local function AddGenericRaiderIOProfile(tooltip)
     local tooltipName = tooltip:GetName()
     local firstLine = tooltipName and _G[tooltipName .. "TextLeft1"]
     local fullName = firstLine and firstLine:GetText()
-    if type(fullName) ~= "string" then return end
+    if not IsUsableString(fullName) then return end
 
     -- Raider.IO character tooltips begin with Name-Realm. Strip color codes and
     -- ignore every other kind of tooltip by requiring a valid local profile.

@@ -19,7 +19,11 @@ local function OpenOurs()
     local welcome = Welcome()
     if not welcome then return end
     if not welcome.frame then welcome:Create() end
-    if welcome.frame then welcome.frame:Show() end
+    if welcome.frame then
+        local listed = C_LFGList.GetActiveEntryInfo and C_LFGList.GetActiveEntryInfo()
+        if listed and welcome.pages and welcome.pages.applicants then welcome:SwitchPage("applicants") end
+        welcome.frame:Show()
+    end
 end
 
 local function OpenBlizzard()

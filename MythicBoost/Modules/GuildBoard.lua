@@ -315,12 +315,20 @@ function GuildBoard:Create()
     self.events = CreateFrame("Frame")
     self.events:RegisterEvent("GUILD_ROSTER_UPDATE")
     self.events:RegisterEvent("PLAYER_GUILD_UPDATE")
-    self.events:SetScript("OnEvent", function()
-        self.cache = nil
-        local welcome = JP.modules.Welcome
-        if welcome and welcome.currentPage == "guild" and welcome.frame and welcome.frame:IsShown() then
-            self:Refresh()
-        end
+    -- GUILD_ROSTER_UPDATE прилетает пачками, и каждое событие обнуляло кэш,
+    -- сводя на нет минутную выдержку: пересчёт рейтингов по всей гильдии
+    -- запускался заново. Склеиваем события в одно обновление.
+    self.events:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_GUILD_UPDATE" then self.cache = nil end
+        if self.updateQueued then return end
+        self.updateQueued = true
+        C_Timer.After(1, function()
+            self.updateQueued = nil
+            local welcome = JP.modules.Welcome
+            if welcome and welcome.currentPage == "guild" and welcome.frame and welcome.frame:IsShown() then
+                self:Refresh()
+            end
+        end)
     end)
 end
 

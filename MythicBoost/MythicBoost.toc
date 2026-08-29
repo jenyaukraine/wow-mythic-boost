@@ -3,7 +3,7 @@
 ## Notes: Подбор групп Mythic+, анализ игроков и прогресс сезона для Midnight
 ## Notes-enUS: Mythic+ group finder, player analysis and progression dashboard for Midnight
 ## Author: Jenya
-## Version: 1.1.23
+## Version: 1.1.26
 ## SavedVariables: MythicBoostDB
 ## OptionalDeps: RaiderIO, RaiderIO_DB_EU_M
 ## Category-ru: Подземелья

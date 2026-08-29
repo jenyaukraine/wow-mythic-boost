@@ -126,7 +126,7 @@ function Welcome:Create()
     self.tabs = {}
     local order = {
         { key = "groups", label = "ПОДБОР ГРУПП" },
-        { key = "applicants", label = "КАНДИДАТЫ" },
+        { key = "applicants", label = "ПАТИ / КАНДИДАТЫ" },
         { key = "guild", label = "РЕЙТИНГ ГИЛЬДИИ" },
     }
     for index, item in ipairs(order) do
@@ -292,7 +292,15 @@ end
 
 function Welcome:Toggle()
     if not self.frame then self:Create() end
-    if self.frame:IsShown() then self.frame:Hide() else self.frame:Show() end
+    if self.frame:IsShown() then
+        self.frame:Hide()
+    else
+        -- Если своё объявление уже создано, человеку сейчас важнее состав
+        -- пати и заявки, а не каталог чужих групп.
+        local listed = C_LFGList.GetActiveEntryInfo and C_LFGList.GetActiveEntryInfo()
+        if listed and self.pages and self.pages.applicants then self:SwitchPage("applicants") end
+        self.frame:Show()
+    end
 end
 
 function Welcome:Enable() end

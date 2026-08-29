@@ -194,13 +194,20 @@ function LootAdvisor:Create()
     self.events:RegisterEvent("PLAYER_ENTERING_WORLD")
     self.events:SetScript("OnEvent", function(_, event, unit)
         if event == "EJ_LOOT_DATA_RECIEVED" or event == "GET_ITEM_INFO_RECEIVED" then
+            -- Данные о предметах приходят пачками, и каждый ответ обнулял кэш,
+            -- вызывая новый полный обход журнала. Если после нескольких попыток
+            -- таблица так и не собралась, перестаём гоняться за ней: пересчёт
+            -- всё равно случится при смене экипировки или специализации.
             if not self.cache.pending or self.refreshQueued then return end
+            self.pendingRetries = (self.pendingRetries or 0) + 1
+            if self.pendingRetries > 6 then return end
             self.refreshQueued = true
             C_Timer.After(.25, function()
                 self.refreshQueued = nil
                 self:Invalidate()
             end)
         elseif event ~= "PLAYER_SPECIALIZATION_CHANGED" or unit == "player" then
+            self.pendingRetries = 0
             self:Invalidate()
         end
     end)

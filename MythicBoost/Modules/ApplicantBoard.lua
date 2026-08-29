@@ -12,6 +12,8 @@ local C = UI.colors
 
 local MAX_ROWS = 14
 local ROW_HEIGHT, ROW_STEP = 52, 56
+local PARTY_ROWS, PARTY_ROW_HEIGHT = 5, 26
+local PARTY_TOP, PARTY_SECTION_BOTTOM = -52, -190
 
 -- Одна таблица геометрии на заголовки и на строки, чтобы колонки не разъехались.
 local COL = {
@@ -183,8 +185,72 @@ function ApplicantBoard:Build(welcome, page)
     self.page = page
     self.welcome = welcome
 
+    local partyTitle = UI.Text(page, "GameFontNormalSmall", "ТВОЯ ПАТИ", C.accent)
+    partyTitle:SetPoint("TOPLEFT", 16, -14)
+
+    self.partyPower = UI.Text(page, "GameFontHighlightSmall", "", C.muted)
+    self.partyPower:SetPoint("LEFT", partyTitle, "RIGHT", 14, 0)
+    self.partyPower:SetJustifyH("LEFT")
+
+    local partyHeaders = {
+        { text = "ИГРОК", x = 16, width = 210, justify = "LEFT" },
+        { text = "РОЛЬ", x = 230, width = 54 },
+        { text = "RIO", x = 290, width = 72 },
+    }
+    for _, data in ipairs(partyHeaders) do
+        local label = UI.Text(page, "GameFontNormalSmall", data.text, C.faint)
+        label:SetPoint("TOPLEFT", data.x, -34)
+        label:SetWidth(data.width)
+        label:SetJustifyH(data.justify or "CENTER")
+    end
+
+    self.partyDungeonHeaders = {}
+    for index = 1, 8 do
+        local label = UI.Text(page, "GameFontNormalSmall", "", C.accent)
+        label:SetPoint("TOPLEFT", 374 + (index - 1) * 58, -34)
+        label:SetWidth(54)
+        label:SetJustifyH("CENTER")
+        self.partyDungeonHeaders[index] = label
+    end
+
+    self.partyRows = {}
+    for index = 1, PARTY_ROWS do
+        local row = CreateFrame("Frame", nil, page, "BackdropTemplate")
+        row:SetPoint("TOPLEFT", 12, PARTY_TOP - (index - 1) * PARTY_ROW_HEIGHT)
+        row:SetPoint("TOPRIGHT", -12, PARTY_TOP - (index - 1) * PARTY_ROW_HEIGHT)
+        row:SetHeight(PARTY_ROW_HEIGHT - 2)
+        UI.Backdrop(row, index % 2 == 0 and C.rowAlt or C.row, C.lineSoft)
+
+        row.name = UI.Text(row, "GameFontHighlightSmall", "", C.text)
+        row.name:SetPoint("LEFT", 6, 0)
+        row.name:SetWidth(208)
+        row.name:SetJustifyH("LEFT")
+        row.name:SetWordWrap(false)
+        row.role = UI.Text(row, "GameFontHighlightSmall", "")
+        row.role:SetPoint("LEFT", 218, 0)
+        row.role:SetWidth(54)
+        row.role:SetJustifyH("CENTER")
+        row.score = UI.Text(row, "GameFontNormalSmall", "—", C.muted)
+        row.score:SetPoint("LEFT", 278, 0)
+        row.score:SetWidth(72)
+        row.score:SetJustifyH("CENTER")
+        row.cells = {}
+        for cellIndex = 1, 8 do
+            local cell = UI.Text(row, "GameFontHighlightSmall", "—", C.muted)
+            cell:SetPoint("LEFT", 362 + (cellIndex - 1) * 58, 0)
+            cell:SetWidth(54)
+            cell:SetJustifyH("CENTER")
+            row.cells[cellIndex] = cell
+        end
+        self.partyRows[index] = row
+    end
+
+    local partyDivider = UI.Line(page, C.accentDim)
+    partyDivider:SetPoint("TOPLEFT", 12, PARTY_SECTION_BOTTOM)
+    partyDivider:SetPoint("TOPRIGHT", -12, PARTY_SECTION_BOTTOM)
+
     local title = UI.Text(page, "GameFontNormalSmall", "КАНДИДАТЫ", C.muted)
-    title:SetPoint("TOPLEFT", 16, -14)
+    title:SetPoint("TOPLEFT", 16, PARTY_SECTION_BOTTOM - 16)
 
     self.count = UI.Text(page, "GameFontHighlightSmall", "", C.accent)
     self.count:SetPoint("LEFT", title, "RIGHT", 10, 0)
@@ -194,17 +260,17 @@ function ApplicantBoard:Build(welcome, page)
     self.needs:SetJustifyH("LEFT")
 
     local divider = UI.Line(page, C.lineSoft)
-    divider:SetPoint("TOPLEFT", 12, -36)
-    divider:SetPoint("TOPRIGHT", -12, -36)
+    divider:SetPoint("TOPLEFT", 12, PARTY_SECTION_BOTTOM - 38)
+    divider:SetPoint("TOPRIGHT", -12, PARTY_SECTION_BOTTOM - 38)
 
     local function Header(text, width, right)
         local label = UI.Text(page, "GameFontNormalSmall", text, C.faint)
-        label:SetPoint("TOPRIGHT", -right, -48)
+        label:SetPoint("TOPRIGHT", -right, PARTY_SECTION_BOTTOM - 50)
         label:SetWidth(width)
         label:SetJustifyH("CENTER")
     end
     local nameHeader = UI.Text(page, "GameFontNormalSmall", "ИГРОК", C.faint)
-    nameHeader:SetPoint("TOPLEFT", COL.nameLeft, -48)
+    nameHeader:SetPoint("TOPLEFT", COL.nameLeft, PARTY_SECTION_BOTTOM - 50)
     nameHeader:SetJustifyH("LEFT")
     Header("РОЛЬ", COL.roleWidth, COL.roleRight)
     Header("ЭКИПИРОВКА", COL.ilvlWidth + 40, COL.ilvlRight - 20)
@@ -214,13 +280,13 @@ function ApplicantBoard:Build(welcome, page)
     self.rows = {}
     for index = 1, MAX_ROWS do
         local row = CreateRow(page, index)
-        row:SetPoint("TOPLEFT", 12, -64 - (index - 1) * ROW_STEP)
-        row:SetPoint("TOPRIGHT", -18, -64 - (index - 1) * ROW_STEP)
+        row:SetPoint("TOPLEFT", 12, PARTY_SECTION_BOTTOM - 66 - (index - 1) * ROW_STEP)
+        row:SetPoint("TOPRIGHT", -18, PARTY_SECTION_BOTTOM - 66 - (index - 1) * ROW_STEP)
         self.rows[index] = row
     end
 
     self.scrollBar = UI.ScrollBar(page)
-    self.scrollBar:SetPoint("TOPRIGHT", -6, -64)
+    self.scrollBar:SetPoint("TOPRIGHT", -6, PARTY_SECTION_BOTTOM - 66)
     self.scrollBar:SetPoint("BOTTOMRIGHT", -6, 12)
     self.scrollBar:SetScript("OnValueChanged", function(_, value)
         local offset = math.floor(value + .5)
@@ -243,8 +309,8 @@ function ApplicantBoard:Build(welcome, page)
     end
 
     self.message = UI.Text(page, "GameFontHighlight", "", C.muted)
-    self.message:SetPoint("TOPLEFT", 24, -120)
-    self.message:SetPoint("TOPRIGHT", -24, -120)
+    self.message:SetPoint("TOPLEFT", 24, PARTY_SECTION_BOTTOM - 120)
+    self.message:SetPoint("TOPRIGHT", -24, PARTY_SECTION_BOTTOM - 120)
     self.message:SetJustifyH("CENTER")
     self.message:SetSpacing(6)
 
@@ -255,12 +321,82 @@ function ApplicantBoard:Layout()
     if not self.page then return end
     local height = self.page:GetHeight()
     if height < 100 then return end
-    local visible = math.max(2, math.min(MAX_ROWS, math.floor((height - 72) / ROW_STEP)))
+    local visible = math.max(2, math.min(MAX_ROWS, math.floor((height + PARTY_SECTION_BOTTOM - 72) / ROW_STEP)))
     self.visibleRows = visible
     for index, row in ipairs(self.rows or {}) do
         row.layoutVisible = index <= visible
         if not row.layoutVisible then row:Hide() end
     end
+end
+
+local function UnitRole(unit)
+    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit)
+    if role == "NONE" or not role then
+        if unit == "player" then
+            local spec = GetSpecialization and GetSpecialization()
+            role = spec and GetSpecializationRole and GetSpecializationRole(spec) or nil
+        end
+    end
+    if role == "TANK" or role == "HEALER" or role == "DAMAGER" then return role end
+end
+
+function ApplicantBoard:RefreshParty()
+    if not self.partyRows then return end
+    local ownKeyLevel = C_MythicPlus and C_MythicPlus.GetOwnedKeystoneLevel
+        and tonumber(C_MythicPlus.GetOwnedKeystoneLevel()) or 0
+    local units = { "player" }
+    for index = 1, 4 do
+        local unit = "party" .. index
+        if UnitExists(unit) then units[#units + 1] = unit end
+    end
+
+    local columns = JP.GroupSearchUI:GetPartyDungeonColumns()
+    for index, header in ipairs(self.partyDungeonHeaders) do
+        header:SetText(columns[index] and columns[index].label or "")
+    end
+
+    local total, known = 0, 0
+    for index, row in ipairs(self.partyRows) do
+        local unit = units[index]
+        if unit then
+            local name = UnitName(unit) or "Игрок"
+            local _, classFilename = UnitClass(unit)
+            local profile = JP.GroupSearchUI:GetPartyMemberProfile(unit) or { score = 0, cells = {} }
+            local score = tonumber(profile.score) or 0
+            if score > 0 then total, known = total + score, known + 1 end
+
+            row.name:SetText(('%s  %s%s'):format(
+                UI.ClassIcon(classFilename, 16),
+                name,
+                UnitIsGroupLeader(unit) and "  |cffffb93d★|r" or ""))
+            row.name:SetTextColor(UI.ClassColor(classFilename))
+            row.role:SetText(UI.RoleIcon(UnitRole(unit), 16))
+            row.score:SetText(score > 0 and tostring(math.floor(score + .5)) or "—")
+            if score > 0 then
+                local code = JP.GroupSearchUI:GetPartyRatingColor(score)
+                row.score:SetTextColor(tonumber(code:sub(1, 2), 16) / 255, tonumber(code:sub(3, 4), 16) / 255, tonumber(code:sub(5, 6), 16) / 255)
+            else
+                row.score:SetTextColor(UI.Unpack(C.muted))
+            end
+            for cellIndex, cell in ipairs(row.cells) do
+                local data = profile.cells and profile.cells[cellIndex]
+                cell:SetText(data and data.value or "—")
+                local belowOwnKey = ownKeyLevel > 0 and data and (tonumber(data.level) or 0) > 0
+                    and data.level < ownKeyLevel
+                local color = belowOwnKey and JP.GroupSearchUI:GetBelowKeyColor()
+                    or JP.GroupSearchUI:GetRunGradeColor(data and data.grade)
+                cell:SetTextColor(color[1], color[2], color[3], 1)
+            end
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    local members = math.max(1, #units)
+    local average = total / members
+    self.partyPower:SetText(("|cff8a939fучастников|r %d   |cff8a939fсумма RIO|r %d   |cff%sсредний %d|r   |cff8a939fнайдено|r %d/%d"):format(
+        members, math.floor(total + .5), JP.GroupSearchUI:GetPartyRatingColor(average), math.floor(average + .5), known, members))
 end
 
 function ApplicantBoard:Render()
@@ -304,6 +440,7 @@ function ApplicantBoard:Refresh()
     if not self.page then return end
     self:Layout()
 
+    self:RefreshParty()
     local entries, missing = self:Collect()
     self.entries = entries
 

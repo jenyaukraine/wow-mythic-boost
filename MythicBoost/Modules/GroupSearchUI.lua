@@ -284,8 +284,14 @@ function GroupSearchUI:EnrichPartyRatings(matches)
     end
 
     table.sort(matches, function(a, b)
+        -- Более собранная группа выше: в ней меньше ожидания и меньше риска,
+        -- что хороший лидер исчезнет, пока добираются остальные роли.
+        local membersA, membersB = a.partyScoreMembers or a.members or 0, b.partyScoreMembers or b.members or 0
+        if membersA ~= membersB then return membersA > membersB end
         local averageA, averageB = a.partyScoreAverage or 0, b.partyScoreAverage or 0
         if averageA ~= averageB then return averageA > averageB end
+        local levelA, levelB = a.targetLevel or a.keyLevel or 0, b.targetLevel or b.keyLevel or 0
+        if levelA ~= levelB then return levelA > levelB end
         if (a.partyScoreKnown or 0) ~= (b.partyScoreKnown or 0) then
             return (a.partyScoreKnown or 0) > (b.partyScoreKnown or 0)
         end
@@ -311,6 +317,12 @@ local RUN_GRADE_COLOR = {
     plusTwo = { .30, .92, .56 },
     plusThree = { .70, .36, 1 },
 }
+
+local BELOW_KEY_COLOR = { 1, .24, .30 }
+
+local function RunLevel(run)
+    return tonumber(run and (run.bestRunLevel or run.level)) or 0
+end
 
 local function LeaderKeyValue(entry)
     return TimedValue(entry and entry.bestRunLevel, entry and entry.bestLevelIncrement, entry and entry.finishedSuccess)
@@ -368,6 +380,54 @@ function GroupSearchUI:GetDungeonSummary(fullName, classFilename)
         parts[#parts + 1] = ("|cff5b6470%s|r %s%s|r"):format(column.label, color, value)
     end
     return table.concat(parts, "   ")
+end
+
+-- Данные уже собранной пати для отдельной таблицы на странице кандидатов.
+-- Для unit-token Raider.IO сам знает точный realm, поэтому здесь не нужен
+-- приблизительный перебор одноимённых персонажей из результатов LFG.
+function GroupSearchUI:GetPartyMemberProfile(unit)
+    if type(unit) ~= "string" or not UnitExists(unit) then return nil end
+
+    local profile
+    if RaiderIO and type(RaiderIO.GetProfile) == "function" then
+        local ok, value = pcall(RaiderIO.GetProfile, unit)
+        if ok then profile = value end
+    end
+    if not profile then
+        local name, realm = UnitFullName(unit)
+        local _, classFilename = UnitClass(unit)
+        if name then profile = ProfileForName(realm and realm ~= "" and (name .. "-" .. realm) or name, classFilename) end
+    end
+
+    local runs = profile and profile.mythicKeystoneProfile and profile.mythicKeystoneProfile.sortedDungeons
+    local mapped = RunsByDungeon(runs)
+    local cells = {}
+    for index, column in ipairs(DungeonColumns()) do
+        local run = mapped[column.key]
+        local value, grade = RaiderKeyValue(run)
+        cells[index] = { value = value, grade = grade, level = RunLevel(run), label = column.label }
+    end
+    return {
+        score = ProfileScore(profile) or 0,
+        known = profile ~= nil,
+        cells = cells,
+    }
+end
+
+function GroupSearchUI:GetPartyDungeonColumns()
+    return DungeonColumns()
+end
+
+function GroupSearchUI:GetPartyRatingColor(value)
+    return PartyRatingColorCode(value)
+end
+
+function GroupSearchUI:GetRunGradeColor(grade)
+    return RUN_GRADE_COLOR[grade] or RUN_GRADE_COLOR.missing
+end
+
+function GroupSearchUI:GetBelowKeyColor()
+    return BELOW_KEY_COLOR
 end
 
 local function BlizzardRunsByDungeon(scoreInfo, columns)
@@ -482,6 +542,23 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
     local leaderName = SafeString(info.leaderName)
     tooltip.title:SetText(SafeString(info.name) or dungeonName or "Группа")
     local match = row and row.match
+    local listingKeyLevel = tonumber(match and (match.keyLevel or match.targetLevel))
+    if not listingKeyLevel then
+        -- На штатной строке Blizzard у нас нет match из AutoMatch, поэтому
+        -- достаём тот же точный +N из названия/описания объявления локально.
+        local function ParseListingLevel(text)
+            text = SafeString(text)
+            if not text then return end
+            text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            local raw = text:match("%+%s*(%d%d?)")
+                or text:match("＋%s*(%d%d?)")
+                or text:match("﹢%s*(%d%d?)")
+                or text:match("^%s*(%d%d?)%f[%D]")
+            local level = tonumber(raw)
+            if level and level >= 2 and level <= 40 then return level end
+        end
+        listingKeyLevel = ParseListingLevel(info.name) or ParseListingLevel(info.comment)
+    end
     local ratingText
     if match and match.partyScoreAverage then
         ratingText = ("средний RIO %d · найдено %d/%d"):format(
@@ -520,7 +597,10 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
                 if run and run.bestRunLevel then value, grade = LeaderKeyValue(run) else value, grade = RaiderKeyValue(run) end
                 local cell = line.cells[columnIndex]
                 cell:SetText(value)
-                local color = RUN_GRADE_COLOR[grade] or RUN_GRADE_COLOR.missing
+                local runLevel = RunLevel(run)
+                local color = listingKeyLevel and runLevel > 0 and runLevel < listingKeyLevel
+                    and BELOW_KEY_COLOR
+                    or RUN_GRADE_COLOR[grade] or RUN_GRADE_COLOR.missing
                 cell:SetTextColor(color[1], color[2], color[3], 1)
             end
             line:Show()
