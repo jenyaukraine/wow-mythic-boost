@@ -198,27 +198,41 @@ local function HookFriendsTooltip(module)
     module.friendsHooked = true
 end
 
+-- LFGListUtil_SetSearchEntryTooltip живёт в Blizzard_GroupFinder и на момент
+-- входа в игру ещё не существует. Слепой hooksecurefunc по имени падал прямо
+-- здесь и обрывал Create: подсказка по своим ключам не ставилась вовсе, а
+-- повторный /mb reload вешал дубликаты уже установленных хуков, потому что
+-- registered так и оставался false.
+local function HookSearchEntryTooltip(module)
+    if module.searchHooked or type(LFGListUtil_SetSearchEntryTooltip) ~= "function" then return end
+    hooksecurefunc("LFGListUtil_SetSearchEntryTooltip", AddSearchResultProfile)
+    module.searchHooked = true
+end
+
 function PlayerTooltip:Create()
     if self.registered then return end
+    self.registered = true
+
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, AddUnitProfile)
     GameTooltip:HookScript("OnShow", AddApplicantProfile)
     GameTooltip:HookScript("OnShow", AddGenericRaiderIOProfile)
-    hooksecurefunc("LFGListUtil_SetSearchEntryTooltip", AddSearchResultProfile)
     GameTooltip:HookScript("OnTooltipCleared", function(tooltip) tooltip.__jpDungeonKey = nil end)
     GameTooltip:HookScript("OnHide", function()
         if JP.GroupSearchUI and JP.GroupSearchUI.HideBlizzardResultTooltip then
             JP.GroupSearchUI:HideBlizzardResultTooltip()
         end
     end)
+
+    HookSearchEntryTooltip(self)
     HookFriendsTooltip(self)
-    if not self.friendsHooked then
-        self.friendLoader = CreateFrame("Frame")
-        self.friendLoader:RegisterEvent("ADDON_LOADED")
-        self.friendLoader:SetScript("OnEvent", function(_, _, addonName)
+    if not self.searchHooked or not self.friendsHooked then
+        self.loader = CreateFrame("Frame")
+        self.loader:RegisterEvent("ADDON_LOADED")
+        self.loader:SetScript("OnEvent", function(_, _, addonName)
+            if addonName == "Blizzard_GroupFinder" then HookSearchEntryTooltip(self) end
             if addonName == "Blizzard_FriendsFrame" then HookFriendsTooltip(self) end
         end)
     end
-    self.registered = true
 end
 
 function PlayerTooltip:Enable() end

@@ -171,10 +171,19 @@ function Welcome:Create()
     end
     self.maximizeButton:SetScript("OnClick", function() SetMaximized(not frame.maximized, false) end)
 
+    -- OnSizeChanged приходит на каждом кадре перетаскивания угла. Полная
+    -- пересборка раскладки и списка групп на каждый кадр давала рывки,
+    -- поэтому склеиваем вызовы в один.
+    local layoutQueued = false
     frame:SetScript("OnSizeChanged", function()
-        JP.GroupSearchUI:Layout(self)
-        JP.GuildBoard:Layout()
-        SaveWindow(frame)
+        if layoutQueued then return end
+        layoutQueued = true
+        C_Timer.After(.05, function()
+            layoutQueued = false
+            JP.GroupSearchUI:Layout(self)
+            JP.GuildBoard:Layout()
+            SaveWindow(frame)
+        end)
     end)
     frame:SetScript("OnShow", function() self:Refresh() end)
     frame:SetScript("OnHide", function()

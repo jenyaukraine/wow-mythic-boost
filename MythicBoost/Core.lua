@@ -85,7 +85,24 @@ function JP:GetBestLevel(mapID, fallback)
     return best
 end
 
+-- Рекорды копятся в базе и сами по себе не устаревают. При смене сезона все
+-- результаты обнуляются на стороне игры, а у нас оставались прошлогодние —
+-- и режим «только повышающие рейтинг» переставал находить хоть что-то.
+local function DropStaleSeason()
+    if not C_MythicPlus or type(C_MythicPlus.GetCurrentSeason) ~= "function" then return end
+    local ok, season = pcall(C_MythicPlus.GetCurrentSeason)
+    if not ok or not UsableNumber(season) or season <= 0 then return end
+    if MythicBoostDB.localBestsSeason ~= season then
+        if MythicBoostDB.localBestsSeason ~= nil then
+            wipe(MythicBoostDB.localBests)
+            JP:Print("Начался новый сезон — личные рекорды подземелий сброшены.")
+        end
+        MythicBoostDB.localBestsSeason = season
+    end
+end
+
 function JP:RefreshLocalBests(requestInfo)
+    DropStaleSeason()
     if requestInfo and C_MythicPlus and C_MythicPlus.RequestMapInfo then C_MythicPlus.RequestMapInfo() end
     for _, mapID in ipairs(C_ChallengeMode.GetMapTable and C_ChallengeMode.GetMapTable() or {}) do
         local best = ApiBestLevel(mapID)

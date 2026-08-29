@@ -24,8 +24,6 @@ local ROW_HEIGHT, ROW_STEP = 62, 68
 local CARD_HEIGHT, CARD_GAP = 84, 8
 local CARDS_HEIGHT = 30 + CARD_HEIGHT * 2 + CARD_GAP + 10
 local FILTERS_WIDTH = 238
-local APPLICATION_CANCEL_HINT = 60
-
 -- Эти функции используются серверным фильтром, который объявлен раньше
 -- блока карточек. Без forward declaration Lua искал глобальные функции и
 -- запрос падал уже после Disable() кнопки, оставляя вечное «Поиск...».
@@ -188,21 +186,30 @@ local function ResolveRaiderProfile(name, leaderName, classFilename)
     -- Raider.IO знает профиль только по паре name+realm, поэтому после быстрых
     -- догадок перебираем локальный EU-индекс. При нескольких совпадениях ничего
     -- не подставляем: чужой одноимённый персонаж хуже честного прочерка.
+    local nearCount = #realms
     for _, realm in ipairs(JP.RaiderIORealmsEU or {}) do AddRealm(realm) end
 
-    local found, hits, bestRank = nil, 0, -1
-    for _, realm in ipairs(realms) do
-        local profile = ProfileForName(name .. "-" .. realm, classFilename)
-        if profile then
-            hits = hits + 1
-            local keystone = profile.mythicKeystoneProfile
-            local runs = keystone and keystone.sortedDungeons
-            local score = ProfileScore(profile) or 0
-            local rank = RunsRank(runs)
-            rank = score * 10000 + rank
-            if rank > bestRank then found, bestRank = profile, rank end
+    -- Сначала связанные реалмы, и только если там пусто — весь EU-индекс.
+    -- Раньше перебор шёл по всем 267 записям без остановки на каждого
+    -- участника каждой группы: на сотне объявлений это сотни тысяч обращений
+    -- к Raider.IO в одном кадре, и клиент заметно подвисал при обновлении.
+    local function ScanRealms(from, to)
+        local best, count, bestRank = nil, 0, -1
+        for index = from, to do
+            local profile = ProfileForName(name .. "-" .. realms[index], classFilename)
+            if profile then
+                count = count + 1
+                local keystone = profile.mythicKeystoneProfile
+                local runs = keystone and keystone.sortedDungeons
+                local rank = (ProfileScore(profile) or 0) * 10000 + RunsRank(runs)
+                if rank > bestRank then best, bestRank = profile, rank end
+            end
         end
+        return best, count
     end
+
+    local found, hits = ScanRealms(1, nearCount)
+    if hits == 0 then found, hits = ScanRealms(nearCount + 1, #realms) end
     -- Blizzard скрывает реалм обычных участников. Если одноимённых профилей
     -- несколько, берём наиболее актуальный M+ профиль того же класса. Это
     -- полезнее вечных прочерков и соответствует приблизительному fallback,
@@ -630,7 +637,9 @@ local function FinishBlizzardSearch(welcome, token, message)
     GroupSearchUI.batchMatches = nil
     GroupSearchUI.batchRejected = nil
     GroupSearchUI.searchQueue = nil
-    GroupSearchUI:ClearProfileCache()
+    -- Кэш профилей здесь НЕ чистим: сразу за этим идёт перерисовка, которая
+    -- его и наполняет, и сброс заставлял платить полную цену заново.
+    -- Актуальность обеспечивает сброс в начале нового поиска.
     JP:RequestRefresh(.1)
 end
 
@@ -806,6 +815,14 @@ function GroupSearchUI:RunDirectSearch(welcome, token)
     -- подземелий. Благодаря этому стандартное окно (если оно открыто) тоже
     -- отображает тот же whitelist, а не старую смешанную выдачу.
     if type(C_LFGList.SaveAdvancedFilter) == "function" then
+        -- Мы перезаписываем настройку стандартного окна, поэтому исходную
+        -- сохраняем один раз: без этого /mb restorefilter вернуть уже нечего.
+        if not MythicBoostDB.blizzardFilterBackup and type(C_LFGList.GetAdvancedFilter) == "function" then
+            local okBackup, previous = pcall(C_LFGList.GetAdvancedFilter)
+            if okBackup and type(previous) == "table" and CopyTable then
+                MythicBoostDB.blizzardFilterBackup = CopyTable(previous)
+            end
+        end
         local saved = pcall(C_LFGList.SaveAdvancedFilter, advancedFilter)
         if not saved then
             FinishBlizzardSearch(welcome, token, "Blizzard не принял фильтр подземелий.")
@@ -871,6 +888,9 @@ function GroupSearchUI:RequestBlizzardSearch(welcome)
     self.searchToken = (self.searchToken or 0) + 1
     local token = self.searchToken
     self.searchPending = true
+    -- Сбрасываем профили в начале поиска, а не в конце: к моменту отрисовки
+    -- кэш должен уже наполняться, иначе перебор реалмов идёт дважды.
+    self:ClearProfileCache()
     -- Серверный перебор строк "+11", "+12" запрещён защищённым SearchBox.
     -- Один широкий запрос не дублирует те же 100 результатов и не ловит taint.
     self.searchQueue = { false }
@@ -1304,11 +1324,17 @@ function GroupSearchUI:UpdateApplicationButton(button)
     end
 
     if listed or started then
-        local left = math.max(0, APPLICATION_CANCEL_HINT - math.floor(GetTime() - (started or GetTime())))
-        button:SetText(left > 0 and ("Отмена %dс"):format(left) or "Отменить")
+        -- CancelApplication разрешён только из hardware event. Не изображаем
+        -- ложную автоматическую отмену таймером: кнопка доступна сразу и
+        -- каждый её клик напрямую отменяет именно эту заявку.
+        button:SetText("Отменить")
+        button:Enable()
+        button:SetAlpha(1)
         button.applicationActive = true
     else
         button:SetText("Заявка")
+        button:Enable()
+        button:SetAlpha(1)
         button.applicationActive = false
     end
 end
@@ -1618,7 +1644,12 @@ local function BuildFilterPanel(welcome, body)
     SectionLabel(panel, "ЛИДЕР", y); y = y - 22
     NumberField(panel, welcome, "Рейтинг от", "scoreMin", 0, y); y = y - 24
     NumberField(panel, welcome, "Рейтинг до", "scoreMax", "", y); y = y - 24
-    NumberField(panel, welcome, "Ключей +10 от", "runsMin", MythicBoostDB.minimumKeystoneRuns or 20, y); y = y - 30
+    -- Счётчик ключей лидера берётся только из Raider.IO. Без него любой порог
+    -- выше нуля отсекает вообще все группы, поэтому не ставим эту ловушку по
+    -- умолчанию.
+    local defaultRuns = MythicBoostDB.minimumKeystoneRuns or 20
+    if not (RaiderIO and type(RaiderIO.GetProfile) == "function") then defaultRuns = 0 end
+    NumberField(panel, welcome, "Ключей +10 от", "runsMin", defaultRuns, y); y = y - 30
 
     SectionLabel(panel, "ОТБОР", y); y = y - 22
     welcome.tank = UI.CheckBox(panel, "Танк уже в группе", MythicBoostDB.autoMatch.requireTank ~= false,

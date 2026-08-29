@@ -2,6 +2,11 @@ local _, JP = ...
 local LootAdvisor = { cache = {} }
 
 local PREVIEW_KEY_LEVEL = 10
+-- Encounter Journal возвращает для preview Mythic+ ссылку на базовый шаблон
+-- предмета. В Midnight её GetDetailedItemLevelInfo может быть равен 63, хотя
+-- награда за окончание +10 имеет 311-й уровень. Поэтому ссылку используем для
+-- имени, иконки и слота, а сравниваем с реальным уровнем end-of-run награды.
+local PREVIEW_DROP_ITEM_LEVEL = 311
 local SLOT_IDS = {
     [0] = {1}, [1] = {2}, [2] = {3}, [3] = {15}, [4] = {5},
     [5] = {9}, [6] = {10}, [7] = {6}, [8] = {7}, [9] = {8},
@@ -98,7 +103,7 @@ local function AnalyzeDungeon(dungeon)
     local journalID = instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID)
     if not journalID or not EJ_SelectInstance or not EJ_GetNumLoot then return {percent=0,total=0,upgrades={},pending=false} end
     EJ_SelectInstance(journalID)
-    local total, upgrades, pending, totalGain, detectedDropLevel = 0, {}, false, 0, 0
+    local total, upgrades, pending, totalGain = 0, {}, false, 0
     local upgradeSlots = {}
     for lootIndex = 1, EJ_GetNumLoot() do
         local item = C_EncounterJournal.GetLootInfoByIndex(lootIndex)
@@ -117,15 +122,15 @@ local function AnalyzeDungeon(dungeon)
         -- Encounter Journal помечает неподходящие оружие и предметы этими ошибками.
         if item and not item.handError and not item.weaponTypeError and type(equipped) == "number" then
             total = total + 1
-            local dropLevel = ItemLevel(item.link)
-            if dropLevel <= 0 then
+            local baseItemLevel = ItemLevel(item.link)
+            if baseItemLevel <= 0 then
                 pending = true
                 if item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
                     C_Item.RequestLoadItemDataByID(item.itemID)
                 end
             end
-            detectedDropLevel = math.max(detectedDropLevel, dropLevel)
-            if dropLevel > 0 and dropLevel > equipped then
+            local dropLevel = PREVIEW_DROP_ITEM_LEVEL
+            if dropLevel > equipped then
                 local itemName = item.name
                 if not itemName and item.itemID and C_Item and C_Item.GetItemNameByID then itemName = C_Item.GetItemNameByID(item.itemID) end
                 totalGain = totalGain + dropLevel - equipped
@@ -147,9 +152,7 @@ local function AnalyzeDungeon(dungeon)
         averageGain=#upgrades>0 and math.floor(totalGain/#upgrades+.5) or 0,
         pending=pending,
         keyLevel=PREVIEW_KEY_LEVEL,
-        -- Не подписываем карточку захардкоженным 311: сезонное скалирование
-        -- меняется, а Encounter Journal уже отдаёт реальный ilvl предмета.
-        dropLevel=detectedDropLevel,
+        dropLevel=PREVIEW_DROP_ITEM_LEVEL,
     }
 end
 
