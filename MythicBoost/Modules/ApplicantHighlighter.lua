@@ -1,5 +1,7 @@
 local _, JP = ...
 local ApplicantHighlighter = {}
+local UI = JP.UI
+local C = UI.colors
 
 local TARGET = { TANK = 1, HEALER = 1, DAMAGER = 3 }
 local REFRESH_INTERVAL = 1
@@ -77,60 +79,128 @@ local function BuildSelection()
     end
 end
 
-local function EnsureBorder(frame)
-    if frame.__mbApplicantBorder then return frame.__mbApplicantBorder end
-    local border = {}
-    for index = 1, 4 do
-        border[index] = frame:CreateTexture(nil, "OVERLAY", nil, 7)
-        border[index]:SetColorTexture(1, 1, 1, 1)
-    end
-    border[1]:SetPoint("TOPLEFT", 1, -1); border[1]:SetPoint("TOPRIGHT", -1, -1); border[1]:SetHeight(2)
-    border[2]:SetPoint("BOTTOMLEFT", 1, 1); border[2]:SetPoint("BOTTOMRIGHT", -1, 1); border[2]:SetHeight(2)
-    border[3]:SetPoint("TOPLEFT", 1, -1); border[3]:SetPoint("BOTTOMLEFT", 1, 1); border[3]:SetWidth(3)
-    border[4]:SetPoint("TOPRIGHT", -1, -1); border[4]:SetPoint("BOTTOMRIGHT", -1, 1); border[4]:SetWidth(3)
-    frame.__mbApplicantBorder = border
-    return border
+---------------------------------------------------------------------------
+-- Оформление списка кандидатов
+--
+-- Штатная панель нарисована в золотой теме Blizzard, и наша подсветка
+-- смотрелась на ней чужеродно: рамка в три пикселя со всех сторон плюс
+-- заливка поверх. Приводим панель к языку окна аддона — тёмный фон, тонкие
+-- линии, акцент слева у выделенной строки.
+--
+-- Трогаем только текстуры и цвета. Кнопки «Пригласить» и «Отклонить» и любые
+-- защищённые действия не затрагиваются: их поведение остаётся близзардовским.
+---------------------------------------------------------------------------
+
+local STATUS_COLORS = {
+    best = { color = C.amber, label = "ЛУЧШИЙ" },
+    needed = { color = { .62, .40, .95, 1 }, label = "ПОДХОДИТ" },
+}
+
+local function HideRegion(region)
+    if region and region.SetAlpha then region:SetAlpha(0) end
+end
+
+-- Цветная полоса слева вместо рамки по периметру: читается так же ясно,
+-- но не спорит с сеткой строк.
+local function EnsureAccent(frame)
+    if frame.__mbAccent then return frame.__mbAccent end
+    local accent = frame:CreateTexture(nil, "OVERLAY", nil, 7)
+    accent:SetPoint("TOPLEFT", 0, -1)
+    accent:SetPoint("BOTTOMLEFT", 0, 1)
+    accent:SetWidth(3)
+    frame.__mbAccent = accent
+    return accent
+end
+
+local function EnsureFill(frame)
+    if frame.__mbFill then return frame.__mbFill end
+    local fill = frame:CreateTexture(nil, "BACKGROUND", nil, 2)
+    fill:SetPoint("TOPLEFT", 0, -1)
+    fill:SetPoint("BOTTOMRIGHT", 0, 1)
+    frame.__mbFill = fill
+    return fill
 end
 
 local function EnsureLabel(frame)
     if frame.__mbApplicantLabel then return frame.__mbApplicantLabel end
     local label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("RIGHT", frame, "RIGHT", -4, 0)
+    label:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
     label:SetJustifyH("RIGHT")
     label:SetShadowColor(0, 0, 0, 1)
     label:SetShadowOffset(1, -1)
-    label:SetText("")
     frame.__mbApplicantLabel = label
     return label
 end
 
-local function EnsureGlow(frame)
-    if frame.__mbApplicantGlow then return frame.__mbApplicantGlow end
-    local glow = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
-    glow:SetAllPoints(frame)
-    glow:SetColorTexture(1, 1, 1, .12)
-    frame.__mbApplicantGlow = glow
-    return glow
+local function ColorMember(frame, status)
+    local accent, fill, label = EnsureAccent(frame), EnsureFill(frame), EnsureLabel(frame)
+    local style = status and STATUS_COLORS[status]
+    if not style then
+        accent:Hide(); fill:Hide(); label:Hide()
+        return
+    end
+    local r, g, b = style.color[1], style.color[2], style.color[3]
+    accent:SetColorTexture(r, g, b, 1); accent:Show()
+    fill:SetColorTexture(r, g, b, .10); fill:Show()
+    label:SetText(("|cff%02x%02x%02x%s|r"):format(
+        math.floor(r * 255 + .5), math.floor(g * 255 + .5), math.floor(b * 255 + .5), style.label))
+    label:Show()
 end
 
-local function ColorMember(frame, status)
-    local border = EnsureBorder(frame)
-    local label = EnsureLabel(frame)
-    local glow = EnsureGlow(frame)
-    local r, g, b = .62, .22, 1
-    local text = "|cffad65ffПОДХОДИТ|r"
-    if status == "best" then
-        r, g, b = 1, .52, .06
-        text = "|cffff9418ЛУЧШИЙ|r"
+-- Панель перекрашивается один раз: фон, врезка и заголовки колонок.
+local function SkinPanel(viewer)
+    if viewer.__mbSkinned then return end
+    viewer.__mbSkinned = true
+
+    local inset = viewer.Inset
+    if inset then
+        if inset.Bg and inset.Bg.SetColorTexture then inset.Bg:SetColorTexture(UI.Unpack(C.panel)) end
+        if inset.NineSlice then HideRegion(inset.NineSlice) end
     end
-    for _, texture in ipairs(border) do
-        texture:SetVertexColor(r, g, b, 1)
-        texture:SetShown(status ~= nil)
+
+    for _, key in ipairs({ "NameColumnHeader", "RoleColumnHeader", "ItemLevelColumnHeader", "RatingColumnHeader" }) do
+        local header = viewer[key]
+        if header then
+            for index = 1, select("#", header:GetRegions()) do
+                local region = select(index, header:GetRegions())
+                if region and region.GetObjectType then
+                    if region:GetObjectType() == "Texture" then
+                        HideRegion(region)
+                    elseif region:GetObjectType() == "FontString" then
+                        region:SetTextColor(UI.Unpack(C.muted))
+                    end
+                end
+            end
+        end
     end
-    glow:SetVertexColor(r, g, b, 1)
-    glow:SetShown(status ~= nil)
-    label:SetText(status and text or "")
-    label:SetShown(status ~= nil)
+end
+
+-- Строка кандидата: тёмная подложка с чередованием и тонкий разделитель.
+local function SkinRow(button, index)
+    if not button.__mbRowBg then
+        local background = button:CreateTexture(nil, "BACKGROUND", nil, 1)
+        background:SetAllPoints(button)
+        button.__mbRowBg = background
+
+        local separator = button:CreateTexture(nil, "BORDER")
+        separator:SetPoint("BOTTOMLEFT", 0, 0)
+        separator:SetPoint("BOTTOMRIGHT", 0, 0)
+        separator:SetHeight(1)
+        separator:SetColorTexture(UI.Unpack(C.lineSoft))
+        button.__mbRowLine = separator
+
+        -- Штатная подложка строки нарисована под золотую тему.
+        for regionIndex = 1, select("#", button:GetRegions()) do
+            local region = select(regionIndex, button:GetRegions())
+            if region and region.GetObjectType and region:GetObjectType() == "Texture"
+                and region ~= background and region ~= separator then
+                local _, _, _, alpha = region:GetVertexColor()
+                if alpha and alpha > 0 and not region:GetTexture() then HideRegion(region) end
+            end
+        end
+    end
+    local tone = index % 2 == 0 and C.rowAlt or C.row
+    button.__mbRowBg:SetColorTexture(UI.Unpack(tone))
 end
 
 local function ApplicantIDForButton(button)
@@ -146,7 +216,11 @@ function ApplicantHighlighter:Refresh()
     local scrollBox = viewer and viewer.ScrollBox
     if not scrollBox or not viewer:IsVisible() then return end
     BuildSelection()
+    SkinPanel(viewer)
+    local rowIndex = 0
     scrollBox:ForEachFrame(function(button)
+        rowIndex = rowIndex + 1
+        SkinRow(button, rowIndex)
         local applicantID = ApplicantIDForButton(button)
         for index, member in pairs(button.Members or {}) do
             local memberIdx = member.memberIdx or member.MemberIdx or index
