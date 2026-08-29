@@ -1,0 +1,211 @@
+local _, JP = ...
+local LootAdvisor = { cache = {} }
+
+local PREVIEW_KEY_LEVEL = 10
+local SLOT_IDS = {
+    [0] = {1}, [1] = {2}, [2] = {3}, [3] = {15}, [4] = {5},
+    [5] = {9}, [6] = {10}, [7] = {6}, [8] = {7}, [9] = {8},
+    [10] = {16}, [11] = {17}, [12] = {11,12}, [13] = {13,14},
+}
+
+local function UsableNumber(value)
+    return type(value) == "number" and not issecretvalue(value)
+end
+
+local function ItemLevel(link)
+    if not link then return 0 end
+    local level = C_Item and C_Item.GetDetailedItemLevelInfo and C_Item.GetDetailedItemLevelInfo(link)
+    return UsableNumber(level) and level or 0
+end
+
+local function EquippedItemLevel(slotID)
+    -- GetCurrentItemLevel читает ItemLocation напрямую и не зависит от того,
+    -- успел ли клиент собрать полную item-link. На старых клиентах остаётся
+    -- прежний безопасный путь.
+    if ItemLocation and ItemLocation.CreateFromEquipmentSlot and C_Item and C_Item.GetCurrentItemLevel then
+        local location = ItemLocation:CreateFromEquipmentSlot(slotID)
+        if location and location:IsValid() then
+            local level = C_Item.GetCurrentItemLevel(location)
+            if UsableNumber(level) and level > 0 then return level end
+        end
+    end
+    return ItemLevel(GetInventoryItemLink("player", slotID))
+end
+
+local function EquippedLevel(filterType)
+    local slots = SLOT_IDS[filterType]
+    if not slots then return end
+    local lowest
+    for _, slotID in ipairs(slots) do
+        local level = EquippedItemLevel(slotID)
+        if level > 0 and (not lowest or level < lowest) then lowest = level end
+    end
+    if filterType == 11 and not lowest then lowest = EquippedItemLevel(16) end
+    return lowest or 0
+end
+
+local function EquipmentSignature()
+    local parts = {tostring(GetSpecialization and GetSpecialization() or 0)}
+    local pending = false
+    for slotID = 1, 17 do
+        local level = EquippedItemLevel(slotID)
+        if GetInventoryItemID("player", slotID) and level <= 0 then pending = true end
+        parts[#parts + 1] = tostring(level)
+    end
+    return table.concat(parts, ":"), pending
+end
+
+local function InstanceMapID(dungeon)
+    local runDungeon = dungeon and dungeon.run and dungeon.run.dungeon
+    local instanceMaps = runDungeon and runDungeon.instance_map_ids
+    return type(instanceMaps) == "table" and instanceMaps[1] or dungeon and dungeon.instanceMapID
+end
+
+local function ConfigureJournal()
+    if EncounterJournal_LoadUI then EncounterJournal_LoadUI() end
+    if not C_EncounterJournal or not C_EncounterJournal.GetInstanceForGameMap then return false end
+    local oldClassID, oldSpecID
+    if EJ_GetLootFilter then oldClassID, oldSpecID = EJ_GetLootFilter() end
+    local state = {
+        classID = oldClassID,
+        specID = oldSpecID,
+        difficulty = EJ_GetDifficulty and EJ_GetDifficulty(),
+        slotFilter = C_EncounterJournal.GetSlotFilter and C_EncounterJournal.GetSlotFilter(),
+        instanceID = EncounterJournal and EncounterJournal.instanceID,
+    }
+    local _, _, classID = UnitClass("player")
+    local specIndex = GetSpecialization and GetSpecialization()
+    local specID = specIndex and GetSpecializationInfo(specIndex)
+    if EJ_SetLootFilter and classID and specID then EJ_SetLootFilter(classID, specID) end
+    if EJ_SetDifficulty then EJ_SetDifficulty(23) end
+    if C_EncounterJournal.ResetSlotFilter then C_EncounterJournal.ResetSlotFilter() end
+    if C_EncounterJournal.SetPreviewMythicPlusLevel then C_EncounterJournal.SetPreviewMythicPlusLevel(PREVIEW_KEY_LEVEL) end
+    return state
+end
+
+local function RestoreJournal(state)
+    if not state then return end
+    if state.instanceID and EJ_SelectInstance then EJ_SelectInstance(state.instanceID) end
+    if state.difficulty and EJ_SetDifficulty then EJ_SetDifficulty(state.difficulty) end
+    if EJ_SetLootFilter and state.classID then EJ_SetLootFilter(state.classID, state.specID or 0) end
+    if C_EncounterJournal and C_EncounterJournal.SetSlotFilter and state.slotFilter ~= nil then
+        C_EncounterJournal.SetSlotFilter(state.slotFilter)
+    end
+end
+
+local function AnalyzeDungeon(dungeon)
+    local instanceMapID = InstanceMapID(dungeon)
+    local journalID = instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID)
+    if not journalID or not EJ_SelectInstance or not EJ_GetNumLoot then return {percent=0,total=0,upgrades={},pending=false} end
+    EJ_SelectInstance(journalID)
+    local total, upgrades, pending, totalGain, detectedDropLevel = 0, {}, false, 0, 0
+    local upgradeSlots = {}
+    for lootIndex = 1, EJ_GetNumLoot() do
+        local item = C_EncounterJournal.GetLootInfoByIndex(lootIndex)
+        if item and (not item.name or not item.link) then
+            pending = true
+            if item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
+                C_Item.RequestLoadItemDataByID(item.itemID)
+            end
+        end
+        local filterType = item and item.filterType
+        -- Через "and" без "or nil" сюда попадал false, когда filterType пуст,
+        -- и сравнение dropLevel > equipped роняло разбор добычи.
+        local equipped
+        if filterType ~= nil then equipped = EquippedLevel(filterType) end
+        -- В знаменатель попадает только добыча, доступная текущему классу/спеку.
+        -- Encounter Journal помечает неподходящие оружие и предметы этими ошибками.
+        if item and not item.handError and not item.weaponTypeError and type(equipped) == "number" then
+            total = total + 1
+            local dropLevel = ItemLevel(item.link)
+            if dropLevel <= 0 then
+                pending = true
+                if item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
+                    C_Item.RequestLoadItemDataByID(item.itemID)
+                end
+            end
+            detectedDropLevel = math.max(detectedDropLevel, dropLevel)
+            if dropLevel > 0 and dropLevel > equipped then
+                local itemName = item.name
+                if not itemName and item.itemID and C_Item and C_Item.GetItemNameByID then itemName = C_Item.GetItemNameByID(item.itemID) end
+                totalGain = totalGain + dropLevel - equipped
+                upgradeSlots[filterType] = true
+                upgrades[#upgrades + 1] = {
+                    itemID=item.itemID, name=itemName or "Предмет",
+                    icon=item.icon, link=item.link, slot=item.slot or "Слот", equipped=equipped,
+                    level=dropLevel, gain=dropLevel-equipped,
+                }
+            end
+        end
+    end
+    table.sort(upgrades, function(a,b) return a.gain > b.gain end)
+    local slotCount = 0
+    for _ in pairs(upgradeSlots) do slotCount = slotCount + 1 end
+    return {
+        percent=total>0 and math.floor(#upgrades/total*100+.5) or 0,
+        total=total, useful=#upgrades, slotCount=slotCount, upgrades=upgrades,
+        averageGain=#upgrades>0 and math.floor(totalGain/#upgrades+.5) or 0,
+        pending=pending,
+        keyLevel=PREVIEW_KEY_LEVEL,
+        -- Не подписываем карточку захардкоженным 311: сезонное скалирование
+        -- меняется, а Encounter Journal уже отдаёт реальный ilvl предмета.
+        dropLevel=detectedDropLevel,
+    }
+end
+
+function LootAdvisor:Analyze(dungeons)
+    local signature, equipmentPending = EquipmentSignature()
+    -- Не закрепляем навсегда первый неполный ответ Encounter Journal. При
+    -- открытии окна ссылки/уровни добычи часто ещё грузятся; такой кэш и давал
+    -- ложное "Улучшений по ilvl не найдено" до следующего /reload.
+    if not equipmentPending and not self.cache.pending
+        and self.cache.signature == signature and self.cache.results then
+        return self.cache.results
+    end
+    local results = {}
+    local journalState = ConfigureJournal()
+    if not journalState then return results end
+    local pending = false
+    for _, dungeon in ipairs(dungeons or {}) do
+        results[dungeon.mapID] = AnalyzeDungeon(dungeon)
+        pending = results[dungeon.mapID].pending or pending
+    end
+    RestoreJournal(journalState)
+    self.cache = {signature=signature,results=results,pending=pending or equipmentPending}
+    return results
+end
+
+function LootAdvisor:Invalidate()
+    wipe(self.cache)
+    local welcome = JP.modules.Welcome
+    if welcome and welcome.frame and welcome.frame:IsShown() then C_Timer.After(.15, function() welcome:Refresh() end) end
+end
+
+function LootAdvisor:Create()
+    if self.events then return end
+    self.events = CreateFrame("Frame")
+    self.events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    self.events:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    self.events:RegisterEvent("EJ_LOOT_DATA_RECIEVED")
+    self.events:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+    self.events:RegisterEvent("PLAYER_ENTERING_WORLD")
+    self.events:SetScript("OnEvent", function(_, event, unit)
+        if event == "EJ_LOOT_DATA_RECIEVED" or event == "GET_ITEM_INFO_RECEIVED" then
+            if not self.cache.pending or self.refreshQueued then return end
+            self.refreshQueued = true
+            C_Timer.After(.25, function()
+                self.refreshQueued = nil
+                self:Invalidate()
+            end)
+        elseif event ~= "PLAYER_SPECIALIZATION_CHANGED" or unit == "player" then
+            self:Invalidate()
+        end
+    end)
+end
+
+function LootAdvisor:Enable() end
+function LootAdvisor:Disable() end
+function LootAdvisor:Destroy() end
+
+JP.LootAdvisor = LootAdvisor
+JP:RegisterModule("LootAdvisor", LootAdvisor)
