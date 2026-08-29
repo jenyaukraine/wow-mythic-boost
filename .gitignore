@@ -1,0 +1,9 @@
+# Зависимости и сборки десктопного приложения (около 1.1 ГБ)
+MythicBoostDesktop/node_modules/
+MythicBoostDesktop/dist/
+
+# Архивы релизов аддона — собираются из MythicBoost/
+*.zip
+
+# Локальные настройки инструментов
+.claude/settings.local.json
