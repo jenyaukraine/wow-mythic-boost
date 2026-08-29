@@ -111,7 +111,11 @@ function Welcome:Create()
     -- переключение не трогает раскладку окна.
     local tabTop = -(HEADER_HEIGHT + 8)
     self.tabs = {}
-    local order = { { key = "groups", label = "ПОДБОР ГРУПП" }, { key = "guild", label = "РЕЙТИНГ ГИЛЬДИИ" } }
+    local order = {
+        { key = "groups", label = "ПОДБОР ГРУПП" },
+        { key = "applicants", label = "КАНДИДАТЫ" },
+        { key = "guild", label = "РЕЙТИНГ ГИЛЬДИИ" },
+    }
     for index, item in ipairs(order) do
         local tab = UI.Tab(frame, item.label, 168)
         tab:SetPoint("TOPLEFT", 12 + (index - 1) * 174, tabTop)
@@ -131,7 +135,13 @@ function Welcome:Create()
     guild:Hide()
     JP.GuildBoard:Build(self, guild)
 
-    self.pages = { groups = groups, guild = guild }
+    local applicants = UI.Panel(frame, C.panel, C.line)
+    applicants:SetPoint("TOPLEFT", 12, pageTop)
+    applicants:SetPoint("BOTTOMRIGHT", -12, 12)
+    applicants:Hide()
+    JP.ApplicantBoard:Build(self, applicants)
+
+    self.pages = { groups = groups, applicants = applicants, guild = guild }
     self.currentPage = "groups"
     self.tabs.groups:SetActive(true)
 
@@ -182,6 +192,7 @@ function Welcome:Create()
             layoutQueued = false
             JP.GroupSearchUI:Layout(self)
             JP.GuildBoard:Layout()
+            JP.ApplicantBoard:Layout()
             SaveWindow(frame)
         end)
     end)
@@ -213,6 +224,11 @@ function Welcome:Refresh()
     if not self.frame or not self.rows then return end
     if self.currentPage == "guild" then
         JP.GuildBoard:Refresh()
+        self.status:SetText("")
+        return
+    end
+    if self.currentPage == "applicants" then
+        JP.ApplicantBoard:Refresh()
         self.status:SetText("")
         return
     end

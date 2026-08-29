@@ -18,6 +18,7 @@ Modules/AutoMatch.lua
 Modules/RealmData.lua
 Modules/GroupSearchUI.lua
 Modules/GuildBoard.lua
+Modules/ApplicantBoard.lua
 Modules/Welcome.lua
 Modules/PlayerTooltip.lua
 Modules/NameplateMarker.lua

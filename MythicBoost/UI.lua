@@ -148,21 +148,26 @@ end
 -- Кнопка
 ---------------------------------------------------------------------------
 
+-- Кнопки повторяют язык панелей действий DandersFrames: тёмная заливка и
+-- тонкая яркая бирюзовая обводка вместо залитого прямоугольника. Состояние
+-- читается по яркости контура, а не по смене цвета фона.
+local EDGE = { .16, .80, .86, 1 }
+
 local function ButtonVisual(button)
     local enabled = button:IsEnabled()
     local hovered = button.hovered and enabled
     if not enabled then
-        button:SetBackdropColor(.075, .090, .110, .9)
-        button:SetBackdropBorderColor(.14, .17, .21, 1)
-        button.label:SetTextColor(.38, .42, .48, 1)
+        button:SetBackdropColor(.055, .066, .080, .95)
+        button:SetBackdropBorderColor(.16, .20, .23, .8)
+        button.label:SetTextColor(.36, .40, .45, 1)
     elseif button.primary then
-        button:SetBackdropColor(hovered and .18 or .13, hovered and .58 or .46, hovered and .78 or .63, 1)
-        button:SetBackdropBorderColor(.26, .74, .96, 1)
-        button.label:SetTextColor(1, 1, 1, 1)
+        button:SetBackdropColor(hovered and .055 or .035, hovered and .135 or .100, hovered and .150 or .115, 1)
+        button:SetBackdropBorderColor(EDGE[1], EDGE[2], EDGE[3], hovered and 1 or .92)
+        button.label:SetTextColor(hovered and 1 or .88, 1, 1, 1)
     else
-        button:SetBackdropColor(hovered and .125 or .092, hovered and .160 or .115, hovered and .205 or .145, .96)
-        button:SetBackdropBorderColor(hovered and .24 or .17, hovered and .40 or .23, hovered and .52 or .30, 1)
-        button.label:SetTextColor(hovered and .92 or .78, hovered and .95 or .83, hovered and .99 or .89, 1)
+        button:SetBackdropColor(hovered and .062 or .040, hovered and .085 or .052, hovered and .098 or .064, 1)
+        button:SetBackdropBorderColor(EDGE[1], EDGE[2], EDGE[3], hovered and .95 or .55)
+        button.label:SetTextColor(hovered and .94 or .78, hovered and .98 or .86, hovered and 1 or .90, 1)
     end
 end
 

@@ -121,47 +121,16 @@ local function EnsureFill(frame)
     return fill
 end
 
--- Справа у строки живут колонки «Ур. пр.» и «Рейтинг», поэтому подпись
--- ставим в пустоту сразу за именем: там ничего не рисуется, а привязка к
--- правому краю накрывала рейтинг кандидата.
-local function EnsureLabel(frame)
-    if frame.__mbApplicantLabel then return frame.__mbApplicantLabel end
-    local label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    -- Надёжнее всего цепляться за иконку роли: она стоит на фиксированном
-    -- месте, и промежуток перед ней всегда пуст. Имя как якорь не годится —
-    -- если оно растянуто на всю ширину строки, подпись уезжает за край.
-    local anchor = frame.RoleIcon or frame.RoleIcon1 or frame.Role
-    if anchor and anchor.GetObjectType then
-        label:SetPoint("RIGHT", anchor, "LEFT", -8, 0)
-        label:SetJustifyH("RIGHT")
-    else
-        local nameField = frame.Name or frame.NameLabel
-        if nameField and nameField.GetObjectType and nameField:GetObjectType() == "FontString" then
-            label:SetPoint("LEFT", nameField, "RIGHT", 8, 0)
-        else
-            label:SetPoint("LEFT", frame, "LEFT", 150, 0)
-        end
-        label:SetJustifyH("LEFT")
-    end
-    label:SetShadowColor(0, 0, 0, 1)
-    label:SetShadowOffset(1, -1)
-    frame.__mbApplicantLabel = label
-    return label
-end
-
 local function ColorMember(frame, status)
-    local accent, fill, label = EnsureAccent(frame), EnsureFill(frame), EnsureLabel(frame)
+    local accent, fill = EnsureAccent(frame), EnsureFill(frame)
     local style = status and STATUS_COLORS[status]
     if not style then
-        accent:Hide(); fill:Hide(); label:Hide()
+        accent:Hide(); fill:Hide()
         return
     end
     local r, g, b = style.color[1], style.color[2], style.color[3]
     accent:SetColorTexture(r, g, b, 1); accent:Show()
     fill:SetColorTexture(r, g, b, .10); fill:Show()
-    label:SetText(("|cff%02x%02x%02x%s|r"):format(
-        math.floor(r * 255 + .5), math.floor(g * 255 + .5), math.floor(b * 255 + .5), style.label))
-    label:Show()
 end
 
 -- Панель перекрашивается один раз: фон, врезка и заголовки колонок.
@@ -256,6 +225,17 @@ function ApplicantHighlighter:QueueRefresh()
         self.refreshQueued = false
         self:Refresh()
     end)
+end
+
+-- Таблица кандидатов в окне аддона показывает тот же отбор, поэтому расчёт
+-- живёт в одном месте, а не дублируется двумя модулями.
+function ApplicantHighlighter:GetSelection()
+    BuildSelection()
+    return selected
+end
+
+function ApplicantHighlighter:GetMissingRoles()
+    return MissingRoles()
 end
 
 function ApplicantHighlighter:Create()
