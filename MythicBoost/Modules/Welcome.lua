@@ -58,6 +58,19 @@ local function BuildHeader(self, frame)
     maximize:SetPoint("RIGHT", close, "LEFT", -8, 0)
     self.maximizeButton = maximize
 
+    -- Обратный переход: создать объявление и управлять им по-прежнему можно
+    -- только в штатном окне, поэтому дорога туда всегда под рукой.
+    local blizzard = UI.Button(header, "Окно Blizzard", 128, 24)
+    blizzard:SetPoint("RIGHT", maximize, "LEFT", -8, 0)
+    blizzard:SetScript("OnClick", function()
+        if JP.FrameSwitch then JP.FrameSwitch.OpenBlizzard() end
+    end)
+    blizzard:HookScript("OnEnter", function(self)
+        UI.Tooltip(self, "Штатное окно",
+            "Открыть «Подземелья и рейды» — там создаётся и меняется само объявление.")
+    end)
+    blizzard:HookScript("OnLeave", GameTooltip_Hide)
+
     self.status = UI.Text(header, "GameFontHighlightSmall", "", C.muted)
     self.status:SetPoint("RIGHT", maximize, "LEFT", -14, 0)
     self.status:SetJustifyH("RIGHT")

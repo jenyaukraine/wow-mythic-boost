@@ -273,6 +273,7 @@ local function InitializeDatabase()
     if db.minimumKeystoneRuns ~= nil and not tonumber(db.minimumKeystoneRuns) then db.minimumKeystoneRuns = nil end
     if db.filterGroupFinder == nil then db.filterGroupFinder = true end
     if db.logging == nil then db.logging = false end
+    if db.replaceGroupFinder == nil then db.replaceGroupFinder = false end
     JP.db = db
 end
 
@@ -415,6 +416,7 @@ local function ShowHelp()
     JP:Print("|cff28b8f5/mb debug|r — снимок структуры от API поиска групп")
     JP:Print("|cff28b8f5/mb log|r [on|off|clear] — журнал последних событий")
     JP:Print("|cff28b8f5/mb restorefilter|r — вернуть фильтр стандартного окна групп")
+    JP:Print("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп")
 end
 
 SLASH_MYTHICBOOST1 = "/mythicboost"
@@ -441,6 +443,10 @@ SlashCmdList.MYTHICBOOST = function(input)
         local marker = JP.modules.NameplateMarker
         if marker and marker.RefreshAll then marker:RefreshAll() end
         JP:Print("База перспективных игроков очищена.")
+    elseif command == "replace" then
+        if JP.FrameSwitch then
+            JP.FrameSwitch:SetReplacing(not JP.FrameSwitch:IsReplacing())
+        end
     elseif command == "restorefilter" then
         local backup = MythicBoostDB.blizzardFilterBackup
         if type(backup) == "table" and type(C_LFGList.SaveAdvancedFilter) == "function" then
