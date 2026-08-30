@@ -23,24 +23,30 @@ local MAX_RESULT_ROWS = 12
 local ROW_HEIGHT, ROW_STEP = 62, 68
 local CARD_HEIGHT, CARD_GAP = 84, 8
 -- Одна сетка на всю карточку, вместо трёх наборов случайных отступов.
--- Левая колонка — значок и процент под ним; правая начинается с CARD_COLUMN
--- и держит три строки на общем левом крае: название, рекорд, предметы.
--- Раньше каждая строка ставилась своим числом, и края не совпадали: значок
--- отступал на 10, рекорд на 62, процент на 10, а высота названия (32 от -8)
--- заезжала на ряд предметов, начинавшийся с -34.
---
--- Вертикаль сошлась так (высота карточки 84):
---   12  поле сверху
---   значок   -12 … -56      название  -12 … -28
---   процент  -60 … -72      рекорд    -30 … -44
---                             предметы  -48 … -72
---   12  поле снизу
--- Обе колонки кончаются на -72, поля сверху и снизу одинаковые.
+-- Раньше в карточке высотой 84 жило три разных выравнивания сразу:
+-- название по центру, группа «значок и предметы» тоже по центру,
+-- процент в левом углу, значок ключа по центру низа. На одном предмете
+-- центрованная группа выходила шириной в 76 пикселей на всю карточку
+-- в 270 — по сотне пустоты с каждого бока.
 local CARD_PAD = 12
-local CARD_ICON = 44
-local CARD_COLUMN = CARD_PAD + CARD_ICON + 8
-local CARD_ROW_TITLE, CARD_ROW_BEST, CARD_ROW_ITEMS = -12, -30, -48
+-- Значок во всю высоту содержимого: 60 вместо 44. Это единственная картинка
+-- в карточке, она и должна держать левый край, а не болтаться маленьким
+-- квадратиком в пустоте.
+local CARD_ICON = 60
+local CARD_COLUMN = CARD_PAD + CARD_ICON + 12
 local CARD_ITEM_SIZE, CARD_ITEM_STEP = 24, 28
+local CARD_BADGE_W, CARD_BADGE_H = 54, 20
+--
+-- Вертикаль (высота карточки 84):
+--   12 поле сверху
+--   значок    -12 .. -72
+--   название  -14 .. -34   процент и ключ — на этой же строке, справа
+--   предметы  -48 .. -72
+--   12 поле снизу
+-- Значок и ряд предметов заканчиваются на -72, название и значок ключа
+-- стоят на одной строке. Никакого центрирования: всё висит на левом крае
+-- CARD_COLUMN, свободная ширина копится справа, где она не мешает.
+local CARD_ROW_TITLE, CARD_ROW_ITEMS = -14, -48
 local CARDS_HEIGHT = 30 + CARD_HEIGHT * 2 + CARD_GAP + 10
 local FILTERS_WIDTH = 238
 -- Эти функции используются серверным фильтром, который объявлен раньше
@@ -1179,6 +1185,7 @@ local function SetCardSelected(card, selected)
         card:SetBackdropBorderColor(UI.Unpack(C.line))
     end
     card.accent:SetShown(card.selected)
+    card.bestBadge:SetAlpha(selected and 1 or .55)
     card.art:SetAlpha(selected and .32 or .10)
     card.art:SetDesaturated(not selected)
     card.icon:SetDesaturated(not selected)
@@ -1291,11 +1298,13 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
             end
 
             local level = JP:GetBestLevel(dungeon.mapID, dungeon.run and dungeon.run.level or 0)
+            -- В значке — одно число, свой рекорд. Цель и подробности и так
+            -- в подсказке; строка на четыре слова в пятьдесят четыре пикселя не влезает,
+            -- а читают с карточки всё равно только уровень.
             if level > 0 then
-                card.best:SetText(("|cff8a939fтвой|r |cff43d17a+%d|r    |cff8a939fцель|r |cff28b8f5+%d|r")
-                    :format(level, level + 1))
+                card.best:SetFormattedText("|cff43d17a+%d|r", level)
             else
-                card.best:SetText("|cff8a939fрезультата ещё нет|r")
+                card.best:SetText("|cff5b6470—|r")
             end
 
             local percent = card.lootData and card.lootData.percent or 0
@@ -1390,7 +1399,7 @@ local function CreateDungeonCard(parent, welcome)
 
     card.iconBorder = CreateFrame("Frame", nil, card, "BackdropTemplate")
     card.iconBorder:SetSize(CARD_ICON, CARD_ICON)
-    card.iconBorder:SetPoint("TOPLEFT", CARD_PAD, CARD_ROW_TITLE)
+    card.iconBorder:SetPoint("TOPLEFT", CARD_PAD, -CARD_PAD)
     UI.Backdrop(card.iconBorder, { .02, .03, .04, 1 }, C.line)
 
     card.icon = card.iconBorder:CreateTexture(nil, "ARTWORK")
@@ -1400,29 +1409,34 @@ local function CreateDungeonCard(parent, welcome)
     card.iconLabel = UI.Text(card.iconBorder, "GameFontNormal", "", C.accentDim)
     card.iconLabel:SetPoint("CENTER", 0, 0)
 
-    -- Процент — подпись под значком, поэтому он и стоит под значком, по его
-    -- ширине и по центру, а не в углу карточки в шести пикселях от края.
+    -- Шанс на дроп и свой ключ — два числа, по которым подземелье и выбирают.
+    -- Ставим их рядом на строке названия, справа: раньше процент сидел в углу
+    -- карточки, а значок ключа висел по центру низа, и низ карточки читался
+    -- как два несвязанных обрывка.
+    card.bestBadge = CreateFrame("Frame", nil, card, "BackdropTemplate")
+    card.bestBadge:SetSize(CARD_BADGE_W, CARD_BADGE_H)
+    card.bestBadge:SetPoint("TOPRIGHT", -CARD_PAD, CARD_ROW_TITLE)
+    UI.Backdrop(card.bestBadge, { .025, .055, .045, .88 }, { .16, .48, .34, .82 })
+
     card.loot = UI.Text(card, "GameFontNormalSmall", "", C.faint)
-    card.loot:SetPoint("TOPLEFT", card.iconBorder, "BOTTOMLEFT", 0, -4)
-    card.loot:SetWidth(CARD_ICON)
-    card.loot:SetHeight(12)
-    card.loot:SetJustifyH("CENTER")
+    card.loot:SetPoint("RIGHT", card.bestBadge, "LEFT", -10, 0)
+    card.loot:SetHeight(CARD_BADGE_H)
+    card.loot:SetJustifyH("RIGHT")
 
     card.title = UI.Text(card, "GameFontNormal", "", C.text)
     card.title:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_TITLE)
-    card.title:SetPoint("RIGHT", card, "RIGHT", -CARD_PAD, 0)
+    -- Название упирается в процент, а не в край карточки: длинное имя
+    -- обрежется, но никогда не наедет на числа.
+    card.title:SetPoint("RIGHT", card.loot, "LEFT", -10, 0)
     card.title:SetJustifyH("LEFT")
-    card.title:SetJustifyV("TOP")
-    card.title:SetHeight(16)
+    card.title:SetJustifyV("MIDDLE")
+    card.title:SetHeight(CARD_BADGE_H)
     card.title:SetWordWrap(false)
     card.title:SetShadowColor(0, 0, 0, 1)
     card.title:SetShadowOffset(1, -1)
 
-    card.best = UI.Text(card, "GameFontHighlightSmall", "")
-    card.best:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_BEST)
-    card.best:SetPoint("RIGHT", card, "RIGHT", -CARD_PAD, 0)
-    card.best:SetHeight(14)
-    card.best:SetJustifyH("LEFT")
+    card.best = UI.Text(card.bestBadge, "GameFontNormalSmall", "")
+    card.best:SetPoint("CENTER", 0, 0)
     card.best:SetWordWrap(false)
     card.best:SetShadowColor(0, 0, 0, 1)
     card.best:SetShadowOffset(1, -1)
