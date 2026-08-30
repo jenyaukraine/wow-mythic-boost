@@ -47,12 +47,44 @@ local NORMAL_RES = {
     EVOKER = 361227,
 }
 
+-- Классы, у которых есть настоящий групповой бафф — тот, что накладывается
+-- одним кастом и виден аурой на каждом участнике.
+--
+-- Паладина здесь намеренно нет. Его ауры (Аура преданности, Аура усердия,
+-- Аура сосредоточения) — переключатели на самом паладине, а не заклинание,
+-- которым добаффывают отставших. В модели «кому не досталось» они дали бы
+-- вечный список из всей группы и кнопку, которая ничего не исправляет.
 local BUFF = {
     DRUID = 1126,        -- Знак дикой природы
     PRIEST = 21562,      -- Слово силы: Стойкость
     MAGE = 1459,         -- Чародейский интеллект
     WARRIOR = 6673,      -- Боевой крик
+    SHAMAN = 462854,     -- Небесная ярость
+    EVOKER = 381732,     -- Благословение Бронзы
 }
+
+-- Заклинание, которым баффают, и аура, которая ложится на союзника, — разные
+-- вещи. У Благословения Бронзы вариант ауры зависит от класса цели, у
+-- Интеллекта и Знака дикой природы есть вторая версия. Сравнение по одному ID
+-- считало бы забаффанных незабаффанными, и кнопка горела бы всегда.
+local BUFF_AURAS = {
+    [1126]   = { 1126, 432661 },
+    [21562]  = { 21562 },
+    [1459]   = { 1459, 432778 },
+    [6673]   = { 6673 },
+    [462854] = { 462854 },
+    [381732] = {
+        381732, 381741, 381746, 381748, 381749, 381750, 381751,
+        381752, 381753, 381754, 381756, 381757, 381758,
+    },
+}
+
+local BUFF_AURA_SET = {}
+for buffID, list in pairs(BUFF_AURAS) do
+    local set = {}
+    for _, id in ipairs(list) do set[id] = true end
+    BUFF_AURA_SET[buffID] = set
+end
 
 function SmartClick:GetSettings()
     if type(MythicBoostDB) ~= "table" then return nil end
@@ -310,6 +342,7 @@ function SmartClick:MissingBuff()
     local _, class = UnitClass("player")
     local buffID = class and BUFF[class]
     if not buffID or not C_UnitAuras then return nil end
+    local wanted = BUFF_AURA_SET[buffID] or { [buffID] = true }
 
     local units = { "player" }
     if IsInRaid() then
@@ -329,7 +362,7 @@ function SmartClick:MissingBuff()
                 if blocked then return nil end
                 if not data then break end
                 local spellID = data.spellId
-                if not issecretvalue(spellID) and spellID == buffID then found = true; break end
+                if not issecretvalue(spellID) and wanted[spellID] then found = true; break end
             end
             -- Вне радиуса бафф не наложить, и в список такие не идут: иначе
             -- кнопка горела бы вечно из-за отставшего на другом конце данжа.
