@@ -45,6 +45,16 @@ function UI.UsableNumber(value)
     return type(value) == "number" and not issecretvalue(value)
 end
 
+-- Кэш, ключом которого служит чужой объект, обязан быть слабым по ключу.
+-- Иначе он держит этот объект живым вечно: закрытое окно Details или
+-- отпущенная сторонним аддоном таблица остаются в памяти только потому,
+-- что мы когда-то записали для них исходное состояние. Фреймы игра не собирает
+-- в любом случае, поэтому хуже от слабых ключей не становится нигде, а чистые
+-- Lua-таблицы перестают накапливаться.
+function UI.WeakKeys()
+    return setmetatable({}, { __mode = "k" })
+end
+
 local function Unpack(color)
     return color[1], color[2], color[3], color[4] or 1
 end

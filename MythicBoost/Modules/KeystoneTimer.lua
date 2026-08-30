@@ -463,9 +463,26 @@ function KeystoneTimer:Create()
     self.events:SetScript("OnEvent", function(_, event, ...) self:OnEvent(event, ...) end)
 end
 
+-- Рекорды ложатся в SavedVariables посезонными вёдрами и раньше не чистились
+-- никогда: каждый сезон — восемь подземелий на два десятка уровней, и в
+-- каждой записи ещё таблица времён по боссам. Прошлый сезон оставляем:
+-- сразу после смены сезона с ним ещё сравниваются результаты.
+function KeystoneTimer:PruneOldSeasons()
+    local current = SafeCall(C_MythicPlus and C_MythicPlus.GetCurrentSeason)
+    -- Ноль и nil приходят, пока игра ещё не отдала сезон. Чистить по такому
+    -- ответу — значит однажды стереть всё на ровном месте.
+    if not UI.UsableNumber(current) or current <= 0 then return end
+    local best = Settings().best
+    for seasonID in pairs(best) do
+        local season = tonumber(seasonID)
+        if not season or season < current - 1 then best[seasonID] = nil end
+    end
+end
+
 function KeystoneTimer:Enable()
     Settings()
     C_Timer.After(1.5, function()
+        self:PruneOldSeasons()
         self:ImportMPlusTimerHistory()
         if self:IsActive() then self:Start(false) end
     end)

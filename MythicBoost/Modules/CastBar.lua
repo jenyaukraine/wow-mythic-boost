@@ -310,7 +310,7 @@ function CastBar:ParkBlizzard()
     self.enabled = true
     self.hider = self.hider or CreateFrame("Frame", nil, UIParent)
     self.hider:Hide()
-    self.parkedBars = self.parkedBars or {}
+    self.parkedBars = self.parkedBars or UI.WeakKeys()
 
     local seen = {}
     for _, bar in ipairs({
