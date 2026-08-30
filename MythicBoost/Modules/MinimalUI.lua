@@ -1035,8 +1035,8 @@ local ACTION_BUTTON_PREFIXES = {
     "MultiBar6Button", "MultiBar7Button", "PetActionButton", "StanceButton",
     "PossessButton",
 }
-local ACTION_ICON_INSET = 2
-local ACTION_BORDER_INSET = 1
+local ACTION_ICON_INSET = 1
+local ACTION_BORDER_INSET = 0
 
 local function ActionButtons()
     local buttons = {}
