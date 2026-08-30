@@ -401,12 +401,18 @@ function KeystoneTimer:TogglePreview()
 end
 
 function KeystoneTimer:AutoSlotKey()
-    if not Settings().autoSlotKey or IsShiftKeyDown() or not C_Container then return end
+    if not Settings().autoSlotKey or IsShiftKeyDown() or not C_Container
+        or type(C_Container.GetContainerNumSlots) ~= "function"
+        or type(C_Container.GetContainerItemID) ~= "function"
+        or type(C_Container.UseContainerItem) ~= "function" then return end
     for bag = 0, (NUM_BAG_SLOTS or 4) do
-        for slot = 1, C_Container.GetContainerNumSlots(bag) do
+        local slotCount = C_Container.GetContainerNumSlots(bag)
+        slotCount = UI.UsableNumber(slotCount) and slotCount or 0
+        for slot = 1, slotCount do
             local itemID = C_Container.GetContainerItemID(bag, slot)
             if itemID and C_Item and C_Item.IsItemKeystoneByID and C_Item.IsItemKeystoneByID(itemID) then
-                C_Container.UseContainerItem(bag, slot); return
+                pcall(C_Container.UseContainerItem, bag, slot)
+                return
             end
         end
     end

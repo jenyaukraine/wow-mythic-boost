@@ -373,6 +373,7 @@ local function StyleMinimapAddonButtons(self, enabled)
     self.minimapAddonLayouts = self.minimapAddonLayouts or UI.WeakKeys()
     self.minimapButtonSlots = self.minimapButtonSlots or UI.WeakKeys()
     self.minimapButtonRows = self.minimapButtonRows or UI.WeakKeys()
+    self.minimapKnownButtons = self.minimapKnownButtons or UI.WeakKeys()
     if not enabled then
         for button, state in pairs(self.minimapAddonLayouts) do
             if button and type(button.SetPoint) == "function" then
@@ -426,9 +427,19 @@ local function StyleMinimapAddonButtons(self, enabled)
     end
     -- AddonCompartmentFrame already represents the whole addon collection.
     -- Including it in our own collection produced a second count button.
-    for name, object in pairs(_G) do
-        if type(name) == "string" and name:match("^LibDBIcon10_") then Add(object) end
+    -- Scanning every global object on the 2.5-second maintenance tick was both
+    -- expensive and unnecessary. Discover buttons once, then rescan only when
+    -- another load-on-demand addon has actually loaded.
+    if not self.minimapAddonScanned or self.minimapAddonScanDirty then
+        for name, object in pairs(_G) do
+            if type(name) == "string" and name:match("^LibDBIcon10_") then
+                self.minimapKnownButtons[object] = true
+            end
+        end
+        self.minimapAddonScanned = true
+        self.minimapAddonScanDirty = nil
     end
+    for button in pairs(self.minimapKnownButtons) do Add(button) end
     table.sort(buttons, function(a, b) return ButtonLabel(a):lower() < ButtonLabel(b):lower() end)
 
     local function EnsureSlot(button)
@@ -1947,7 +1958,10 @@ function MinimalUI:Create()
             self:Apply()
         end)
     end
-    self.events:SetScript("OnEvent", QueueApply)
+    self.events:SetScript("OnEvent", function(_, event)
+        if event == "ADDON_LOADED" then self.minimapAddonScanDirty = true end
+        QueueApply()
+    end)
     QueueApply()
 end
 

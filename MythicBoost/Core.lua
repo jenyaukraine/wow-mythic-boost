@@ -321,6 +321,21 @@ local function InitializeDatabase()
     elseif db.bagUI.enabled == nil then
         db.bagUI.enabled = false
     end
+    -- BagUI is no longer loaded. Remove its historical captured errors once so
+    -- the in-game journal reflects the current build instead of dead code.
+    if db.bagUI.errorLogPruned ~= 1 then
+        if type(db.errorGuard) == "table" and type(db.errorGuard.log) == "table" then
+            for index = #db.errorGuard.log, 1, -1 do
+                local entry = db.errorGuard.log[index]
+                local key = type(entry) == "table" and type(entry.key) == "string" and entry.key or ""
+                local message = type(entry) == "table" and type(entry.message) == "string" and entry.message or ""
+                if key:find("/BagUI.lua", 1, true) or message:find("/BagUI.lua", 1, true) then
+                    table.remove(db.errorGuard.log, index)
+                end
+            end
+        end
+        db.bagUI.errorLogPruned = 1
+    end
     -- Начиная с версии БД 3 все перемещаемые элементы используют один режим.
     -- При первом запуске после обновления сохраняем прежнее разблокированное
     -- состояние, но больше не держим три независимых переключателя.

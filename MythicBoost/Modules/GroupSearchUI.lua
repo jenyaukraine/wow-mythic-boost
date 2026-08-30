@@ -76,12 +76,15 @@ local function OwnedKeystoneListingInfo()
     end
 end
 
--- Один аппаратный клик создаёт штатное объявление Blizzard. Заголовок
--- формируется их API для собственного камня (включая +уровень), а стиль
--- FunSerious в русской локализации отображается как «Серьёзный».
-local function CreateOwnKeystoneListing(button)
+-- Creating a listing is protected by Blizzard. Open and prefill the native
+-- creation form; the player performs the final protected click there.
+local function OpenOwnKeystoneListingForm()
     if InCombatLockdown and InCombatLockdown() then
         JP:Print(L("Создание группы недоступно в бою."))
+        return
+    end
+    if type(C_LFGList) ~= "table" then
+        JP:Print(L("Blizzard API создания группы пока не загружен."))
         return
     end
     if C_LFGList.HasActiveEntryInfo and C_LFGList.HasActiveEntryInfo() then
@@ -94,43 +97,47 @@ local function CreateOwnKeystoneListing(button)
         return
     end
 
-    local activityID, groupID, level = OwnedKeystoneListingInfo()
+    local activityID, groupID = OwnedKeystoneListingInfo()
     if not activityID then
         JP:Print(L("Свой мифический ключ не найден."))
         return
     end
 
     local serious = Enum and Enum.LFGEntryGeneralPlaystyle and Enum.LFGEntryGeneralPlaystyle.FunSerious
-    local legacyNone = Enum and Enum.LFGEntryPlaystyle and Enum.LFGEntryPlaystyle.None or 0
-    if not serious or type(C_LFGList.CreateListing) ~= "function" then
+    local pveFilter = Enum and Enum.LFGListFilter and Enum.LFGListFilter.PvE
+    local activityInfo = C_LFGList.GetActivityInfoTable and C_LFGList.GetActivityInfoTable(activityID)
+    local categoryID = type(activityInfo) == "table" and activityInfo.categoryID
+    if not serious or not pveFilter or not UsableNumber(categoryID) then
         JP:Print(L("Blizzard API создания группы пока не загружен."))
         return
     end
 
-    if C_LFGList.ClearCreationTextFields then C_LFGList.ClearCreationTextFields() end
-    if C_LFGList.SetEntryTitle then
-        pcall(C_LFGList.SetEntryTitle, activityID, groupID, legacyNone, serious)
+    if C_AddOns and C_AddOns.LoadAddOn then
+        pcall(C_AddOns.LoadAddOn, "Blizzard_PVEFrame")
+        pcall(C_AddOns.LoadAddOn, "Blizzard_GroupFinder")
     end
-    local createData = {
-        activityIDs = { activityID },
-        questID = 0,
-        isAutoAccept = false,
-        isCrossFactionListing = true,
-        isPrivateGroup = false,
-        playstyle = legacyNone,
-        generalPlaystyle = serious,
-        requiredDungeonScore = 0,
-        requiredItemLevel = 0,
-        requiredPvpRating = 0,
-    }
-    local ok, created = pcall(C_LFGList.CreateListing, createData)
-    -- В разных сборках CreateListing либо возвращает true, либо ничего.
-    -- Явный false считаем отказом, nil при успешном вызове -- нормой.
-    if ok and created ~= false then
-        if button then button:SetText(L("Группа создана")) end
-        JP:Print((L("Зарегистрирован свой ключ +%d, режим «Серьёзный».")):format(level))
-    else
-        JP:Print(L("Blizzard не создал объявление. Проверь ограничения поиска групп."))
+    local ready = _G.PVEFrame_ShowFrame and _G.LFGListPVEStub and _G.LFGListFrame
+        and _G.LFGListEntryCreation_Show and _G.LFGListEntryCreation_Select
+        and _G.LFGListEntryCreation_OnPlayStyleSelectedInternal
+    if not ready then
+        JP:Print(L("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз."))
+        return
+    end
+
+    local filters = UsableNumber(activityInfo.filters) and activityInfo.filters or 0
+    local welcome = JP.modules and JP.modules.Welcome
+    local restoreWelcome = welcome and welcome.frame and welcome.frame:IsShown()
+    if restoreWelcome then welcome.frame:Hide() end
+    local ok = pcall(function()
+        PVEFrame_ShowFrame("GroupFinderFrame", LFGListPVEStub)
+        local panel = LFGListFrame.EntryCreation
+        LFGListEntryCreation_Show(panel, pveFilter, categoryID, filters)
+        LFGListEntryCreation_Select(panel, filters, categoryID, groupID, activityID)
+        LFGListEntryCreation_OnPlayStyleSelectedInternal(panel, serious)
+    end)
+    if not ok then
+        if restoreWelcome then welcome.frame:Show() end
+        JP:Print(L("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз."))
     end
 end
 
@@ -2189,10 +2196,10 @@ local function BuildFilterPanel(welcome, body)
     welcome.createOwnKey = UI.Button(summary, L("Собрать свой ключ"), 190, 22, true)
     welcome.createOwnKey:SetPoint("BOTTOMLEFT", 10, 7)
     welcome.createOwnKey:SetPoint("BOTTOMRIGHT", -10, 7)
-    welcome.createOwnKey:SetScript("OnClick", function(self) CreateOwnKeystoneListing(self) end)
+    welcome.createOwnKey:SetScript("OnClick", OpenOwnKeystoneListingForm)
     welcome.createOwnKey:HookScript("OnEnter", function(self)
         UI.Tooltip(self, L("Собрать свой ключ"),
-            L("Одним кликом зарегистрировать текущий ключ в поиске групп."),
+            L("Открыть «Подземелья и рейды» — там создаётся и меняется само объявление."),
             L("Подземелье и +уровень берутся из камня, режим — «Серьёзный»."))
     end)
     welcome.createOwnKey:HookScript("OnLeave", GameTooltip_Hide)
