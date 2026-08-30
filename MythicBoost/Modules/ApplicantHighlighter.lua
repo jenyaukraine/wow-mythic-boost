@@ -167,21 +167,6 @@ local function SkinPanel(viewer)
         topLine:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .75)
         viewer.__mbTopLine = topLine
 
-        local empty = CreateFrame("Frame", nil, inset, "BackdropTemplate")
-        empty:SetSize(390, 68)
-        empty:SetPoint("TOP", 0, -34)
-        UI.Backdrop(empty, { .075, .105, .140, .98 }, { .16, .52, .70, 1 })
-        local emptyAccent = empty:CreateTexture(nil, "OVERLAY")
-        emptyAccent:SetPoint("TOPLEFT", 1, -1)
-        emptyAccent:SetPoint("BOTTOMLEFT", 1, 1)
-        emptyAccent:SetWidth(3)
-        emptyAccent:SetColorTexture(UI.Unpack(C.accent))
-        empty.title = UI.Text(empty, "GameFontNormal", L("ОЖИДАЕМ КАНДИДАТОВ"), C.accent)
-        empty.title:SetPoint("TOP", 0, -12)
-        empty.description = UI.Text(empty, "GameFontHighlightSmall",
-            L("Группа открыта. Новые заявки появятся в этом списке."), C.text)
-        empty.description:SetPoint("TOP", empty.title, "BOTTOM", 0, -8)
-        viewer.__mbEmptyState = empty
     end
 
     for _, key in ipairs({ "NameColumnHeader", "RoleColumnHeader", "ItemLevelColumnHeader", "RatingColumnHeader" }) do
@@ -241,9 +226,8 @@ function ApplicantHighlighter:Refresh()
     local viewer = LFGListFrame and LFGListFrame.ApplicationViewer
     local scrollBox = viewer and viewer.ScrollBox
     if not scrollBox or not viewer:IsVisible() then return end
-    local visibleMembers = BuildSelection()
+    BuildSelection()
     SkinPanel(viewer)
-    if viewer.__mbEmptyState then viewer.__mbEmptyState:SetShown((visibleMembers or 0) == 0) end
     local rowIndex = 0
     scrollBox:ForEachFrame(function(button)
         rowIndex = rowIndex + 1
