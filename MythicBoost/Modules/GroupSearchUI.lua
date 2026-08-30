@@ -22,7 +22,15 @@ local ACTIVITY_GROUP_BY_MAP = {
 
 local MAX_RESULT_ROWS = 12
 local ROW_HEIGHT, ROW_STEP = 62, 68
-local CARD_HEIGHT, CARD_GAP = 116, 8
+local CARD_HEIGHT, CARD_GAP = 80, 8
+local CARD_PAD = 12
+local CARD_ICON = 56
+local CARD_COLUMN = CARD_PAD + CARD_ICON + 12
+local CARD_ITEM_SIZE, CARD_ITEM_STEP = 24, 28
+local CARD_BADGE_H = 24
+local CARD_ROW_TITLE = -14
+local CARD_ROW_ITEMS = -48
+local ART_LEFT, ART_RIGHT, ART_TOP, ART_BOTTOM = .095, .775, .237, .897
 local CARDS_HEIGHT = 30 + CARD_HEIGHT * 2 + CARD_GAP + 10
 local FILTERS_WIDTH = 238
 -- Эти функции используются серверным фильтром, который объявлен раньше
@@ -1338,14 +1346,14 @@ local function SetCardSelected(card, selected)
     card.selected = selected and true or false
     card:SetBackdropColor(selected and .085 or .050, selected and .105 or .062, selected and .135 or .080, .96)
     if selected and card.isLootBest then
-        card:SetBackdropBorderColor(1, .58, .12, 1)
-    elseif selected and card.hasUsefulLoot then
-        card:SetBackdropBorderColor(.58, .25, .92, 1)
+        card:SetBackdropBorderColor(UI.Unpack(C.amber))
+    elseif selected then
+        card:SetBackdropBorderColor(UI.Unpack(C.accent))
     else
-        card:SetBackdropBorderColor(selected and .18 or .12, selected and .58 or .16, selected and .78 or .21, 1)
+        card:SetBackdropBorderColor(UI.Unpack(C.line))
     end
     card.accent:SetShown(card.selected)
-    card.art:SetAlpha(selected and .32 or .10)
+    card.art:SetAlpha(selected and .46 or .24)
     card.art:SetDesaturated(not selected)
     card.icon:SetDesaturated(not selected)
     card.icon:SetAlpha(selected and 1 or .55)
@@ -1383,26 +1391,13 @@ end
 
 local function LayoutCardLoot(card, upgrades)
     upgrades = upgrades or {}
-    -- В узких карточках предметы больше не продолжают ехать вправо за рамку.
-    -- Максимум три иконки в строке, остаток уходит во второй ряд.
-    local perRow = math.max(1, math.min(3, math.floor((card:GetWidth() - 72) / 28)))
-    local capacity = perRow * 2
-    local visibleCount = math.min(#upgrades, capacity, #(card.lootItems or {}))
-    local widestRow = math.min(perRow, visibleCount)
-    local lootWidth = widestRow > 0 and (widestRow * 24 + (widestRow - 1) * 4) or 0
-    local groupWidth = 42 + (visibleCount > 0 and 10 + lootWidth or 0)
-    local groupX = math.max(8, math.floor((card:GetWidth() - groupWidth) / 2))
-
-    card.iconBorder:ClearAllPoints()
-    card.iconBorder:SetPoint("TOPLEFT", groupX, -34)
+    local available = card:GetWidth() - CARD_COLUMN - CARD_PAD
+    local perRow = math.max(1, math.min(#(card.lootItems or {}), math.floor(available / CARD_ITEM_STEP)))
+    local capacity = perRow
     for index, button in ipairs(card.lootItems or {}) do
-        local column = (index - 1) % perRow
-        local row = math.floor((index - 1) / perRow)
-        local rowCount = math.min(perRow, math.max(0, visibleCount - row * perRow))
-        local rowWidth = rowCount > 0 and (rowCount * 24 + (rowCount - 1) * 4) or 0
-        local rowX = groupX + 52 + math.floor((lootWidth - rowWidth) / 2)
+        local column = index - 1
         button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", rowX + column * 28, -32 - row * 28)
+        button:SetPoint("TOPLEFT", CARD_COLUMN + column * CARD_ITEM_STEP, CARD_ROW_ITEMS)
         SetLootItem(button, index <= capacity and upgrades[index] or nil)
     end
 end
@@ -1462,9 +1457,7 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
 
             if dungeon.background then
                 card.art:SetTexture(dungeon.background)
-                -- Справа в Challenge Mode-фон уже вшит чёрный градиент под текст.
-                -- Обрезаем эту часть и растягиваем чистую иллюстрацию на всю карточку.
-                card.art:SetTexCoord(.02, .70, .12, .78)
+                card.art:SetTexCoord(ART_LEFT, ART_RIGHT, ART_TOP, ART_BOTTOM)
                 card.art:Show()
             elseif dungeon.icon then
                 card.art:SetTexture(dungeon.icon)
@@ -1571,13 +1564,13 @@ local function CreateDungeonCard(parent, welcome)
     card.art:SetPoint("BOTTOMRIGHT", -1, 1)
     card.art:SetAlpha(.3)
 
-    local scrim = UI.Scrim(card, "BORDER", 0, .55)
+    local scrim = UI.Scrim(card, "BORDER", 0, .34)
     scrim:SetPoint("TOPLEFT", 1, -1)
     scrim:SetPoint("BOTTOMRIGHT", -1, 1)
 
     card.iconBorder = CreateFrame("Frame", nil, card, "BackdropTemplate")
-    card.iconBorder:SetSize(42, 42)
-    card.iconBorder:SetPoint("TOPLEFT", 10, -19)
+    card.iconBorder:SetSize(CARD_ICON, CARD_ICON)
+    card.iconBorder:SetPoint("TOPLEFT", CARD_PAD, -CARD_PAD)
     UI.Backdrop(card.iconBorder, { .02, .03, .04, 1 }, C.line)
 
     card.icon = card.iconBorder:CreateTexture(nil, "ARTWORK")
@@ -1587,45 +1580,50 @@ local function CreateDungeonCard(parent, welcome)
     card.iconLabel = UI.Text(card.iconBorder, "GameFontNormal", "", C.accentDim)
     card.iconLabel:SetPoint("CENTER", 0, 0)
 
-    card.loot = UI.Text(card, "GameFontNormalSmall", "", C.faint)
-    card.loot:SetPoint("BOTTOMLEFT", 10, 6)
-    card.loot:SetWidth(42)
-    card.loot:SetJustifyH("CENTER")
+    card.bestBadge = CreateFrame("Frame", nil, card, "BackdropTemplate")
+    card.bestBadge:SetSize(CARD_ICON - 2, CARD_ICON - 2)
+    card.bestBadge:SetPoint("CENTER", card.iconBorder, "CENTER", 0, 0)
+
+    card.loot = UI.Text(card, "GameFontNormal", "", C.faint)
+    card.loot:SetPoint("TOPRIGHT", -CARD_PAD, CARD_ROW_TITLE)
+    card.loot:SetHeight(CARD_BADGE_H)
+    card.loot:SetJustifyH("RIGHT")
 
     card.title = UI.Text(card, "GameFontNormal", "", C.text)
-    card.title:SetPoint("TOPLEFT", 10, -7)
-    card.title:SetPoint("TOPRIGHT", card, "TOPRIGHT", -10, -7)
-    card.title:SetJustifyH("CENTER")
-    card.title:SetJustifyV("TOP")
-    card.title:SetHeight(28)
+    card.title:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_TITLE)
+    card.title:SetPoint("RIGHT", card.loot, "LEFT", -10, 0)
+    card.title:SetJustifyH("LEFT")
+    card.title:SetJustifyV("MIDDLE")
+    card.title:SetHeight(CARD_BADGE_H)
+    card.title:SetWordWrap(false)
     card.title:SetShadowColor(0, 0, 0, 1)
     card.title:SetShadowOffset(1, -1)
 
-    card.bestBadge = CreateFrame("Frame", nil, card, "BackdropTemplate")
-    card.bestBadge:SetSize(58, 20)
-    card.bestBadge:SetPoint("BOTTOM", 0, 5)
-    UI.Backdrop(card.bestBadge, { .025, .055, .045, .88 }, { .16, .48, .34, .82 })
-    card.best = UI.Text(card.bestBadge, "GameFontNormalSmall", "")
+    card.best = UI.Text(card.bestBadge, "GameFontNormalLarge", "")
     card.best:SetPoint("CENTER", 0, 0)
     card.best:SetWordWrap(false)
+    local bestFont = card.best:GetFont()
+    if bestFont then card.best:SetFont(bestFont, 22, "THICKOUTLINE") end
+    card.best:SetShadowColor(0, 0, 0, 1)
+    card.best:SetShadowOffset(2, -2)
 
     -- Полезные предметы прямо в карточке. Наведение показывает обычный
     -- предметный tooltip Blizzard и окно сравнения с надетой вещью.
     card.lootItems = {}
     for index = 1, 5 do
         local itemButton = CreateFrame("Button", nil, card, "BackdropTemplate")
-        itemButton:SetSize(24, 24)
-        itemButton:SetPoint("TOPLEFT", 62, -38)
+        itemButton:SetSize(CARD_ITEM_SIZE, CARD_ITEM_SIZE)
+        itemButton:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_ITEMS)
         UI.Backdrop(itemButton, { .025, .033, .044, .98 }, { .25, .32, .40, 1 })
         itemButton.icon = itemButton:CreateTexture(nil, "ARTWORK")
         itemButton.icon:SetPoint("TOPLEFT", 2, -2)
         itemButton.icon:SetPoint("BOTTOMRIGHT", -2, 2)
         itemButton.gain = UI.Text(itemButton, "GameFontNormalSmall", "", C.green)
-        itemButton.gain:SetPoint("BOTTOMRIGHT", 3, -2)
+        itemButton.gain:SetPoint("BOTTOMRIGHT", -1, 1)
         itemButton.gain:SetShadowColor(0, 0, 0, 1)
         itemButton.gain:SetShadowOffset(1, -1)
         itemButton.badge = UI.Text(itemButton, "GameFontNormalSmall", "")
-        itemButton.badge:SetPoint("TOPLEFT", 1, 1)
+        itemButton.badge:SetPoint("TOPLEFT", 1, -1)
         itemButton.badge:SetShadowColor(0, 0, 0, 1)
         itemButton.badge:SetShadowOffset(1, -1)
         itemButton:SetScript("OnEnter", function(self)
