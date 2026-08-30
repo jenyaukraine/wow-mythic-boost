@@ -10,6 +10,7 @@ local DEFAULT_WIDTH, DEFAULT_HEIGHT = 1320, 840
 -- вкладок, и половина высоты уходила в пустоту.
 local MIN_WIDTH, MIN_HEIGHT = 1000, 560
 local HEADER_HEIGHT = 64
+local WINDOW_ALPHA = .94
 
 local function SaveWindow(frame)
     if frame.maximized then return end
@@ -124,6 +125,7 @@ function Welcome:Create()
     local saved = MythicBoostDB.window
     frame:SetSize(saved.width or DEFAULT_WIDTH, saved.height or DEFAULT_HEIGHT)
     frame:SetFrameStrata("DIALOG")
+    frame:SetAlpha(WINDOW_ALPHA)
     frame:SetClampedToScreen(true)
     frame:EnableMouse(true)
     frame:SetMovable(true)
