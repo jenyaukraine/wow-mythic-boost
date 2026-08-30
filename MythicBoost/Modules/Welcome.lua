@@ -4,7 +4,10 @@ local UI = JP.UI
 local C = UI.colors
 
 local DEFAULT_WIDTH, DEFAULT_HEIGHT = 1320, 840
-local MIN_WIDTH, MIN_HEIGHT = 1160, 700
+-- Пять вкладок требуют 12 + 5*146 = 742 пикселя, остальное отдаём под
+-- содержимое. Прежние 1160x700 держали окно больше, чем нужно любой из
+-- вкладок, и половина высоты уходила в пустоту.
+local MIN_WIDTH, MIN_HEIGHT = 1000, 560
 local HEADER_HEIGHT = 64
 
 local function SaveWindow(frame)
@@ -142,11 +145,12 @@ function Welcome:Create()
         { key = "groups", label = "ПОДБОР ГРУПП" },
         { key = "applicants", label = "ПАТИ / КАНДИДАТЫ" },
         { key = "guild", label = "РЕЙТИНГ ГИЛЬДИИ" },
+        { key = "upgrades", label = "УЛУЧШЕНИЯ" },
         { key = "settings", label = "НАСТРОЙКИ" },
     }
     for index, item in ipairs(order) do
-        local tab = UI.Tab(frame, item.label, 168)
-        tab:SetPoint("TOPLEFT", 12 + (index - 1) * 174, tabTop)
+        local tab = UI.Tab(frame, item.label, 140)
+        tab:SetPoint("TOPLEFT", 12 + (index - 1) * 146, tabTop)
         tab:SetScript("OnClick", function() self:SwitchPage(item.key) end)
         self.tabs[item.key] = tab
     end
@@ -169,13 +173,22 @@ function Welcome:Create()
     applicants:Hide()
     JP.ApplicantBoard:Build(self, applicants)
 
+    local upgrades = UI.Panel(frame, C.panel, C.line)
+    upgrades:SetPoint("TOPLEFT", 12, pageTop)
+    upgrades:SetPoint("BOTTOMRIGHT", -12, 12)
+    upgrades:Hide()
+    JP.UpgradeCalculator:Build(self, upgrades)
+
     local settings = UI.Panel(frame, C.panel, C.line)
     settings:SetPoint("TOPLEFT", 12, pageTop)
     settings:SetPoint("BOTTOMRIGHT", -12, 12)
     settings:Hide()
     JP.SettingsHub:Build(self, settings)
 
-    self.pages = { groups = groups, applicants = applicants, guild = guild, settings = settings }
+    self.pages = {
+        groups = groups, applicants = applicants, guild = guild,
+        upgrades = upgrades, settings = settings,
+    }
     self.currentPage = "groups"
     self.tabs.groups:SetActive(true)
 
@@ -263,6 +276,11 @@ function Welcome:Refresh()
     end
     if self.currentPage == "applicants" then
         JP.ApplicantBoard:Refresh()
+        self.status:SetText("")
+        return
+    end
+    if self.currentPage == "upgrades" then
+        JP.UpgradeCalculator:Refresh()
         self.status:SetText("")
         return
     end

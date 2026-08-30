@@ -63,6 +63,24 @@ function SmartClick:GetSettings()
     return settings
 end
 
+-- Правда ли значение, которое может прийти защищённым. Защищённый boolean
+-- нельзя сравнивать (`== true` бросает ошибку), поэтому сначала проверяем сам
+-- факт защищённости, и только потом сравниваем.
+local function IsTrue(value)
+    return not issecretvalue(value) and value == true
+end
+
+-- Ауры в Midnight из tainted-кода не просто приходят защищёнными — сам вызов
+-- GetAuraDataByIndex бросает ошибку прямо из C. Проверить это заранее нечем,
+-- поэтому единственный рабочий способ — pcall. Второе значение говорит, что
+-- ауры закрыты вообще, а не что их просто не осталось.
+local function SafeAura(unit, index, filter)
+    if not C_UnitAuras or type(C_UnitAuras.GetAuraDataByIndex) ~= "function" then return nil, true end
+    local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+    if not ok then return nil, true end
+    return data, false
+end
+
 -- Имя нужно ровно то, что понимает макрос. Заклинание, которого игрок не
 -- знает, в макрос не попадает: иначе клик молча ничего не делает, и человек
 -- считает, что сломана галочка, а не отсутствует способность.
@@ -71,7 +89,7 @@ local function SpellName(spellID)
     local known = false
     if type(IsPlayerSpell) == "function" then
         local ok, result = pcall(IsPlayerSpell, spellID)
-        known = ok and result == true
+        known = ok and IsTrue(result)
     end
     if not known then return end
     if C_Spell and type(C_Spell.GetSpellInfo) == "function" then
@@ -235,7 +253,7 @@ function SmartClick:Diagnose()
         if not id then
             JP:Print(("  %s: у класса нет"):format(label))
         else
-            local known = type(IsPlayerSpell) == "function" and select(2, pcall(IsPlayerSpell, id)) == true
+            local known = type(IsPlayerSpell) == "function" and IsTrue(select(2, pcall(IsPlayerSpell, id)))
             local name = SpellName(id)
             JP:Print(("  %s: id %d, изучено: %s, имя: %s"):format(
                 label, id, tostring(known), tostring(name or "не получено")))
@@ -297,14 +315,27 @@ function SmartClick:MissingBuff()
         if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and UnitIsConnected(unit) then
             local found = false
             for index = 1, 40 do
-                local data = C_UnitAuras.GetAuraDataByIndex(unit, index, "HELPFUL")
+                local data, blocked = SafeAura(unit, index, "HELPFUL")
+                -- Ауры закрыты целиком — подсказка по баффу сейчас невозможна,
+                -- и перебирать оставшиеся тридцать девять слотов незачем.
+                if blocked then return nil end
                 if not data then break end
-                if data.spellId == buffID then found = true; break end
+                local spellID = data.spellId
+                if not issecretvalue(spellID) and spellID == buffID then found = true; break end
             end
             -- Вне радиуса бафф не наложить, и в список такие не идут: иначе
             -- кнопка горела бы вечно из-за отставшего на другом конце данжа.
-            if not found and UnitInRange(unit) ~= false then
-                missing[#missing + 1] = UnitName(unit) or unit
+            --
+            -- UnitInRange под taint возвращает защищённый boolean. В условии
+            -- такое значение работает, а сравнивать его нельзя — на этом
+            -- падало. Неизвестность считаем «в радиусе»: лучше лишнее имя в
+            -- подсказке, чем молча потерянный игрок.
+            local inRange = UnitInRange(unit)
+            local outOfRange = false
+            if not issecretvalue(inRange) then outOfRange = inRange == false end
+            if not found and not outOfRange then
+                local name = UnitName(unit)
+                missing[#missing + 1] = (not issecretvalue(name) and name) or unit
             end
         end
     end
@@ -320,13 +351,21 @@ function SmartClick:BuildBuffButton()
     local name = SpellName(buffID)
     if not name then return nil end
 
-    local button = CreateFrame("Button", "MythicBoostBuffButton", UIParent, "SecureActionButtonTemplate")
+    -- BackdropTemplate обязателен: без него у кнопки нет SetBackdrop, и
+    -- UI.Backdrop ниже падает. Раньше это не всплывало, потому что MissingBuff
+    -- обрывалась ошибкой раньше и до создания кнопки дело не доходило.
+    local button = CreateFrame("Button", "MythicBoostBuffButton", UIParent,
+        "SecureActionButtonTemplate, BackdropTemplate")
     button:SetSize(BUFF_BUTTON_SIZE, BUFF_BUTTON_SIZE)
     button:SetPoint("CENTER", UIParent, "CENTER", 0, -160)
     button:SetFrameStrata("HIGH")
-    button:RegisterForClicks("AnyUp")
+    -- И нажатие, и отпускание. У клиента есть настройка «применять способность
+    -- по нажатию клавиши», и при ней кнопка, зарегистрированная только на
+    -- отпускание, молчит: наведение работает, тултип есть, а каста нет.
+    button:RegisterForClicks("AnyUp", "AnyDown")
     button:SetAttribute("type", "macro")
     button:SetAttribute("macrotext", "/cast " .. name)
+    button.spellName = name
 
     UI.Backdrop(button, C.surface, C.edge)
     button.icon = button:CreateTexture(nil, "ARTWORK")
@@ -365,6 +404,17 @@ function SmartClick:RefreshBuffButton()
     local missing = self:MissingBuff()
     local button = self:BuildBuffButton()
     if not button then return end
+
+    -- Макрос собирается один раз при создании кнопки, а заклинание у персонажа
+    -- может смениться вместе со специализацией. Переписываем вне боя, иначе
+    -- кнопка останется с прошлым кастом.
+    local _, class = UnitClass("player")
+    local current = class and BUFF[class] and SpellName(BUFF[class])
+    if current and current ~= button.spellName then
+        button:SetAttribute("macrotext", "/cast " .. current)
+        button.spellName = current
+    end
+
     if not missing then button:Hide(); return end
 
     button.missingText = table.concat(missing, ", ")

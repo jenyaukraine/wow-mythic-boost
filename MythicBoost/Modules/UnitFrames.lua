@@ -486,7 +486,9 @@ local function UpdateResourcePips(display)
         maximum = 6
         for index = 1, maximum do
             local ok, _, _, available = pcall(GetRuneCooldown, index)
-            ready[index] = ok and available == true
+            -- pcall прикрывает только сам вызов: сравнение защищённого boolean
+            -- за его пределами упало бы точно так же, как UnitInRange.
+            ready[index] = ok and IsBoolean(available, true)
             if ready[index] then current = current + 1 end
         end
     else
@@ -637,6 +639,18 @@ local function AuraTooltip(icon)
     else GameTooltip:Hide() end
 end
 
+-- Ауры в Midnight из tainted-кода не просто приходят защищёнными — сам вызов
+-- GetAuraDataByIndex бросает ошибку прямо из C («Auras cannot be accessed when
+-- secret while tainted»). Проверить это заранее нечем, поэтому чтение идёт
+-- через pcall. Второе значение отличает «ауры закрыты» от «ауры кончились»:
+-- в первом случае перебирать оставшиеся слоты бессмысленно.
+local function SafeAura(unit, index, filter)
+    if not C_UnitAuras or type(C_UnitAuras.GetAuraDataByIndex) ~= "function" then return nil, true end
+    local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+    if not ok then return nil, true end
+    return data, false
+end
+
 local function CancelPlayerBuff(icon, mouseButton)
     if mouseButton ~= "RightButton" or not icon.display or icon.display.unit ~= "player"
         or icon.harmful or not icon.auraInstanceID or type(CancelUnitBuff) ~= "function" then return end
@@ -644,10 +658,10 @@ local function CancelPlayerBuff(icon, mouseButton)
     -- gives our stable button an instance ID. Resolve the current index at the
     -- moment of the hardware click so sorting/removal cannot cancel a neighbor.
     for index = 1, 40 do
-        local data = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
-            and C_UnitAuras.GetAuraDataByIndex("player", index, "HELPFUL")
-        if not data then break end
-        if data.auraInstanceID == icon.auraInstanceID then
+        local data, blocked = SafeAura("player", index, "HELPFUL")
+        if blocked or not data then break end
+        local instanceID = data.auraInstanceID
+        if not issecretvalue(instanceID) and instanceID == icon.auraInstanceID then
             pcall(CancelUnitBuff, "player", index)
             GameTooltip:Hide()
             return
@@ -705,9 +719,13 @@ local function ReadAuras(display)
     if not C_UnitAuras or IsBoolean(UnitExists(display.unit), false) then return end
     for _, filter in ipairs({ "HARMFUL", "HELPFUL" }) do
         for index = 1, 40 do
-            local data = C_UnitAuras.GetAuraDataByIndex(display.unit, index, filter)
+            local data, blocked = SafeAura(display.unit, index, filter)
+            -- Ауры закрыты целиком: ряд останется с тем, что уже прочитано,
+            -- вместо сорока подряд падающих вызовов на каждое UNIT_AURA.
+            if blocked then return end
             if not data then break end
-            if data.auraInstanceID then display.cache[data.auraInstanceID] = data end
+            local instanceID = data.auraInstanceID
+            if instanceID and not issecretvalue(instanceID) then display.cache[instanceID] = data end
         end
     end
 end

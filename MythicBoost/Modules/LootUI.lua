@@ -518,7 +518,13 @@ function LootUI:RefreshRolls()
             local r, g, b = QualityColor(data.quality)
             row:SetBackdropBorderColor(r, g, b, .96)
             row.name:SetTextColor(r, g, b, 1)
-            local availability = { data.canNeed, data.canGreed, data.canDisenchant, data.canTransmog, true }
+            -- Права на бросок приходят от API и могут быть защищёнными, а
+            -- сравнивать такое значение нельзя. Снимаем защиту сразу здесь,
+            -- чтобы ниже сравнение шло с обычным булевым.
+            local availability = {
+                SafeValue(data.canNeed, false), SafeValue(data.canGreed, false),
+                SafeValue(data.canDisenchant, false), SafeValue(data.canTransmog, false), true,
+            }
             local visibleChoices = {}
             for choiceIndex, choice in ipairs(row.choices) do
                 choice:SetShown(availability[choiceIndex] == true)

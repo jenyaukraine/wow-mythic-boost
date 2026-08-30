@@ -846,12 +846,14 @@ function MinimalUI:StyleMicroMenu(enabled)
 
     local anchor = self.microMenuAnchor
     local mapWidth = math.max(120, Minimap:GetWidth() or 245)
-    local horizontalInset, gap = 2, 2
+    -- Чуть расширяем ряд относительно карты и почти убираем промежуток:
+    -- значки становятся крупнее, но меню по-прежнему остаётся одной строкой.
+    local horizontalInset, gap = 0, .5
     anchor:ClearAllPoints()
     -- Центром под картой, а не по правому краю: ряд может оказаться шире
     -- карты, и тогда он должен свисать одинаково с обеих сторон.
     anchor:SetPoint("TOP", Minimap, "BOTTOM", 0, -4)
-    anchor:SetWidth(mapWidth - horizontalInset * 2)
+    anchor:SetWidth(mapWidth + 14)
     anchor:Show()
 
     local visible = {}
