@@ -7,7 +7,14 @@ local MAX_ROWS = 10
 -- окно — узким: список добычи читают боковым зрением, и лишняя ширина только
 -- отнимает место у игрового экрана.
 local ROW_HEIGHT = 38
-local FRAME_WIDTH = 286
+-- Ширина считается по самой длинной строке, а не задаётся числом: на короткой
+-- добыче вроде «Расколотая кость» фиксированные 286 пикселей оставляли пол-окна
+-- пустым, а на длинных названиях всё равно обрезали текст.
+local FRAME_MIN_WIDTH, FRAME_MAX_WIDTH = 208, 340
+-- Всё, что в строке занято не текстом: поля окна, иконка и зазор после неё.
+local ROW_TEXT_INSET = 54
+-- Подвал несёт счётчик и закрытие одной полосой.
+local FOOTER_HEIGHT = 20
 local MAX_ROLL_ROWS = 4
 local ROLL_ROW_HEIGHT = 64
 local ROLL_FRAME_WIDTH = 460
@@ -24,6 +31,17 @@ local function Settings()
     if settings.showRolls == nil then settings.showRolls = true end
     if settings.showHistory == nil then settings.showHistory = true end
     return settings
+end
+
+-- «1 предмет», «2 предмета», «5 предметов». Числа 11–14 — исключение, которое
+-- ломает наивную проверку по последней цифре.
+local function ItemsWord(count)
+    local hundreds = count % 100
+    if hundreds >= 11 and hundreds <= 14 then return "предметов" end
+    local tail = count % 10
+    if tail == 1 then return "предмет" end
+    if tail >= 2 and tail <= 4 then return "предмета" end
+    return "предметов"
 end
 
 local function SafeValue(value, fallback)
@@ -182,15 +200,31 @@ function LootUI:Refresh()
             row:Hide()
         end
     end
-    self.frame.counter:SetFormattedText("%d", #slots)
     if #slots > MAX_ROWS then
-        self.frame.page:SetFormattedText("%d–%d / %d  •  колесо мыши",
+        self.frame.counter:SetFormattedText("%d–%d / %d  •  колесо",
             self.scrollOffset + 1, math.min(#slots, self.scrollOffset + MAX_ROWS), #slots)
-        self.frame.page:Show()
+    elseif #slots > 1 then
+        self.frame.counter:SetFormattedText("%d %s", #slots, ItemsWord(#slots))
     else
-        self.frame.page:Hide()
+        -- На одном предмете счётчик — шум: строка и так одна, её видно.
+        self.frame.counter:SetText("")
     end
-    self.frame:SetHeight(26 + shown * ROW_HEIGHT + (#slots > MAX_ROWS and 18 or 0))
+
+    -- Ширину берём по самой длинной видимой строке, но за сессию добычи только
+    -- увеличиваем: иначе окно дёргалось бы на каждом подобранном предмете и при
+    -- каждой прокрутке колесом.
+    local widest = 0
+    for _, row in ipairs(self.rows) do
+        if row:IsShown() then
+            widest = math.max(widest, row.name:GetStringWidth() or 0, row.detail:GetStringWidth() or 0)
+        end
+    end
+    local needed = math.max(FRAME_MIN_WIDTH,
+        math.min(FRAME_MAX_WIDTH, math.ceil(widest) + ROW_TEXT_INSET))
+    self.sessionWidth = math.max(self.sessionWidth or 0, needed)
+    self.frame:SetWidth(self.sessionWidth)
+
+    self.frame:SetHeight(6 + shown * ROW_HEIGHT + FOOTER_HEIGHT)
 end
 
 function LootUI:ShowLoot()
@@ -205,6 +239,9 @@ function LootUI:ShowLoot()
     end
     self.externalConflict = nil
     self.scrollOffset = 0
+    -- Новая добыча — новая ширина: накопленная за прошлый труп не должна
+    -- тянуться дальше.
+    self.sessionWidth = nil
     self:Refresh()
     if not self.slots or #self.slots == 0 then
         self.showAttempts = (self.showAttempts or 0) + 1
@@ -787,7 +824,7 @@ end
 function LootUI:Create()
     if self.frame then return end
     local frame = CreateFrame("Frame", "MythicBoostLootFrame", UIParent, "BackdropTemplate")
-    frame:SetSize(FRAME_WIDTH, 102)
+    frame:SetSize(FRAME_MIN_WIDTH, 102)
     frame:SetFrameStrata("DIALOG")
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
@@ -798,10 +835,28 @@ function LootUI:Create()
     -- XLoot has no title bar: entries begin at the top edge and a tiny footer
     -- carries only the close action. The footer remains a drag handle while
     -- the shared interface-move mode is active.
+    -- Блик по верхней кромке. Без него окно читается плоским прямоугольником:
+    -- ровная заливка от края до края не даёт глазу зацепиться за границу.
+    frame.sheen = frame:CreateTexture(nil, "BORDER")
+    frame.sheen:SetPoint("TOPLEFT", 1, -1)
+    frame.sheen:SetPoint("TOPRIGHT", -1, -1)
+    -- Ровно по видимому полю над первой строкой: строки — дочерние фреймы и
+    -- рисуются поверх текстур окна, так что более высокий блик просто уйдёт
+    -- под них.
+    frame.sheen:SetHeight(6)
+    frame.sheen:SetColorTexture(1, 1, 1, 1)
+    frame.sheen:SetGradient("VERTICAL",
+        CreateColor(.16, .80, .86, 0),
+        CreateColor(.16, .80, .86, .09))
+
     frame.header = CreateFrame("Button", nil, frame)
     frame.header:SetPoint("BOTTOMLEFT", 1, 1)
     frame.header:SetPoint("BOTTOMRIGHT", -1, 1)
-    frame.header:SetHeight(22)
+    frame.header:SetHeight(FOOTER_HEIGHT)
+
+    frame.footerLine = UI.Line(frame, C.lineSoft)
+    frame.footerLine:SetPoint("BOTTOMLEFT", 1, FOOTER_HEIGHT + 1)
+    frame.footerLine:SetPoint("BOTTOMRIGHT", -1, FOOTER_HEIGHT + 1)
     frame.header:RegisterForDrag("LeftButton")
     frame.header:SetScript("OnDragStart", function()
         if not Settings().atCursor and MythicBoostDB.interfaceUnlocked then frame:StartMoving() end
@@ -814,15 +869,19 @@ function LootUI:Create()
     -- a title or item counter above every corpse.
     frame.title = UI.Text(frame.header, "GameFontNormalSmall", "", C.accent)
     frame.title:Hide()
-    frame.counter = UI.Text(frame.header, "GameFontHighlight", "", C.muted)
-    frame.counter:Hide()
-    local close = UI.Button(frame, "Закрыть", 78, 18)
-    close:SetPoint("BOTTOM", 0, 3)
+
+    -- Счётчик и диапазон прокрутки живут слева в подвале, закрытие — справа.
+    -- Раньше «N–M / K» занимало отдельную строку над кнопкой: восемнадцать
+    -- пикселей высоты ради текста, который помещается рядом с ней.
+    frame.counter = UI.Text(frame.header, "GameFontHighlightSmall", "", C.faint)
+    frame.counter:SetPoint("LEFT", 8, 0)
+    frame.counter:SetJustifyH("LEFT")
+
+    local close = UI.Button(frame, "Закрыть", 62, 16)
+    close:SetPoint("RIGHT", frame.header, "RIGHT", -6, 0)
     close:SetScript("OnClick", function()
         if type(CloseLoot) == "function" then CloseLoot() else frame:Hide() end
     end)
-    frame.page = UI.Text(frame, "GameFontHighlightSmall", "", C.muted)
-    frame.page:SetPoint("BOTTOM", 0, 25)
 
     self.frame, self.rows = frame, {}
     for index = 1, MAX_ROWS do self:BuildRow(index) end
