@@ -1803,6 +1803,19 @@ function MinimalUI:Apply()
     self:StyleBags(hideBags)
     if JP.MinimalChat then JP.MinimalChat:Apply() end
 
+    -- Страховочный проход для тех слоёв, у которых нет своего события: панель
+    -- кулдаунов и окна Details создаются на лету чужим кодом, лента
+    -- бафов и миникарта перестраиваются молча.
+    --
+    -- Микроменю, трекер и панели кнопок отсюда убраны — у каждого
+    -- есть точный триггер, и тикер повторял их работу вхолостую:
+    --   микроменю — hooksecurefunc("UpdateMicroButtons") ниже в Create;
+    --   трекер    — hooksecurefunc(tracker, "Update") в StyleObjectiveTracker;
+    --   кнопки    — десяток ACTIONBAR_*/UPDATE_* событий выше плюс
+    --                добавленный EDIT_MODE_LAYOUTS_UPDATED.
+    -- Это были три самых дорогих прохода: рекурсивный обход всего
+    -- дерева трекера и одиннадцать семейств кнопок — двадцать четыре
+    -- раза в минуту, всегда, даже когда менять нечего.
     if enabled and not self.maintenanceTicker and C_Timer and C_Timer.NewTicker then
         self.maintenanceTicker = C_Timer.NewTicker(2.5, function()
             if not MythicBoostDB or not MythicBoostDB.minimalUI then return end
@@ -1810,9 +1823,6 @@ function MinimalUI:Apply()
             -- показывать и двигать свои макеты без борьбы с нашим тикером.
             if _G.EditModeManagerFrame and _G.EditModeManagerFrame:IsShown() then return end
             self:StyleMinimap(true)
-            self:StyleMicroMenu(true)
-            self:StyleObjectiveTracker(true)
-            self:StyleActionButtons(true)
             self:StyleCooldownEffectBars(true)
             self:StyleDetails(true)
             self:StylePlayerAuras(true)
@@ -1840,23 +1850,28 @@ function MinimalUI:Create()
         end)
     end
     self.events = CreateFrame("Frame")
-    self.events:RegisterEvent("PLAYER_ENTERING_WORLD")
-    self.events:RegisterEvent("ADDON_LOADED")
-    self.events:RegisterEvent("QUEST_LOG_UPDATE")
-    self.events:RegisterEvent("QUEST_WATCH_LIST_CHANGED")
-    self.events:RegisterEvent("SCENARIO_UPDATE")
-    self.events:RegisterEvent("TRACKED_ACHIEVEMENT_UPDATE")
-    self.events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
-    self.events:RegisterEvent("UPDATE_BINDINGS")
-    self.events:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
-    self.events:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
-    self.events:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-    self.events:RegisterEvent("PET_BAR_UPDATE")
-    self.events:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR")
-    self.events:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR")
-    self.events:RegisterEvent("UPDATE_POSSESS_BAR")
-    self.events:RegisterEvent("UPDATE_EXTRA_ACTIONBAR")
-    self.events:RegisterEvent("PLAYER_REGEN_ENABLED")
+    -- RegisterEvent на событие, которого нет в клиенте, бросает ошибку, а
+    -- вместе с ней падает весь Create — и модуль остаётся выключенным
+    -- целиком из-за одной переименованной строки в следующем патче.
+    -- Регистрируем по одному и переживаем пропажу любого.
+    for _, event in ipairs({
+        "PLAYER_ENTERING_WORLD", "ADDON_LOADED",
+        "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED",
+        "SCENARIO_UPDATE", "TRACKED_ACHIEVEMENT_UPDATE",
+        "ACTIONBAR_SLOT_CHANGED", "UPDATE_BINDINGS", "ACTIONBAR_PAGE_CHANGED",
+        "UPDATE_SHAPESHIFT_FORMS", "UPDATE_SHAPESHIFT_FORM", "PET_BAR_UPDATE",
+        "UPDATE_VEHICLE_ACTIONBAR", "UPDATE_OVERRIDE_ACTIONBAR",
+        "UPDATE_POSSESS_BAR", "UPDATE_EXTRA_ACTIONBAR",
+        -- Правка макета в режиме редактирования меняет и число панелей, и
+        -- ширину миникарты. Без этого события их подхватывал только
+        -- страховочный тикер — с задержкой до двух с половиной секунд.
+        "EDIT_MODE_LAYOUTS_UPDATED",
+        "PLAYER_REGEN_ENABLED",
+    }) do
+        if not pcall(self.events.RegisterEvent, self.events, event) then
+            JP:Log("MinimalUI: событие %s недоступно в этом клиенте", event)
+        end
+    end
     -- Событий здесь два десятка, и часть приходит пачками: ACTIONBAR_SLOT_CHANGED
     -- прилетает по одному на слот, а UPDATE_SHAPESHIFT_FORM у друида — на каждое
     -- перекидывание. Раньше КАЖДОЕ событие заводило свой таймер, и каждый гонял
