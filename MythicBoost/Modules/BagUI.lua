@@ -14,7 +14,10 @@ local HEADER_HEIGHT = 48
 local FOOTER_HEIGHT = 42
 local SIDE_PADDING = 12
 local EMPTY_TEXTURE = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag"
-local REFRESH_DELAY = .08
+-- Перетаскивание шлёт BAG_UPDATE_DELAYED пачками, а каждый проход — это
+-- полный пересчёт всех 186 ячеек. На восьми сотых их выходило по
+-- десятку в секунду — ровно тогда, когда игрок тащит предмет.
+local REFRESH_DELAY = .15
 
 local function Settings()
     MythicBoostDB.bagUI = type(MythicBoostDB.bagUI) == "table" and MythicBoostDB.bagUI or {}
@@ -58,6 +61,16 @@ local function BagInventorySlot(bag)
     end
 end
 
+-- Шесть тёмных квадратов с мелкими иконками между собой не различить.
+-- Цвет качества самой сумки — то, по чему их отличают везде: сразу видно,
+-- где эпический двадцатислотник, а где серый огрызок с прошлого аддона.
+local function BagQuality(bag)
+    local slot = BagInventorySlot(bag)
+    if not slot or type(GetInventoryItemQuality) ~= "function" then return end
+    local ok, quality = pcall(GetInventoryItemQuality, "player", slot)
+    if ok and UI.UsableNumber(quality) then return quality end
+end
+
 local function BagIcon(bag)
     if bag == 0 then return "Interface\\Buttons\\Button-Backpack-Up" end
     local inventoryID = BagInventorySlot(bag)
@@ -78,9 +91,15 @@ local function SafeCount(value)
     return UI.UsableNumber(value) and value or 0
 end
 
+-- Таблица слотов переиспользуется между проходами. Раньше каждый проход
+-- создавал 187 таблиц — общую и по одной на ячейку, — а при перетаскивании
+-- проходов идёт несколько в секунду.
 function BagUI:CollectSlots()
-    local slots, used, total = {}, 0, 0
+    local slots = self.slotCache or {}
+    self.slotCache = slots
+    local filled, used, total = 0, 0, 0
     if not C_Container or type(C_Container.GetContainerNumSlots) ~= "function" then
+        for index = #slots, 1, -1 do slots[index] = nil end
         return slots, used, total
     end
     for _, bag in ipairs(BagIDs()) do
@@ -89,9 +108,16 @@ function BagUI:CollectSlots()
         for slot = 1, count do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             if info and info.itemID then used = used + 1 end
-            slots[#slots + 1] = { bag = bag, slot = slot, info = info }
+            filled = filled + 1
+            local entry = slots[filled]
+            if entry then
+                entry.bag, entry.slot, entry.info = bag, slot, info
+            else
+                slots[filled] = { bag = bag, slot = slot, info = info }
+            end
         end
     end
+    for index = #slots, filled + 1, -1 do slots[index] = nil end
     return slots, used, total
 end
 
@@ -153,7 +179,7 @@ function BagUI:CreateItemButton(index)
     button:RegisterForDrag("LeftButton")
     button.GetBag = function(owner) return owner.bag end
     button.GetSlot = function(owner) return owner.bag, owner:GetID() end
-    UI.Backdrop(button, { .075, .095, .120, .68 }, { .30, .40, .49, .90 }, 1)
+    UI.Backdrop(button, C.field, C.line, 1)
     -- Шаблон ставит UI-PassiveHighlight обычной NormalTexture. На нашей
     -- сетке она превращает каждую ячейку в яркий голубой квадрат. nil клиент
     -- не принимает, поэтому подменяем её валидной прозрачной текстурой.
@@ -197,7 +223,7 @@ function BagUI:CreateItemButton(index)
     button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
     button.highlight:SetPoint("TOPLEFT", 1, -1)
     button.highlight:SetPoint("BOTTOMRIGHT", -1, 1)
-    button.highlight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .20)
+    button.highlight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .14)
 
     button:SetScript("OnEnter", function(owner)
         if owner.bag == nil or owner.slot == nil then return end
@@ -234,24 +260,41 @@ function BagUI:UpdateItemButton(button, data)
         local stackCount = SafeCount(info.stackCount)
         local locked = info.isLocked == true
         local quality = tonumber(info.quality) or 1
-        if button.cachedItemID ~= info.itemID or button.cachedIcon ~= info.iconFileID
+        local changed = button.cachedItemID ~= info.itemID or button.cachedIcon ~= info.iconFileID
             or button.cachedCount ~= stackCount or button.cachedLocked ~= locked
-            or button.cachedQuality ~= quality then
+            or button.cachedQuality ~= quality
+        if changed then
             button.icon:SetTexture(info.iconFileID)
             button.icon:Show()
             button.empty:Hide()
-            button.count:SetText(stackCount > 1 and stackCount or "")
             button.locked:SetShown(locked)
             local r, g, b = QualityColor(quality)
             button:SetBackdropBorderColor(r * .92, g * .92, b * .92, 1)
             button.cachedItemID, button.cachedIcon = info.itemID, info.iconFileID
             button.cachedCount, button.cachedLocked, button.cachedQuality = stackCount, locked, quality
         end
-        local start, duration, enabled = 0, 0, 0
-        if C_Container and type(C_Container.GetContainerItemCooldown) == "function" then
-            start, duration, enabled = C_Container.GetContainerItemCooldown(data.bag, data.slot)
+        -- Счётчик ставим каждый проход и в обход кэша. Число в стаке приходит
+        -- от игры и под taint бывает защищённым; SafeCount тогда отдаёт ноль,
+        -- «больше единицы» навсегда прятало счётчик, а кэш сравнивал ноль с
+        -- нулём и вообще не пускал обновление внутрь — числа не было ни у
+        -- одного стака. SetItemButtonCount из шаблона Blizzard это код игры:
+        -- ему защищённое значение показать можно, и единицу он прячет сам.
+        if type(SetItemButtonCount) == "function" then
+            SetItemButtonCount(button, info.stackCount)
+        else
+            button.count:SetText(stackCount > 1 and stackCount or "")
         end
-        CooldownFrame_Set(button.cooldown, start or 0, duration or 0, enabled or 0)
+        -- Кулдаун снимаем только когда в ячейке что-то поменялось: дальше его
+        -- ведёт BAG_UPDATE_COOLDOWN через RefreshCooldowns. Раньше это был
+        -- лишний GetContainerItemCooldown на каждую из 186 ячеек, каждый проход.
+        if changed or button.cooldownBag ~= data.bag or button.cooldownSlot ~= data.slot then
+            button.cooldownBag, button.cooldownSlot = data.bag, data.slot
+            local start, duration, enabled = 0, 0, 0
+            if C_Container and type(C_Container.GetContainerItemCooldown) == "function" then
+                start, duration, enabled = C_Container.GetContainerItemCooldown(data.bag, data.slot)
+            end
+            CooldownFrame_Set(button.cooldown, start or 0, duration or 0, enabled or 0)
+        end
     else
         if button.cachedItemID ~= false then
             button.icon:SetTexture(nil)
@@ -259,12 +302,13 @@ function BagUI:UpdateItemButton(button, data)
             button.empty:Show()
             button.count:SetText("")
             button.locked:Hide()
-            button:SetBackdropColor(.075, .095, .120, .68)
-            button:SetBackdropBorderColor(.30, .40, .49, .90)
+            button:SetBackdropColor(C.field[1], C.field[2], C.field[3], C.field[4])
+            button:SetBackdropBorderColor(C.line[1], C.line[2], C.line[3], C.line[4])
             button.cachedItemID, button.cachedIcon, button.cachedCount = false, nil, nil
             button.cachedLocked, button.cachedQuality = nil, nil
+            button.cooldownBag, button.cooldownSlot = data.bag, data.slot
+            CooldownFrame_Set(button.cooldown, 0, 0, 0)
         end
-        CooldownFrame_Set(button.cooldown, 0, 0, 0)
     end
     button:Show()
 end
@@ -272,8 +316,14 @@ end
 function BagUI:RefreshBagTabs()
     for bag, button in pairs(self.bagButtons or {}) do
         button.icon:SetTexture(BagIcon(bag))
-        button:SetBackdropColor(.085, .11, .14, .76)
-        button:SetBackdropBorderColor(.31, .42, .51, .92)
+        button:SetBackdropColor(C.field[1], C.field[2], C.field[3], C.field[4])
+        local quality = BagQuality(bag)
+        if quality then
+            local r, g, b = QualityColor(quality)
+            button:SetBackdropBorderColor(r * .92, g * .92, b * .92, 1)
+        else
+            button:SetBackdropBorderColor(C.line[1], C.line[2], C.line[3], C.line[4])
+        end
     end
 end
 
@@ -379,16 +429,29 @@ function BagUI:BuildBagButton(parent, bag, x)
         end
         BagUI:RequestRefresh(.12)
     end
-    button:SetScript("OnClick", function(_, mouseButton)
-        if mouseButton == "LeftButton" then PlaceCursorBag() end
-    end)
-    button:SetScript("OnReceiveDrag", PlaceCursorBag)
-    button:SetScript("OnDragStart", function()
+    -- Снять сумку было нечем: правый клик не был занят ничем, а перетаскивание
+    -- за пределы окна игрок не угадывает. PickupBagFromSlot — тот же вызов,
+    -- которым это делает штатная панель сумок.
+    local function PickUpBag()
         if button.inventorySlot and type(PickupBagFromSlot) == "function"
             and (not CursorHasItem or not CursorHasItem()) then
             PickupBagFromSlot(button.inventorySlot)
             BagUI:RequestRefresh(.12)
+            return true
         end
+    end
+    button:SetScript("OnClick", function(_, mouseButton)
+        if mouseButton == "RightButton" then
+            PickUpBag()
+        elseif CursorHasItem and CursorHasItem() then
+            PlaceCursorBag()
+        else
+            PickUpBag()
+        end
+    end)
+    button:SetScript("OnReceiveDrag", PlaceCursorBag)
+    button:SetScript("OnDragStart", function()
+        PickUpBag()
     end)
     button:SetScript("OnEnter", function(owner)
         GameTooltip:SetOwner(owner, "ANCHOR_TOP")
@@ -397,6 +460,9 @@ function BagUI:BuildBagButton(parent, bag, x)
             shown = GameTooltip:SetInventoryItem("player", button.inventorySlot)
         end
         if not shown then GameTooltip:SetText(BagName(bag)) end
+        if bag > 0 then
+            GameTooltip:AddLine("Клик — снять сумку", .50, .57, .66)
+        end
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", GameTooltip_Hide)
@@ -411,7 +477,10 @@ function BagUI:Create()
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
     frame:EnableMouse(true)
-    UI.Backdrop(frame, { .095, .115, .14, .74 }, { .10, .62, .76, 1 }, 2)
+    -- Фон и контур — из канонической палитры, как требует UI.colors.
+    -- Свой двухпиксельный голубой край делал из окна светящуюся рамку
+    -- на полэкрана и ни на одно другое окно аддона не походил.
+    UI.Backdrop(frame, C.surface, C.surfaceEdge, 1)
     self.frame, self.itemButtons, self.bagButtons = frame, {}, {}
 
     frame.header = CreateFrame("Button", nil, frame)
@@ -424,7 +493,7 @@ function BagUI:Create()
         frame:StopMovingOrSizing()
         BagUI:SavePosition()
     end)
-    local headerLine = UI.Line(frame, C.accent)
+    local headerLine = UI.Line(frame, C.lineSoft)
     headerLine:SetPoint("TOPLEFT", frame.header, "BOTTOMLEFT", 0, 0)
     headerLine:SetPoint("TOPRIGHT", frame.header, "BOTTOMRIGHT", 0, 0)
     frame.title = UI.Text(frame.header, "GameFontNormal", "Инвентарь", C.amber)
