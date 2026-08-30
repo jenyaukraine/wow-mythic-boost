@@ -172,7 +172,7 @@ function SettingsHub:Build(_, parent)
         if JP.MinimalUI then JP.MinimalUI:StyleBags(value) end
     end)
     local bagUI = UI.CheckBox(interfacePage, L("Единое окно сумок MythicBoost"),
-        MythicBoostDB.bagUI and MythicBoostDB.bagUI.enabled ~= false, function(value)
+        MythicBoostDB.bagUI and MythicBoostDB.bagUI.enabled == true, function(value)
             MythicBoostDB.bagUI = type(MythicBoostDB.bagUI) == "table" and MythicBoostDB.bagUI or {}
             MythicBoostDB.bagUI.enabled = value
             JP:ReloadModule("BagUI")
@@ -380,7 +380,7 @@ function SettingsHub:Refresh()
         elseif key == "lootAtCursor" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.atCursor ~= false
         elseif key == "lootRolls" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showRolls ~= false
         elseif key == "lootHistory" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showHistory ~= false
-        elseif key == "bagUI" then value = MythicBoostDB.bagUI and MythicBoostDB.bagUI.enabled ~= false
+        elseif key == "bagUI" then value = MythicBoostDB.bagUI and MythicBoostDB.bagUI.enabled == true
         elseif key == "interfaceUnlocked" then value = MythicBoostDB.interfaceUnlocked == true
         elseif key == "smartBuff" then
             value = MythicBoostDB.smartClick and MythicBoostDB.smartClick.buff == true

@@ -22,7 +22,7 @@ local REFRESH_DELAY = .15
 
 local function Settings()
     MythicBoostDB.bagUI = type(MythicBoostDB.bagUI) == "table" and MythicBoostDB.bagUI or {}
-    if MythicBoostDB.bagUI.enabled == nil then MythicBoostDB.bagUI.enabled = true end
+    if MythicBoostDB.bagUI.enabled == nil then MythicBoostDB.bagUI.enabled = false end
     return MythicBoostDB.bagUI
 end
 

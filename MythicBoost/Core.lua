@@ -312,7 +312,15 @@ local function InitializeDatabase()
     if db.lootUI.showRolls == nil then db.lootUI.showRolls = true end
     if db.lootUI.showHistory == nil then db.lootUI.showHistory = true end
     db.bagUI = type(db.bagUI) == "table" and db.bagUI or {}
-    if db.bagUI.enabled == nil then db.bagUI.enabled = true end
+    -- The unified inventory replaces protected Blizzard bag behaviour, so it
+    -- must be an explicit opt-in. Apply this once to profiles that inherited
+    -- the former automatic default; later manual choices remain untouched.
+    if db.bagUI.defaultDisabledRevision ~= 1 then
+        db.bagUI.enabled = false
+        db.bagUI.defaultDisabledRevision = 1
+    elseif db.bagUI.enabled == nil then
+        db.bagUI.enabled = false
+    end
     -- Начиная с версии БД 3 все перемещаемые элементы используют один режим.
     -- При первом запуске после обновления сохраняем прежнее разблокированное
     -- состояние, но больше не держим три независимых переключателя.
