@@ -1966,6 +1966,12 @@ function GroupSearchUI:RenderRows(welcome)
             -- Заголовок группы почти всегда просто «+15» — уровень уже стоит
             -- в отдельной колонке, поэтому убираем его из описания.
             local comment = match.title
+            -- Some listings append an AI-generation disclaimer to the title.
+            -- It carries no group-selection information and only consumes the
+            -- single readable detail line, so omit that title altogether.
+            if comment and comment:lower():find("искусственного интеллекта", 1, true) then
+                comment = nil
+            end
             if comment and match.keyLevel then
                 local stripped = comment:gsub("^%s*[%+＋]?%s*%d%d?%s*", "")
                 comment = stripped ~= "" and stripped or nil
