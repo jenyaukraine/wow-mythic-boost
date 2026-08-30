@@ -1,6 +1,7 @@
 local _, JP = ...
 local L = JP.L
 local AutoMatch = {}
+local UI = JP.UI
 
 local BLOODLUST_CLASSES = { HUNTER = true, MAGE = true, SHAMAN = true, EVOKER = true }
 local BATTLE_REZ_CLASSES = { DEATHKNIGHT = true, DRUID = true, PALADIN = true, WARLOCK = true }
