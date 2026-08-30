@@ -81,6 +81,14 @@ local function SafeAura(unit, index, filter)
     return data, false
 end
 
+-- Каст всегда на себя. Все эти баффы групповые — один каст закрывает всех в
+-- радиусе, и цель для них роли не играет. Без [@player] заклинание уходит в
+-- текущую цель, и стоит выбрать дальнего или враждебного — игра отвечает «Вне
+-- зоны действия», хотя группу забаффать было можно.
+local function BuffMacro(name)
+    return ("/cast [@player] %s"):format(name)
+end
+
 -- Имя нужно ровно то, что понимает макрос. Заклинание, которого игрок не
 -- знает, в макрос не попадает: иначе клик молча ничего не делает, и человек
 -- считает, что сломана галочка, а не отсутствует способность.
@@ -364,7 +372,7 @@ function SmartClick:BuildBuffButton()
     -- отпускание, молчит: наведение работает, тултип есть, а каста нет.
     button:RegisterForClicks("AnyUp", "AnyDown")
     button:SetAttribute("type", "macro")
-    button:SetAttribute("macrotext", "/cast " .. name)
+    button:SetAttribute("macrotext", BuffMacro(name))
     button.spellName = name
 
     UI.Backdrop(button, C.surface, C.edge)
@@ -411,7 +419,7 @@ function SmartClick:RefreshBuffButton()
     local _, class = UnitClass("player")
     local current = class and BUFF[class] and SpellName(BUFF[class])
     if current and current ~= button.spellName then
-        button:SetAttribute("macrotext", "/cast " .. current)
+        button:SetAttribute("macrotext", BuffMacro(current))
         button.spellName = current
     end
 
