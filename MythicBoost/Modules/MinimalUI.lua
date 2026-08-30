@@ -1035,6 +1035,8 @@ local ACTION_BUTTON_PREFIXES = {
     "MultiBar6Button", "MultiBar7Button", "PetActionButton", "StanceButton",
     "PossessButton",
 }
+local ACTION_ICON_INSET = 2
+local ACTION_BORDER_INSET = 1
 
 local function ActionButtons()
     local buttons = {}
@@ -1518,11 +1520,17 @@ function MinimalUI:StyleActionButtons(enabled)
                 state = {
                     icon = icon,
                     texCoords = icon and { icon:GetTexCoord() },
+                    iconPoints = {},
                     hotkey = SaveFont(button.HotKey),
                     count = SaveFont(button.Count),
                     name = SaveFont(button.Name),
                     cooldownFonts = {},
                 }
+                if icon then
+                    for index = 1, icon:GetNumPoints() do
+                        state.iconPoints[index] = { icon:GetPoint(index) }
+                    end
+                end
                 self.actionState[button] = state
             end
             for _, texture in pairs({
@@ -1533,11 +1541,16 @@ function MinimalUI:StyleActionButtons(enabled)
                 RememberAndHide(self, texture)
             end
             MuteActionStateTextures(self, button)
-            if state.icon then state.icon:SetTexCoord(.06, .94, .06, .94) end
+            if state.icon then
+                state.icon:ClearAllPoints()
+                state.icon:SetPoint("TOPLEFT", button, "TOPLEFT", ACTION_ICON_INSET, -ACTION_ICON_INSET)
+                state.icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -ACTION_ICON_INSET, ACTION_ICON_INSET)
+                state.icon:SetTexCoord(.06, .94, .06, .94)
+            end
             if not button.__mbActionGloss then
                 local gloss = button:CreateTexture(nil, "ARTWORK", nil, 7)
-                gloss:SetPoint("TOPLEFT", 1, -1)
-                gloss:SetPoint("TOPRIGHT", -1, -1)
+                gloss:SetPoint("TOPLEFT", ACTION_ICON_INSET, -ACTION_ICON_INSET)
+                gloss:SetPoint("TOPRIGHT", -ACTION_ICON_INSET, -ACTION_ICON_INSET)
                 gloss:SetHeight(math.max(3, (button:GetHeight() or 34) * .42))
                 gloss:SetColorTexture(1, 1, 1, 1)
                 gloss:SetBlendMode("ADD")
@@ -1548,8 +1561,8 @@ function MinimalUI:StyleActionButtons(enabled)
             end
             if not button.__mbEmptyFill then
                 local fill = button:CreateTexture(nil, "BACKGROUND", nil, 2)
-                fill:SetPoint("TOPLEFT", 1, -1)
-                fill:SetPoint("BOTTOMRIGHT", -1, 1)
+                fill:SetPoint("TOPLEFT", ACTION_ICON_INSET, -ACTION_ICON_INSET)
+                fill:SetPoint("BOTTOMRIGHT", -ACTION_ICON_INSET, ACTION_ICON_INSET)
                 fill:SetColorTexture(.008, .014, .022, .76)
                 button.__mbEmptyFill = fill
             end
@@ -1578,8 +1591,8 @@ function MinimalUI:StyleActionButtons(enabled)
             end
             if not button.__mbMinimalBorder then
                 local border = CreateFrame("Frame", nil, button, "BackdropTemplate")
-                border:SetPoint("TOPLEFT", 0, 0)
-                border:SetPoint("BOTTOMRIGHT", 0, 0)
+                border:SetPoint("TOPLEFT", ACTION_BORDER_INSET, -ACTION_BORDER_INSET)
+                border:SetPoint("BOTTOMRIGHT", -ACTION_BORDER_INSET, ACTION_BORDER_INSET)
                 border:SetFrameLevel(button:GetFrameLevel() + 4)
                 border:EnableMouse(false)
                 border:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
@@ -1609,7 +1622,11 @@ function MinimalUI:StyleActionButtons(enabled)
                 parents[parent] = (parents[parent] or 0) + 1
             end
         elseif state then
-            if state.icon and state.texCoords and #state.texCoords > 0 then state.icon:SetTexCoord(unpack(state.texCoords)) end
+            if state.icon then
+                state.icon:ClearAllPoints()
+                for _, point in ipairs(state.iconPoints or {}) do state.icon:SetPoint(unpack(point)) end
+                if state.texCoords and #state.texCoords > 0 then state.icon:SetTexCoord(unpack(state.texCoords)) end
+            end
             if button.HotKey and state.hotkey and state.hotkey[1] then
                 button.HotKey:SetFont(state.hotkey[1], state.hotkey[2], state.hotkey[3])
                 button.HotKey:SetTextColor(unpack(state.hotkey.color))
