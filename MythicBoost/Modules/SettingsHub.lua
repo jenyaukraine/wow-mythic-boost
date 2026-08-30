@@ -24,10 +24,7 @@ local DEFAULTS = {
 }
 
 function SettingsHub:GetSettings()
-    MythicBoostDB.convenience = type(MythicBoostDB.convenience) == "table" and MythicBoostDB.convenience or {}
-    local settings = MythicBoostDB.convenience
-    for key, value in pairs(DEFAULTS) do if settings[key] == nil then settings[key] = value end end
-    return settings
+    return JP.Settings("convenience", DEFAULTS) or {}
 end
 
 local function Heading(parent, text, x, y, width)
@@ -53,10 +50,8 @@ end
 function SettingsHub:SetInterfaceUnlocked(value)
     local unlocked = value == true
     MythicBoostDB.interfaceUnlocked = unlocked
-    MythicBoostDB.unitFrames = type(MythicBoostDB.unitFrames) == "table" and MythicBoostDB.unitFrames or {}
-    MythicBoostDB.castBar = type(MythicBoostDB.castBar) == "table" and MythicBoostDB.castBar or {}
-    MythicBoostDB.unitFrames.unlocked = unlocked
-    MythicBoostDB.castBar.unlocked = unlocked
+    JP.Settings("unitFrames").unlocked = unlocked
+    JP.Settings("castBar").unlocked = unlocked
     self:GetSettings().movableKeystoneFrame = unlocked
     if JP.UnitFrames then JP.UnitFrames:SetUnlocked(unlocked) end
     if JP.CastBar then JP.CastBar:SetUnlocked(unlocked) end

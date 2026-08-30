@@ -2,6 +2,7 @@ local _, JP = ...
 local L = JP.L
 local SmartClick = {}
 local UI, C = JP.UI, JP.UI.colors
+local SETTINGS_DEFAULTS = { buff = true, res = true }
 
 ---------------------------------------------------------------------------
 -- Умный клик: макрос MBSmartClick, который ведёт аддон
@@ -88,31 +89,15 @@ for buffID, list in pairs(BUFF_AURAS) do
 end
 
 function SmartClick:GetSettings()
-    if type(MythicBoostDB) ~= "table" then return nil end
-    MythicBoostDB.smartClick = type(MythicBoostDB.smartClick) == "table" and MythicBoostDB.smartClick or {}
-    local settings = MythicBoostDB.smartClick
-    if settings.buff == nil then settings.buff = true end
-    if settings.res == nil then settings.res = true end
-    return settings
+    return JP.Settings("smartClick", SETTINGS_DEFAULTS)
 end
 
 -- Правда ли значение, которое может прийти защищённым. Защищённый boolean
 -- нельзя сравнивать (`== true` бросает ошибку), поэтому сначала проверяем сам
 -- факт защищённости, и только потом сравниваем.
-local function IsTrue(value)
-    return not issecretvalue(value) and value == true
-end
+local IsTrue = UI.SafeBoolean
 
--- Ауры в Midnight из tainted-кода не просто приходят защищёнными — сам вызов
--- GetAuraDataByIndex бросает ошибку прямо из C. Проверить это заранее нечем,
--- поэтому единственный рабочий способ — pcall. Второе значение говорит, что
--- ауры закрыты вообще, а не что их просто не осталось.
-local function SafeAura(unit, index, filter)
-    if not C_UnitAuras or type(C_UnitAuras.GetAuraDataByIndex) ~= "function" then return nil, true end
-    local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
-    if not ok then return nil, true end
-    return data, false
-end
+local SafeAura = UI.SafeAura
 
 -- Каст всегда на себя. Все эти баффы групповые — один каст закрывает всех в
 -- радиусе, и цель для них роли не играет. Без [@player] заклинание уходит в

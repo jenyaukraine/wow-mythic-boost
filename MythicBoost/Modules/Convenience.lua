@@ -4,8 +4,7 @@ local Convenience = {}
 local UI = JP.UI
 
 local function Settings()
-    MythicBoostDB.convenience = type(MythicBoostDB.convenience) == "table" and MythicBoostDB.convenience or {}
-    return MythicBoostDB.convenience
+    return JP.Settings("convenience") or {}
 end
 
 local function Enabled(key)

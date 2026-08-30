@@ -6,25 +6,10 @@ local BLOODLUST_CLASSES = { HUNTER = true, MAGE = true, SHAMAN = true, EVOKER = 
 local BATTLE_REZ_CLASSES = { DEATHKNIGHT = true, DRUID = true, PALADIN = true, WARLOCK = true }
 local MIN_KEY_LEVEL, MAX_KEY_LEVEL = 2, 40
 
-local function UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
-
--- Строки из C_LFGList в Midnight приходят защищёнными. Пропускаем их через
--- один фильтр, чтобы фильтрация и отрисовка видели ровно одно и то же
--- значение: иначе список показывает «+12», а колонка «Ключ» — прочерк.
-local function SafeString(value)
-    if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
-    return value
-end
-
-local function SafeBoolean(value)
-    return type(value) == "boolean" and not issecretvalue(value) and value or false
-end
-
-local function SafeTable(value)
-    return type(value) == "table" and not issecretvalue(value) and value or nil
-end
+-- Строки и числа из C_LFGList в Midnight могут быть защищёнными. Все
+-- потребители используют общий фильтр, чтобы отбор и UI видели одно значение.
+local UsableNumber, SafeString = UI.UsableNumber, UI.SafeString
+local SafeBoolean, SafeTable = UI.SafeBoolean, UI.SafeTable
 
 local function Contains(list, value)
     if type(list) ~= "table" then return false end

@@ -371,7 +371,6 @@ end
 
 local function StyleMinimapAddonButtons(self, enabled)
     self.minimapAddonLayouts = self.minimapAddonLayouts or UI.WeakKeys()
-    self.minimapButtonSlots = self.minimapButtonSlots or UI.WeakKeys()
     self.minimapButtonRows = self.minimapButtonRows or UI.WeakKeys()
     self.minimapKnownButtons = self.minimapKnownButtons or UI.WeakKeys()
     if not enabled then
@@ -387,7 +386,6 @@ local function StyleMinimapAddonButtons(self, enabled)
                 if state.level then button:SetFrameLevel(state.level) end
                 button:SetShown(state.shown)
             end
-            if state.slot then state.slot:Hide() end
         end
         if self.minimapButtonMenu then self.minimapButtonMenu:Hide() end
         if self.minimapButtonLauncher then self.minimapButtonLauncher:Hide() end
@@ -439,51 +437,17 @@ local function StyleMinimapAddonButtons(self, enabled)
         self.minimapAddonScanned = true
         self.minimapAddonScanDirty = nil
     end
+    -- Some addons register their LibDBIcon button shortly after ADDON_LOADED.
+    -- Reading the library registry is cheap and catches those late buttons
+    -- without returning to a full scan of every global on every tick.
+    if type(LibStub) == "table" or type(LibStub) == "function" then
+        local ok, lib = pcall(LibStub, "LibDBIcon-1.0", true)
+        if ok and type(lib) == "table" and type(lib.objects) == "table" then
+            for _, object in pairs(lib.objects) do self.minimapKnownButtons[object] = true end
+        end
+    end
     for button in pairs(self.minimapKnownButtons) do Add(button) end
     table.sort(buttons, function(a, b) return ButtonLabel(a):lower() < ButtonLabel(b):lower() end)
-
-    local function EnsureSlot(button)
-        local slot = self.minimapButtonSlots[button]
-        if not slot then
-            slot = CreateFrame("Frame", nil, Minimap, "BackdropTemplate")
-            slot:SetSize(24, 24)
-            slot:EnableMouse(false)
-            slot:SetClipsChildren(true)
-            slot:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8X8",
-                edgeFile = "Interface\\Buttons\\WHITE8X8",
-                edgeSize = 1,
-            })
-            slot:SetBackdropColor(JP.UI.colors.surface[1], JP.UI.colors.surface[2], JP.UI.colors.surface[3], .96)
-            slot:SetBackdropBorderColor(.27, .33, .39, 1)
-
-            -- ElvUI's clean square silhouette with a restrained XPerl-like
-            -- upper light. It reads as depth but never becomes glossy.
-            local depth = slot:CreateTexture(nil, "ARTWORK")
-            depth:SetPoint("TOPLEFT", 1, -1)
-            depth:SetPoint("BOTTOMRIGHT", -1, 1)
-            depth:SetColorTexture(1, 1, 1, 1)
-            depth:SetGradient("VERTICAL",
-                CreateColor(.34, .44, .54, .13),
-                CreateColor(0, 0, 0, .24))
-            slot.depth = depth
-
-            button.__mbMinimapSlot = slot
-            if type(button.HookScript) == "function" and not button.__mbMinimapHoverHook then
-                button.__mbMinimapHoverHook = true
-                button:HookScript("OnEnter", function(owner)
-                    local ownerSlot = owner.__mbMinimapSlot
-                    if ownerSlot then ownerSlot:SetBackdropBorderColor(.24, .72, .92, 1) end
-                end)
-                button:HookScript("OnLeave", function(owner)
-                    local ownerSlot = owner.__mbMinimapSlot
-                    if ownerSlot then ownerSlot:SetBackdropBorderColor(.27, .33, .39, 1) end
-                end)
-            end
-            self.minimapButtonSlots[button] = slot
-        end
-        return slot
-    end
 
     if not self.minimapButtonMenu then
         local launcher = CreateFrame("Button", "MythicBoostMinimapButtonLauncher", Minimap, "BackdropTemplate")
@@ -511,6 +475,7 @@ local function StyleMinimapAddonButtons(self, enabled)
         })
         menu:SetBackdropColor(JP.UI.colors.surface[1], JP.UI.colors.surface[2], JP.UI.colors.surface[3], .97)
         menu:SetBackdropBorderColor(.25, .31, .37, 1)
+        menu:EnableMouse(true)
         menu:Hide()
         launcher:SetScript("OnClick", function()
             menu:SetShown(not menu:IsShown())
@@ -526,6 +491,24 @@ local function StyleMinimapAddonButtons(self, enabled)
             owner.count:SetTextColor(.95, .78, .20, 1)
             GameTooltip_Hide()
         end)
+        local closeRevision = 0
+        local function KeepMenuOpen()
+            closeRevision = closeRevision + 1
+        end
+        local function CloseMenuAfterLeave()
+            closeRevision = closeRevision + 1
+            local revision = closeRevision
+            C_Timer.After(.35, function()
+                if revision ~= closeRevision or not menu:IsShown() then return end
+                if not launcher:IsMouseOver() and not menu:IsMouseOver() then menu:Hide() end
+            end)
+        end
+        launcher:HookScript("OnEnter", KeepMenuOpen)
+        launcher:HookScript("OnLeave", CloseMenuAfterLeave)
+        menu:SetScript("OnEnter", KeepMenuOpen)
+        menu:SetScript("OnLeave", CloseMenuAfterLeave)
+        menu.KeepOpen = KeepMenuOpen
+        menu.CloseAfterLeave = CloseMenuAfterLeave
         self.minimapButtonLauncher = launcher
         self.minimapButtonMenu = menu
         UISpecialFrames = UISpecialFrames or {}
@@ -547,7 +530,6 @@ local function StyleMinimapAddonButtons(self, enabled)
     end
 
     local launcher, menu = self.minimapButtonLauncher, self.minimapButtonMenu
-    for _, slot in pairs(self.minimapButtonSlots) do slot:Hide() end
     for _, row in pairs(self.minimapButtonRows) do row:Hide() end
     launcher:SetParent(Minimap)
     launcher:ClearAllPoints()
@@ -572,6 +554,17 @@ local function StyleMinimapAddonButtons(self, enabled)
             end
             self.minimapAddonLayouts[button] = state
         end
+        button.__mbMinimapMenu = menu
+        if type(button.HookScript) == "function" and not button.__mbMinimapKeepParked then
+            button.__mbMinimapKeepParked = true
+            button:HookScript("OnShow", function(owner)
+                if not MythicBoostDB or not MythicBoostDB.minimalUI or not owner.__mbMinimapMenu then return end
+                owner:SetParent(owner.__mbMinimapMenu)
+                owner:SetScale(.01)
+                owner:SetAlpha(0)
+                owner:EnableMouse(false)
+            end)
+        end
         -- Keep the original button logically shown so later rescans still
         -- count it, but make its icon physically invisible inside our menu.
         button:Show()
@@ -594,9 +587,11 @@ local function StyleMinimapAddonButtons(self, enabled)
             row.label:SetJustifyH("LEFT")
             row:SetScript("OnEnter", function(owner)
                 owner:SetBackdropColor(.12, .32, .40, .72)
+                if menu.KeepOpen then menu.KeepOpen() end
             end)
             row:SetScript("OnLeave", function(owner)
                 owner:SetBackdropColor(0, 0, 0, 0)
+                if menu.CloseAfterLeave then menu.CloseAfterLeave() end
             end)
             row:SetScript("OnClick", function(owner, mouseButton)
                 local target = owner.addonButton
@@ -613,31 +608,6 @@ local function StyleMinimapAddonButtons(self, enabled)
         row:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -4, -4 - (index - 1) * rowHeight)
         row:SetHeight(rowHeight)
         row:Show()
-    end
-    menu:Hide()
-end
-
--- Keep Blizzard's native addon compartment intact. We only anchor its button
--- inside the square minimap; Blizzard continues to own the text dropdown,
--- click handling, tooltip, and addon registration.
-local function StyleAddonCompartment(self, enabled)
-    local frame = _G.AddonCompartmentFrame
-    if not frame then return end
-    if enabled then
-        if not self.addonCompartmentLayout then
-            local state = { shown = frame:IsShown(), points = {} }
-            for index = 1, frame:GetNumPoints() do state.points[index] = { frame:GetPoint(index) } end
-            self.addonCompartmentLayout = state
-        end
-        frame:ClearAllPoints()
-        frame:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -5, 5)
-        frame:Show()
-    elseif self.addonCompartmentLayout then
-        local state = self.addonCompartmentLayout
-        frame:ClearAllPoints()
-        for _, point in ipairs(state.points or {}) do frame:SetPoint(unpack(point)) end
-        frame:SetShown(state.shown)
-        self.addonCompartmentLayout = nil
     end
 end
 
@@ -720,7 +690,6 @@ function MinimalUI:StyleMinimap(enabled)
         -- Loose LibDBIcon buttons become one count in the corner. Clicking the
         -- count opens a compact text list, never another grid of icon cards.
         StyleMinimapAddonButtons(self, true)
-        StyleAddonCompartment(self, false)
         local nativeCompartment = _G.AddonCompartmentFrame
         RememberAndHide(self, nativeCompartment)
         if nativeCompartment and type(nativeCompartment.HookScript) == "function"
@@ -755,7 +724,6 @@ function MinimalUI:StyleMinimap(enabled)
         end
         self.minimapMapLayout = nil
         StyleMinimapAddonButtons(self, false)
-        StyleAddonCompartment(self, false)
         pcall(Minimap.SetMaskTexture, Minimap, self.roundMask or FALLBACK_ROUND_MASK)
         for _, method in ipairs({
             "SetArchBlobRingScalar", "SetArchBlobRingAlpha",

@@ -15,9 +15,7 @@ local SLOT_IDS = {
     [10] = {16}, [11] = {17}, [12] = {11,12}, [13] = {13,14},
 }
 
-local function UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
+local UsableNumber = JP.UI.UsableNumber
 
 local function ItemLevel(link)
     if not link then return 0 end

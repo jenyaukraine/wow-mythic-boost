@@ -20,20 +20,12 @@ local DEFAULTS = {
 }
 
 local function Settings()
-    MythicBoostDB.keystoneTimer = type(MythicBoostDB.keystoneTimer) == "table" and MythicBoostDB.keystoneTimer or {}
-    local settings = MythicBoostDB.keystoneTimer
-    for key, value in pairs(DEFAULTS) do if settings[key] == nil then settings[key] = value end end
+    local settings = JP.Settings("keystoneTimer", DEFAULTS) or {}
     settings.best = type(settings.best) == "table" and settings.best or {}
     return settings
 end
 
-local function UsableNumber(value)
-    return UI.UsableNumber(value)
-end
-
-local function UsableString(value)
-    return type(value) == "string" and not issecretvalue(value) and value ~= ""
-end
+local UsableNumber, UsableString = UI.UsableNumber, UI.UsableString
 
 local function FormatTime(seconds, decimals)
     if not UsableNumber(seconds) then return "--:--" end

@@ -34,19 +34,8 @@ local STATUS = {
     needed = { label = L("ПОДХОДИТ"), color = { .62, .40, .95, 1 } },
 }
 
-local function UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
-
-local function SafeString(value)
-    if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
-    return value
-end
-
-
-local function SafeBoolean(value)
-    return type(value) == "boolean" and not issecretvalue(value) and value or false
-end
+local UsableNumber, SafeString = UI.UsableNumber, UI.SafeString
+local SafeBoolean = UI.SafeBoolean
 
 local function RelevantMilestone(milestones, level)
     for _, entry in ipairs(type(milestones) == "table" and milestones or {}) do
@@ -393,16 +382,7 @@ function ApplicantBoard:Build(welcome, page)
     end)
     self.scrollBar:Hide()
 
-    local function OnMouseWheel(_, delta)
-        local _, maximum = self.scrollBar:GetMinMaxValues()
-        self.scrollBar:SetValue(math.max(0, math.min(maximum, (self.offset or 0) - delta)))
-    end
-    page:EnableMouseWheel(true)
-    page:SetScript("OnMouseWheel", OnMouseWheel)
-    for _, row in ipairs(self.rows) do
-        row:EnableMouseWheel(true)
-        row:SetScript("OnMouseWheel", OnMouseWheel)
-    end
+    UI.BindScrollWheel(page, self.scrollBar, self.rows, function() return self.offset end)
 
     self.message = UI.Text(page, "GameFontHighlight", "", C.muted)
     self.message:SetPoint("TOPLEFT", 24, PARTY_SECTION_BOTTOM - 120)

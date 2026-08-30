@@ -63,15 +63,7 @@ local TOTALS_TOP = ROWS_TOP - #SLOTS * ROW_STEP - 18
 -- Чтение данных игры
 ---------------------------------------------------------------------------
 
-local function PlainNumber(value)
-    if type(value) ~= "number" or issecretvalue(value) then return nil end
-    return value
-end
-
-local function PlainString(value)
-    if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
-    return value
-end
+local PlainNumber, PlainString = UI.SafeNumber, UI.SafeString
 
 local function EquipmentLocation(slotID)
     if not ItemLocation or type(ItemLocation.CreateFromEquipmentSlot) ~= "function" then return nil end
@@ -219,9 +211,7 @@ end
 -- мастера, и заставлять бегать к нему ради каждого пересчёта незачем: сходил
 -- один раз — считаем по сохранённому, пока вещь в слоте не сменилась.
 local function SavedSlots()
-    MythicBoostDB.upgradeCalculator = type(MythicBoostDB.upgradeCalculator) == "table"
-        and MythicBoostDB.upgradeCalculator or {}
-    local store = MythicBoostDB.upgradeCalculator
+    local store = JP.Settings("upgradeCalculator") or {}
     -- Schema 2 introduces strict per-slot matching.  Older records may all
     -- contain the first selected item because the old matcher accepted any
     -- non-empty item name.

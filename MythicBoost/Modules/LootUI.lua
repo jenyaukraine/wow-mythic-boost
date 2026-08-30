@@ -16,15 +16,10 @@ local MAX_HISTORY_ROWS = 6
 local HISTORY_ROW_HEIGHT = 24
 local HISTORY_LIFETIME = 22
 local BLIZZARD_LOOT_EVENTS = { "LOOT_OPENED", "LOOT_CLOSED", "LOOT_SLOT_CLEARED" }
+local SETTINGS_DEFAULTS = { enabled = true, atCursor = true, showRolls = true, showHistory = true }
 
 local function Settings()
-    MythicBoostDB.lootUI = type(MythicBoostDB.lootUI) == "table" and MythicBoostDB.lootUI or {}
-    local settings = MythicBoostDB.lootUI
-    if settings.enabled == nil then settings.enabled = true end
-    if settings.atCursor == nil then settings.atCursor = true end
-    if settings.showRolls == nil then settings.showRolls = true end
-    if settings.showHistory == nil then settings.showHistory = true end
-    return settings
+    return JP.Settings("lootUI", SETTINGS_DEFAULTS) or {}
 end
 
 local function SafeValue(value, fallback)
@@ -33,17 +28,9 @@ local function SafeValue(value, fallback)
     return value
 end
 
-local function IsAddonLoadedSafe(name)
-    if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
-        local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, name)
-        return ok and loaded == true
-    end
-    return type(IsAddOnLoaded) == "function" and IsAddOnLoaded(name) == true
-end
-
-local function IsExternalFrameLoaded() return IsAddonLoadedSafe("XLoot_Frame") end
-local function IsExternalRollLoaded() return IsAddonLoadedSafe("XLoot_Group") end
-local function IsExternalMonitorLoaded() return IsAddonLoadedSafe("XLoot_Monitor") end
+local function IsExternalFrameLoaded() return UI.IsAddOnLoaded("XLoot_Frame") end
+local function IsExternalRollLoaded() return UI.IsAddOnLoaded("XLoot_Group") end
+local function IsExternalMonitorLoaded() return UI.IsAddOnLoaded("XLoot_Monitor") end
 
 local function QualityColor(quality, quest)
     if quest then return 1, .80, .16 end

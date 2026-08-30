@@ -42,8 +42,57 @@ UI.colors = {
 local C = UI.colors
 local WHITE = "Interface/Buttons/WHITE8X8"
 
-function UI.UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
+UI.UsableNumber = JP.UsableNumber
+UI.SafeNumber = JP.SafeNumber
+UI.SafeString = JP.SafeString
+UI.SafeStringOrEmpty = JP.SafeStringOrEmpty
+UI.UsableString = JP.UsableString
+UI.SafeBoolean = JP.SafeBoolean
+UI.SafeTable = JP.SafeTable
+
+function UI.SafeAura(unit, index, filter)
+    if not C_UnitAuras or type(C_UnitAuras.GetAuraDataByIndex) ~= "function" then return nil, true end
+    local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+    if not ok then return nil, true end
+    return data, false
+end
+
+function UI.IsAddOnLoaded(name)
+    if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
+        local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, name)
+        return ok and loaded == true
+    end
+    return type(IsAddOnLoaded) == "function" and IsAddOnLoaded(name) == true
+end
+
+function UI.KeystoneScore(keystone)
+    if type(keystone) ~= "table" then return nil end
+    local function Pick(value)
+        return UI.UsableNumber(value) and value > 0 and value or nil
+    end
+    return Pick(keystone.currentScore) or Pick(keystone.score)
+        or Pick(type(keystone.mplusCurrent) == "table" and keystone.mplusCurrent.score or nil)
+end
+
+function UI.MakeMovable(frame)
+    frame:EnableMouse(true)
+    frame:SetMovable(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+end
+
+function UI.BindScrollWheel(owner, scrollBar, rows, getOffset)
+    local function OnMouseWheel(_, delta)
+        local _, maximum = scrollBar:GetMinMaxValues()
+        scrollBar:SetValue(math.max(0, math.min(maximum, (getOffset() or 0) - delta)))
+    end
+    owner:EnableMouseWheel(true)
+    owner:SetScript("OnMouseWheel", OnMouseWheel)
+    for _, row in ipairs(rows or {}) do
+        row:EnableMouseWheel(true)
+        row:SetScript("OnMouseWheel", OnMouseWheel)
+    end
 end
 
 -- Кэш, ключом которого служит чужой объект, обязан быть слабым по ключу.

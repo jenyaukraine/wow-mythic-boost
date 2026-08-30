@@ -13,30 +13,11 @@ local MEDAL_COLORS = {
     { .80, .55, .32, 1 },
 }
 
-local function UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
-
-local function SafeString(value)
-    if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
-    return value
-end
+local UsableNumber, SafeString = UI.UsableNumber, UI.SafeString
 
 ---------------------------------------------------------------------------
 -- Данные гильдии
 ---------------------------------------------------------------------------
-
--- Raider.IO не обещает единого имени поля под текущий рейтинг, поэтому
--- перебираем известные варианты и молча пропускаем профиль, если ни одно
--- не подошло: лучше пустая строка, чем выдуманное число.
-local function KeystoneScore(keystone)
-    local function Pick(value)
-        return UsableNumber(value) and value > 0 and value or nil
-    end
-    return Pick(keystone.currentScore)
-        or Pick(keystone.score)
-        or Pick(type(keystone.mplusCurrent) == "table" and keystone.mplusCurrent.score or nil)
-end
 
 local function BestKeyLevel(keystone)
     local best = 0
@@ -83,7 +64,7 @@ function GuildBoard:Collect(force)
             -- Имена гильдейцев однозначны: свой реалм либо явный суффикс.
             local fullName = name:find("-", 1, true) and name or (realm and (name .. "-" .. realm)) or name
             local keystone = MemberProfile(fullName)
-            local score = keystone and KeystoneScore(keystone)
+            local score = UI.KeystoneScore(keystone)
             if score then
                 entries[#entries + 1] = {
                     name = name:match("^([^%-]+)") or name,
@@ -240,16 +221,7 @@ function GuildBoard:Build(welcome, page)
     end)
     self.scrollBar:Hide()
 
-    local function OnMouseWheel(_, delta)
-        local _, maximum = self.scrollBar:GetMinMaxValues()
-        self.scrollBar:SetValue(math.max(0, math.min(maximum, (self.offset or 0) - delta)))
-    end
-    page:EnableMouseWheel(true)
-    page:SetScript("OnMouseWheel", OnMouseWheel)
-    for _, row in ipairs(self.rows) do
-        row:EnableMouseWheel(true)
-        row:SetScript("OnMouseWheel", OnMouseWheel)
-    end
+    UI.BindScrollWheel(page, self.scrollBar, self.rows, function() return self.offset end)
 
     self.message = UI.Text(page, "GameFontHighlight", "", C.muted)
     self.message:SetPoint("TOPLEFT", 24, -190)

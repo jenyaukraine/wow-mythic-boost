@@ -20,6 +20,7 @@ local UI, C = JP.UI, JP.UI.colors
 local MAX_ENTRIES = 100     -- уникальных ошибок в журнале
 local MAX_MESSAGE = 1200    -- обрезаем гигантские сообщения
 local MAX_STACK = 4000      -- и трейсы: они бывают на сотни строк
+local SETTINGS_DEFAULTS = { enabled = true, keepBetweenSessions = true, muteSound = true }
 
 -- Журнал до появления SavedVariables. MythicBoostDB создаётся только на
 -- ADDON_LOADED, а ошибка может прилететь раньше — тогда она копится здесь
@@ -27,12 +28,8 @@ local MAX_STACK = 4000      -- и трейсы: они бывают на сот�
 local earlyLog = {}
 
 function ErrorGuard:GetSettings()
-    if type(MythicBoostDB) ~= "table" then return nil end
-    MythicBoostDB.errorGuard = type(MythicBoostDB.errorGuard) == "table" and MythicBoostDB.errorGuard or {}
-    local settings = MythicBoostDB.errorGuard
-    if settings.enabled == nil then settings.enabled = true end
-    if settings.keepBetweenSessions == nil then settings.keepBetweenSessions = true end
-    if settings.muteSound == nil then settings.muteSound = true end
+    local settings = JP.Settings("errorGuard", SETTINGS_DEFAULTS)
+    if not settings then return nil end
     if type(settings.log) ~= "table" then settings.log = {} end
     return settings
 end
@@ -176,11 +173,7 @@ function ErrorGuard:BuildWindow()
     frame:SetFrameLevel(500)
     frame:SetToplevel(true)
     frame:SetClampedToScreen(true)
-    frame:EnableMouse(true)
-    frame:SetMovable(true)
-    frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+    UI.MakeMovable(frame)
     frame:SetScript("OnShow", function(owner)
         owner:SetFrameStrata("FULLSCREEN_DIALOG")
         owner:SetFrameLevel(500)
@@ -441,16 +434,9 @@ function ErrorGuard:Enable()
     -- Чужие ловцы ошибок ставят свой обработчик тем же seterrorhandler, и
     -- побеждает тот, кто вызвал его последним. Одновременно с BugGrabber
     -- работать нельзя — предупреждаем прямо, а не оставляем гадать.
-    local function Loaded(name)
-        if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
-            local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, name)
-            return ok and loaded == true
-        end
-        return type(IsAddOnLoaded) == "function" and IsAddOnLoaded(name) == true
-    end
     local conflicts = {}
     for _, name in ipairs({ "!BugGrabber", "BugGrabber", "BugSack", "Swatter" }) do
-        if Loaded(name) then conflicts[#conflicts + 1] = name end
+        if UI.IsAddOnLoaded(name) then conflicts[#conflicts + 1] = name end
     end
     if #conflicts > 0 then
         JP:Print(L("Перехват ошибок делит место с: ") .. table.concat(conflicts, ", ") ..

@@ -15,9 +15,48 @@ if type(issecretvalue) ~= "function" then
     issecretvalue = function() return false end
 end
 
-local function UsableNumber(value)
+function JP.UsableNumber(value)
     return type(value) == "number" and not issecretvalue(value)
 end
+
+function JP.SafeNumber(value)
+    return JP.UsableNumber(value) and value or nil
+end
+
+function JP.SafeString(value)
+    if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
+    return value
+end
+
+function JP.SafeStringOrEmpty(value)
+    return type(value) == "string" and not issecretvalue(value) and value or nil
+end
+
+function JP.UsableString(value)
+    return JP.SafeString(value) ~= nil
+end
+
+function JP.SafeBoolean(value)
+    return type(value) == "boolean" and not issecretvalue(value) and value or false
+end
+
+function JP.SafeTable(value)
+    return type(value) == "table" and not issecretvalue(value) and value or nil
+end
+
+function JP.Settings(section, defaults)
+    if type(MythicBoostDB) ~= "table" then return nil end
+    MythicBoostDB[section] = type(MythicBoostDB[section]) == "table" and MythicBoostDB[section] or {}
+    local settings = MythicBoostDB[section]
+    if defaults then
+        for key, value in pairs(defaults) do
+            if settings[key] == nil then settings[key] = value end
+        end
+    end
+    return settings
+end
+
+local UsableNumber = JP.UsableNumber
 
 function JP:GetVersion()
     if self.version then return self.version end

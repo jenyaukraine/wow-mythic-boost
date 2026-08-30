@@ -26,6 +26,7 @@ local UI, C = JP.UI, JP.UI.colors
 
 local PREFIX = "RCLC"
 local COMPRESS = { level = 3 }
+local SETTINGS_DEFAULTS = { enabled = true }
 
 -- Значения ответов из их Core/Defaults.lua: массивная часть таблицы responses.
 local RESPONSE = { NEED = 1, GREED = 2, MINOR = 3, PASS = "PASS" }
@@ -44,11 +45,7 @@ local function LoadLibs()
 end
 
 function RCLootBridge:GetSettings()
-    if type(MythicBoostDB) ~= "table" then return nil end
-    MythicBoostDB.rcLoot = type(MythicBoostDB.rcLoot) == "table" and MythicBoostDB.rcLoot or {}
-    local settings = MythicBoostDB.rcLoot
-    if settings.enabled == nil then settings.enabled = true end
-    return settings
+    return JP.Settings("rcLoot", SETTINGS_DEFAULTS)
 end
 
 function RCLootBridge:IsEnabled()
@@ -118,11 +115,7 @@ function RCLootBridge:BuildWindow()
     frame:SetPoint("CENTER", 0, 160)
     frame:SetFrameStrata("DIALOG")
     frame:SetClampedToScreen(true)
-    frame:EnableMouse(true)
-    frame:SetMovable(true)
-    frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+    UI.MakeMovable(frame)
     UI.Backdrop(frame, C.surface, C.surfaceEdge)
 
     frame.title = UI.Text(frame, "GameFontNormal", L("РОЗЫГРЫШ ДОБЫЧИ"), C.accent)

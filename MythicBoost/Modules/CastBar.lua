@@ -13,6 +13,7 @@ local CHANNEL_COLOR = { .32, .30, 1 }
 local COMPLETE_COLOR = { .12, .86, .15 }
 local FAILED_COLOR = { 1, .09, 0 }
 local TIME_PANEL_WIDTH = 58
+local SETTINGS_DEFAULTS = { enabled = true, unlocked = false }
 
 local function MatteBarColor(bar, color)
     local r, g, b = unpack(color)
@@ -26,10 +27,7 @@ local function MatteBarColor(bar, color)
 end
 
 local function Settings()
-    MythicBoostDB.castBar = type(MythicBoostDB.castBar) == "table" and MythicBoostDB.castBar or {}
-    local settings = MythicBoostDB.castBar
-    if settings.enabled == nil then settings.enabled = true end
-    if settings.unlocked == nil then settings.unlocked = false end
+    local settings = JP.Settings("castBar", SETTINGS_DEFAULTS) or {}
     if settings.layoutRevision ~= 2 then
         settings.point, settings.relativePoint = "BOTTOM", "BOTTOM"
         settings.x, settings.y = 0, 250
@@ -38,9 +36,7 @@ local function Settings()
     return settings
 end
 
-local function PlainNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
+local PlainNumber = UI.UsableNumber
 
 local function UnitMatches(unit)
     return unit == "player" or unit == "vehicle"

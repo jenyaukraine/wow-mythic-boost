@@ -8,17 +8,9 @@ local TARGET = { TANK = 1, HEALER = 1, DAMAGER = 3 }
 local REFRESH_INTERVAL = 1
 local selected = {}
 
-local function UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
-
-local function SafeString(value)
-    return type(value) == "string" and not issecretvalue(value) and value or nil
-end
-
-local function SafeBoolean(value)
-    return type(value) == "boolean" and not issecretvalue(value) and value or false
-end
+local UsableNumber = UI.UsableNumber
+local SafeString = UI.SafeStringOrEmpty
+local SafeBoolean = UI.SafeBoolean
 
 local function PlayerRole(unit)
     local role = UnitGroupRolesAssigned(unit)

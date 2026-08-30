@@ -640,17 +640,7 @@ local function AuraTooltip(icon)
     else GameTooltip:Hide() end
 end
 
--- Ауры в Midnight из tainted-кода не просто приходят защищёнными — сам вызов
--- GetAuraDataByIndex бросает ошибку прямо из C («Auras cannot be accessed when
--- secret while tainted»). Проверить это заранее нечем, поэтому чтение идёт
--- через pcall. Второе значение отличает «ауры закрыты» от «ауры кончились»:
--- в первом случае перебирать оставшиеся слоты бессмысленно.
-local function SafeAura(unit, index, filter)
-    if not C_UnitAuras or type(C_UnitAuras.GetAuraDataByIndex) ~= "function" then return nil, true end
-    local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
-    if not ok then return nil, true end
-    return data, false
-end
+local SafeAura = UI.SafeAura
 
 local function CancelPlayerBuff(icon, mouseButton)
     if mouseButton ~= "RightButton" or not icon.display or icon.display.unit ~= "player"

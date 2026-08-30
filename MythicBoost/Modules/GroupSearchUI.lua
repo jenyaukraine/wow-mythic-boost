@@ -50,22 +50,8 @@ local COL = {
     textLeft = 70,
 }
 
-local function UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
-
-local function SafeString(value)
-    if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
-    return value
-end
-
-local function SafeBoolean(value)
-    return type(value) == "boolean" and not issecretvalue(value) and value or false
-end
-
-local function SafeTable(value)
-    return type(value) == "table" and not issecretvalue(value) and value or nil
-end
+local UsableNumber, SafeString = UI.UsableNumber, UI.SafeString
+local SafeBoolean, SafeTable = UI.SafeBoolean, UI.SafeTable
 
 local function OwnedKeystoneListingInfo()
     if C_LFGList and type(C_LFGList.GetOwnedKeystoneActivityAndGroupAndLevel) == "function" then
@@ -211,14 +197,7 @@ local function ProfileRuns(name, classFilename)
 end
 
 local function ProfileScore(profile)
-    local keystone = profile and profile.mythicKeystoneProfile
-    if type(keystone) ~= "table" then return end
-    local function Pick(value)
-        return UsableNumber(value) and value > 0 and value or nil
-    end
-    return Pick(keystone.currentScore)
-        or Pick(keystone.score)
-        or Pick(type(keystone.mplusCurrent) == "table" and keystone.mplusCurrent.score or nil)
+    return UI.KeystoneScore(profile and profile.mythicKeystoneProfile)
 end
 
 -- Имя участника приходит без реалма, а группы кросс-реалмовые. Раньше брался
