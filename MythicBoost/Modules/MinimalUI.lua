@@ -585,6 +585,30 @@ local function StyleMinimapAddonButtons(self, enabled)
     menu:Hide()
 end
 
+-- Keep Blizzard's native addon compartment intact. We only anchor its button
+-- inside the square minimap; Blizzard continues to own the text dropdown,
+-- click handling, tooltip, and addon registration.
+local function StyleAddonCompartment(self, enabled)
+    local frame = _G.AddonCompartmentFrame
+    if not frame then return end
+    if enabled then
+        if not self.addonCompartmentLayout then
+            local state = { shown = frame:IsShown(), points = {} }
+            for index = 1, frame:GetNumPoints() do state.points[index] = { frame:GetPoint(index) } end
+            self.addonCompartmentLayout = state
+        end
+        frame:ClearAllPoints()
+        frame:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -5, 5)
+        frame:Show()
+    elseif self.addonCompartmentLayout then
+        local state = self.addonCompartmentLayout
+        frame:ClearAllPoints()
+        for _, point in ipairs(state.points or {}) do frame:SetPoint(unpack(point)) end
+        frame:SetShown(state.shown)
+        self.addonCompartmentLayout = nil
+    end
+end
+
 function MinimalUI:StyleMinimap(enabled)
     if not Minimap then return end
     if not self.roundMask then
@@ -661,7 +685,8 @@ function MinimalUI:StyleMinimap(enabled)
         end
         self.minimapBorder:Show()
         StyleMinimapZoneLabel(self, true)
-        StyleMinimapAddonButtons(self, true)
+        StyleMinimapAddonButtons(self, false)
+        StyleAddonCompartment(self, true)
         -- The minimap already has its own one-pixel border. A second enclosing
         -- panel only creates a pointless rectangle around it.
         local panel = self.unifiedPanels and self.unifiedPanels[Minimap] and self.unifiedPanels[Minimap].minimap
@@ -690,6 +715,7 @@ function MinimalUI:StyleMinimap(enabled)
         end
         self.minimapMapLayout = nil
         StyleMinimapAddonButtons(self, false)
+        StyleAddonCompartment(self, false)
         pcall(Minimap.SetMaskTexture, Minimap, self.roundMask or FALLBACK_ROUND_MASK)
         for _, method in ipairs({
             "SetArchBlobRingScalar", "SetArchBlobRingAlpha",
@@ -831,32 +857,9 @@ function MinimalUI:StyleObjectiveTracker(enabled)
     if panel then panel:Hide() end
     if self.questLine then self.questLine:Hide() end
 
-    if enabled then
-        StyleTrackerHeader(self, header)
-        RestyleTrackerTree(self, tracker)
-
-        -- Трекер пересобирает блоки на каждое изменение задания, и разовая
-        -- покраска слетает вместе с ними: именно поэтому оформление «пропало»
-        -- — обход дерева вызывался ровно один раз и только на старте.
-        -- Повторяем его после обновления трекера, схлопывая пачку вызовов
-        -- одного кадра в один проход.
-        if not self.trackerUpdateHooked and type(tracker.Update) == "function" then
-            self.trackerUpdateHooked = true
-            hooksecurefunc(tracker, "Update", function()
-                if not MinimalUI.trackerStyled or MinimalUI.trackerRestylePending then return end
-                MinimalUI.trackerRestylePending = true
-                C_Timer.After(0, function()
-                    MinimalUI.trackerRestylePending = nil
-                    local frame = _G.ObjectiveTrackerFrame
-                    if not MinimalUI.trackerStyled or not frame then return end
-                    RestyleTrackerTree(MinimalUI, frame)
-                    StyleTrackerHeader(MinimalUI, frame.Header)
-                end)
-            end)
-        end
-        self.trackerStyled = true
-        return
-    end
+    -- Only the tracker scale and minimap-relative position above are custom.
+    -- Blizzard keeps its own fonts, colours, textures and section styling.
+    if enabled then return end
 
     -- Дальше — возврат штатного вида: шрифты, кнопка сворачивания, подписи.
     self.trackerStyled = nil
@@ -875,10 +878,6 @@ function MinimalUI:StyleObjectiveTracker(enabled)
     end
     wipe(self.questFontColors or {})
 end
-
--- Нижняя граница читаемости иконки микроменю. Всё, что уже, глаз опознаёт
--- как цветное пятно, а не как кнопку.
-local MICRO_MIN_BUTTON_WIDTH = 26
 
 local MICRO_BUTTON_FALLBACK_ORDER = {
     "CharacterMicroButton",
@@ -978,17 +977,8 @@ function MinimalUI:StyleMicroMenu(enabled)
 
     local availableWidth = anchor:GetWidth() or rowWidth
 
-    -- Раньше все кнопки втискивались в одну строку шириной с миникарту: на
-    -- четырнадцати кнопках каждой доставалось около двенадцати пикселей, и
-    -- масштаб упирался в нижний предел .35 — иконки переставали читаться.
-    -- Ряд переносится на несколько строк, чтобы кнопка держала осмысленный
-    -- размер, а свободная ширина под картой расходовалась на дело.
-    local columns = math.max(1, math.floor((availableWidth + gap) / (MICRO_MIN_BUTTON_WIDTH + gap)))
-    columns = math.min(columns, count)
-    local rows = math.ceil(count / columns)
-    -- Пересчёт по числу строк выравнивает их между собой: четырнадцать кнопок
-    -- при восьми колонках дали бы 8 + 6, а так — 7 + 7.
-    columns = math.ceil(count / rows)
+    -- Every visible Blizzard micro button stays in one even row below the map.
+    local columns, rows = count, 1
     local targetWidth = (availableWidth - gap * (columns - 1)) / columns
 
     local uiScale = type(UIParent.GetEffectiveScale) == "function" and UIParent:GetEffectiveScale() or 1

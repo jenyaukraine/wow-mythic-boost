@@ -10,7 +10,7 @@ local UI, C = JP.UI, JP.UI.colors
 local CELL_SIZE = 38
 local CELL_STEP = 41
 local MIN_COLUMNS = 10
-local MAX_COLUMNS = 14
+local MAX_COLUMNS = 18
 local HEADER_HEIGHT = 48
 local FOOTER_HEIGHT = 42
 local SIDE_PADDING = 12
@@ -178,8 +178,8 @@ function BagUI:CreateItemButton(index)
     button:SetSize(CELL_SIZE, CELL_SIZE)
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:RegisterForDrag("LeftButton")
-    button.GetBag = function(owner) return owner.bag end
-    button.GetSlot = function(owner) return owner.bag, owner:GetID() end
+    button.GetBag = function(owner) return owner:GetBagID() end
+    button.GetSlot = function(owner) return owner:GetID() end
     UI.Backdrop(button, C.field, C.line, 1)
     -- Шаблон ставит UI-PassiveHighlight обычной NormalTexture. На нашей
     -- сетке она превращает каждую ячейку в яркий голубой квадрат. nil клиент
@@ -249,11 +249,15 @@ function BagUI:UpdateItemButton(button, data, layoutChanged)
     -- проход, по несколько проходов в секунду. Отсюда и лаги.
     local itemID = info and info.itemID or false
     local iconID = info and info.iconFileID or false
+    local stackKnown = not info or UI.UsableNumber(info.stackCount)
     local stack = SafeCount(info and info.stackCount)
     local isLocked = info and info.isLocked == true or false
-    if not layoutChanged and button.bag == data.bag and button.slot == data.slot
+    local quality = info and UI.UsableNumber(info.quality) and info.quality or 1
+    if not layoutChanged and stackKnown and button.bag == data.bag and button.slot == data.slot
         and button.cachedItemID == itemID and button.cachedIcon == iconID
-        and button.cachedCount == stack and button.cachedLocked == isLocked then
+        and button.cachedCount == stack and button.cachedLocked == isLocked
+        and button.cachedQuality == quality then
+        button:Show()
         return
     end
     -- Button state can show inherited textures again after clicks/dragging;
@@ -266,6 +270,7 @@ function BagUI:UpdateItemButton(button, data, layoutChanged)
     if button.BattlepayItemTexture then button.BattlepayItemTexture:Hide() end
     if button.flashAnim and button.flashAnim:IsPlaying() then button.flashAnim:Stop() end
     if button.newitemglowAnim and button.newitemglowAnim:IsPlaying() then button.newitemglowAnim:Stop() end
+    if button.bag ~= data.bag and type(button.SetBagID) == "function" then button:SetBagID(data.bag) end
     button.bag, button.slot = data.bag, data.slot
     button:SetID(data.slot)
     button.hasItem = info and info.itemID and true or false
@@ -273,7 +278,6 @@ function BagUI:UpdateItemButton(button, data, layoutChanged)
     button.link = info and info.hyperlink or nil
     if info and info.iconFileID then
         local stackCount, locked = stack, isLocked
-        local quality = tonumber(info.quality) or 1
         local changed = button.cachedItemID ~= info.itemID or button.cachedIcon ~= info.iconFileID
             or button.cachedCount ~= stackCount or button.cachedLocked ~= locked
             or button.cachedQuality ~= quality
@@ -321,7 +325,7 @@ function BagUI:UpdateItemButton(button, data, layoutChanged)
             -- Те же значения, что сверяет ранний выход выше. С nil он не совпадал,
             -- и сто тридцать пустых ячеек перебирались заново каждый проход.
             button.cachedItemID, button.cachedIcon = false, false
-            button.cachedCount, button.cachedLocked, button.cachedQuality = 0, false, nil
+            button.cachedCount, button.cachedLocked, button.cachedQuality = 0, false, 1
             button.cooldownBag, button.cooldownSlot = data.bag, data.slot
             CooldownFrame_Set(button.cooldown, 0, 0, 0)
         end
@@ -348,7 +352,9 @@ function BagUI:Refresh()
     local slots, used, total = self:CollectSlots()
     local availableHeight = math.max(420, UIParent:GetHeight() - 150)
     local maximumRows = math.max(1, math.floor((availableHeight - HEADER_HEIGHT - FOOTER_HEIGHT) / CELL_STEP))
-    local columns = math.max(MIN_COLUMNS, math.ceil(math.max(1, #slots) / maximumRows))
+    local minimumForHeight = math.ceil(math.max(1, #slots) / maximumRows)
+    local balanced = math.ceil(math.sqrt(math.max(1, #slots) * 1.45))
+    local columns = math.max(MIN_COLUMNS, minimumForHeight, balanced)
     columns = math.min(MAX_COLUMNS, columns)
     local rows = math.max(1, math.ceil(math.max(1, #slots) / columns))
     local width = SIDE_PADDING * 2 + columns * CELL_STEP - (CELL_STEP - CELL_SIZE)

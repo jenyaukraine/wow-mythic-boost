@@ -286,11 +286,25 @@ function ApplicantBoard:Build(welcome, page)
 
     self.partyDungeonHeaders = {}
     for index = 1, 8 do
-        local label = UI.Text(page, "GameFontNormalSmall", "", C.accent)
-        label:SetPoint("TOPLEFT", 374 + (index - 1) * 58, -34)
-        label:SetWidth(54)
-        label:SetJustifyH("CENTER")
-        self.partyDungeonHeaders[index] = label
+        local header = CreateFrame("Frame", nil, page, "BackdropTemplate")
+        header:SetSize(20, 20)
+        header:SetPoint("TOPLEFT", 391 + (index - 1) * 58, -29)
+        header:EnableMouse(true)
+        UI.Backdrop(header, { .015, .022, .030, 1 }, { .18, .38, .48, .85 })
+        header.icon = header:CreateTexture(nil, "ARTWORK")
+        header.icon:SetPoint("TOPLEFT", 1, -1)
+        header.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+        header.icon:SetTexCoord(.07, .93, .07, .93)
+        header.fallback = UI.Text(header, "GameFontNormalSmall", "", C.accent)
+        header.fallback:SetPoint("CENTER", 0, 0)
+        header:SetScript("OnEnter", function(self)
+            if not self.dungeonName then return end
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText(self.dungeonName, .15, .78, .96)
+            GameTooltip:Show()
+        end)
+        header:SetScript("OnLeave", GameTooltip_Hide)
+        self.partyDungeonHeaders[index] = header
     end
 
     self.partyRows = {}
@@ -411,8 +425,7 @@ function ApplicantBoard:Layout()
         local gridWidth = math.max(240, row.dungeonGrid:GetWidth())
         local tileGap = 2
         local tileSize = math.min(44, math.floor((gridWidth - tileGap * 7) / 8))
-        local totalWidth = tileSize * 8 + tileGap * 7
-        local startX = math.max(0, math.floor((gridWidth - totalWidth) / 2))
+        local startX = 0
         local startY = -math.max(0, math.floor((44 - tileSize) / 2))
         for cellIndex = 1, 8 do
             local tile = row.dungeonTiles[cellIndex]
@@ -444,7 +457,12 @@ function ApplicantBoard:RefreshParty()
 
     local columns = JP.GroupSearchUI:GetPartyDungeonColumns()
     for index, header in ipairs(self.partyDungeonHeaders) do
-        header:SetText(columns[index] and columns[index].label or "")
+        local column = columns[index]
+        header.dungeonName = column and column.name
+        header.icon:SetTexture(column and column.texture or nil)
+        header.icon:SetShown(column and column.texture and true or false)
+        header.fallback:SetText(column and not column.texture and (column.label or "M+") or "")
+        header:SetShown(column and true or false)
     end
 
     local total, known = 0, 0
@@ -538,7 +556,15 @@ function ApplicantBoard:Render()
                 tile.upgrades:SetText(upgrades > 0 and string.rep("+", math.min(3, upgrades)) or "")
                 tile.upgrades:SetTextColor(color[1], color[2], color[3], 1)
                 tile.value:SetTextColor(color[1], color[2], color[3], 1)
-                tile:SetBackdropBorderColor(color[1], color[2], color[3], level > 0 and .9 or .35)
+                if level <= 0 then
+                    tile:SetBackdropBorderColor(.12, .17, .22, .55)
+                elseif upgrades >= 2 then
+                    tile:SetBackdropBorderColor(color[1], color[2], color[3], .95)
+                elseif upgrades == 1 then
+                    tile:SetBackdropBorderColor(.18, .34, .42, .82)
+                else
+                    tile:SetBackdropBorderColor(.42, .15, .18, .78)
+                end
             end
 
             if style then

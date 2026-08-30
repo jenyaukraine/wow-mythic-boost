@@ -688,6 +688,50 @@ local function GetGroupTooltip()
     return frame
 end
 
+local function PositionGroupTooltip(tooltip, row, placement)
+    tooltip:ClearAllPoints()
+    if placement == "below" then
+        local native = _G.GameTooltip
+        if native and native:IsShown() and native ~= tooltip then
+            local gap = 10
+            local ownWidth, ownHeight = tooltip:GetWidth(), tooltip:GetHeight()
+            local screenWidth, screenHeight = UIParent:GetWidth(), UIParent:GetHeight()
+            local left, right = native:GetLeft(), native:GetRight()
+            local top, bottom = native:GetTop(), native:GetBottom()
+
+            -- The native group tooltip and Raider.IO normally occupy the upper
+            -- half of the screen. Prefer the clear strip immediately below the
+            -- native tooltip, then above/left, instead of drawing through it.
+            if bottom and bottom >= ownHeight + gap then
+                tooltip:SetPoint("TOPLEFT", native, "BOTTOMLEFT", 0, -gap)
+                return
+            elseif top and screenHeight - top >= ownHeight + gap then
+                tooltip:SetPoint("BOTTOMLEFT", native, "TOPLEFT", 0, gap)
+                return
+            elseif left and left >= ownWidth + gap then
+                tooltip:SetPoint("TOPRIGHT", native, "TOPLEFT", -gap, 0)
+                return
+            elseif right and screenWidth - right >= ownWidth + gap then
+                tooltip:SetPoint("TOPLEFT", native, "TOPRIGHT", gap, 0)
+                return
+            end
+
+            local x = math.max(12, math.min(left or 12, screenWidth - ownWidth - 12))
+            tooltip:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x, 12)
+            return
+        end
+        tooltip:SetPoint("TOPLEFT", row, "BOTTOMLEFT", 0, -10)
+        return
+    end
+
+    local spaceRight = (UIParent:GetRight() or 0) - (row:GetRight() or 0)
+    if spaceRight > tooltip:GetWidth() + 18 then
+        tooltip:SetPoint("TOPLEFT", row, "TOPRIGHT", 8, 0)
+    else
+        tooltip:SetPoint("TOPRIGHT", row, "TOPLEFT", -8, 0)
+    end
+end
+
 local function ShowGroupTooltip(row, externalResultID, externalDungeonName, placement)
     local searchResultID = externalResultID or row.searchResultID
     local dungeonName = externalDungeonName or row.dungeonName
@@ -696,21 +740,6 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
     if not info then return end
     local tooltip = GetGroupTooltip()
     local columns = DungeonColumns()
-
-    tooltip:ClearAllPoints()
-    if placement == "below" then
-        -- On Blizzard rows the normal GameTooltip and Raider.IO already take
-        -- the right side of the screen. Put our full table in one clean block
-        -- below the Group Finder instead of stacking a third tooltip there.
-        tooltip:SetPoint("TOPLEFT", row, "BOTTOMLEFT", 0, -8)
-    else
-        local spaceRight = (UIParent:GetRight() or 0) - (row:GetRight() or 0)
-        if spaceRight > tooltip:GetWidth() + 18 then
-        tooltip:SetPoint("TOPLEFT", row, "TOPRIGHT", 8, 0)
-        else
-            tooltip:SetPoint("TOPRIGHT", row, "TOPLEFT", -8, 0)
-        end
-    end
 
     local leaderName = SafeString(info.leaderName)
     tooltip.title:SetText(SafeString(info.name) or dungeonName or L("Группа"))
@@ -788,7 +817,18 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
     end
 
     tooltip:SetHeight(92 + math.max(1, memberCount) * 24)
+    tooltip.searchResultID = searchResultID
+    PositionGroupTooltip(tooltip, row, placement)
     tooltip:Show()
+    if placement == "below" then
+        -- Raider.IO and other OnShow hooks can enlarge GameTooltip after our
+        -- hook runs. Re-evaluate once on the next frame using final bounds.
+        C_Timer.After(0, function()
+            if tooltip:IsShown() and tooltip.searchResultID == searchResultID then
+                PositionGroupTooltip(tooltip, row, placement)
+            end
+        end)
+    end
 end
 
 local function HideGroupTooltip()

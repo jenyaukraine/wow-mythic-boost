@@ -105,11 +105,11 @@ local function XPerlAuraBackdrop(frame)
         if color then text:SetTextColor(color[1], color[2], color[3], 1) end
         text:SetShadowOffset(0, 0)
     end
-    StyleAuraText(frame.timer, 10, C.amber)
+    StyleAuraText(frame.timer, 11, { .94, .97, 1 })
     StyleAuraText(frame.count, 11, { 1, 1, 1 })
     if frame.timer then
         frame.timer:ClearAllPoints()
-        frame.timer:SetPoint("TOPLEFT", 2, -2)
+        frame.timer:SetPoint("CENTER", 0, 0)
     end
     if frame.count then
         frame.count:ClearAllPoints()
