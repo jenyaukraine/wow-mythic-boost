@@ -471,42 +471,49 @@ end
 -- Всплывающая таблица «участники × подземелья»
 ---------------------------------------------------------------------------
 
-local TIP_NAME_WIDTH, TIP_CELL_WIDTH = 164, 56
+-- Ширина колонки имени считается по её содержимому, а не на глаз: две иконки
+-- (роль 14 + класс 16) плюс двенадцать символов имени — предел, который вообще
+-- может прийти от игры. 164 пикселя оставляли треть колонки пустой, и таблица
+-- уезжала за край экрана шире, чем несёт данных.
+local TIP_NAME_WIDTH, TIP_CELL_WIDTH = 116, 44
+local TIP_ROW_STEP, TIP_ROW_HEIGHT = 21, 19
+local TIP_ROW_INSET, TIP_TEXT_INSET = 8, 12
+local TIP_ROWS_TOP = 72
 
 local function GetGroupTooltip()
     if GroupSearchUI.groupTooltip then return GroupSearchUI.groupTooltip end
     local frame = CreateFrame("Frame", "MythicBoostGroupTooltip", UIParent, "BackdropTemplate")
-    frame:SetSize(28 + TIP_NAME_WIDTH + TIP_CELL_WIDTH * 8, 190)
+    frame:SetSize(TIP_TEXT_INSET * 2 + TIP_NAME_WIDTH + TIP_CELL_WIDTH * 8, 190)
     frame:SetFrameStrata("TOOLTIP")
     frame:SetClampedToScreen(true)
     frame:EnableMouse(false)
     UI.Backdrop(frame, { .035, .045, .062, .98 }, { .22, .34, .46, 1 })
 
     frame.title = UI.Text(frame, "GameFontNormal", "", C.text)
-    frame.title:SetPoint("TOPLEFT", 14, -12)
-    frame.title:SetPoint("TOPRIGHT", -14, -12)
+    frame.title:SetPoint("TOPLEFT", TIP_TEXT_INSET, -10)
+    frame.title:SetPoint("TOPRIGHT", -TIP_TEXT_INSET, -10)
     frame.title:SetJustifyH("LEFT")
     frame.title:SetWordWrap(false)
 
     frame.meta = UI.Text(frame, "GameFontHighlightSmall", "", C.muted)
-    frame.meta:SetPoint("TOPLEFT", 14, -32)
-    frame.meta:SetPoint("TOPRIGHT", -14, -32)
+    frame.meta:SetPoint("TOPLEFT", TIP_TEXT_INSET, -28)
+    frame.meta:SetPoint("TOPRIGHT", -TIP_TEXT_INSET, -28)
     frame.meta:SetJustifyH("LEFT")
     frame.meta:SetWordWrap(false)
 
     local divider = UI.Line(frame, C.accentDim)
-    divider:SetPoint("TOPLEFT", 12, -54)
-    divider:SetPoint("TOPRIGHT", -12, -54)
+    divider:SetPoint("TOPLEFT", TIP_ROW_INSET, -46)
+    divider:SetPoint("TOPRIGHT", -TIP_ROW_INSET, -46)
 
     frame.playerHeader = UI.Text(frame, "GameFontNormalSmall", "ИГРОК", C.faint)
-    frame.playerHeader:SetPoint("TOPLEFT", 14, -66)
+    frame.playerHeader:SetPoint("TOPLEFT", TIP_TEXT_INSET, -56)
     frame.playerHeader:SetWidth(TIP_NAME_WIDTH)
     frame.playerHeader:SetJustifyH("LEFT")
 
     frame.columnHeaders = {}
     for index = 1, 8 do
         local header = UI.Text(frame, "GameFontNormalSmall", "", C.accent)
-        header:SetPoint("TOPLEFT", 14 + TIP_NAME_WIDTH + (index - 1) * TIP_CELL_WIDTH, -66)
+        header:SetPoint("TOPLEFT", TIP_TEXT_INSET + TIP_NAME_WIDTH + (index - 1) * TIP_CELL_WIDTH, -56)
         header:SetWidth(TIP_CELL_WIDTH)
         header:SetJustifyH("CENTER")
         frame.columnHeaders[index] = header
@@ -515,19 +522,23 @@ local function GetGroupTooltip()
     frame.playerRows = {}
     for playerIndex = 1, 5 do
         local line = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-        line:SetPoint("TOPLEFT", 10, -84 - (playerIndex - 1) * 24)
-        line:SetPoint("TOPRIGHT", -10, -84 - (playerIndex - 1) * 24)
-        line:SetHeight(22)
+        local top = -TIP_ROWS_TOP - (playerIndex - 1) * TIP_ROW_STEP
+        line:SetPoint("TOPLEFT", TIP_ROW_INSET, top)
+        line:SetPoint("TOPRIGHT", -TIP_ROW_INSET, top)
+        line:SetHeight(TIP_ROW_HEIGHT)
         UI.Backdrop(line, playerIndex % 2 == 0 and C.rowAlt or C.row, C.lineSoft)
         line.name = UI.Text(line, "GameFontHighlightSmall", "")
-        line.name:SetPoint("LEFT", 6, 0)
+        -- Ровно под заголовком «ИГРОК»: строка вставлена на TIP_ROW_INSET, а
+        -- заголовок на TIP_TEXT_INSET, поэтому смещение — их разница.
+        line.name:SetPoint("LEFT", TIP_TEXT_INSET - TIP_ROW_INSET, 0)
         line.name:SetWidth(TIP_NAME_WIDTH - 4)
         line.name:SetJustifyH("LEFT")
         line.name:SetWordWrap(false)
         line.cells = {}
         for columnIndex = 1, 8 do
             local cell = UI.Text(line, "GameFontHighlightSmall", "")
-            cell:SetPoint("LEFT", 4 + TIP_NAME_WIDTH + (columnIndex - 1) * TIP_CELL_WIDTH, 0)
+            cell:SetPoint("LEFT", TIP_TEXT_INSET - TIP_ROW_INSET + TIP_NAME_WIDTH
+                + (columnIndex - 1) * TIP_CELL_WIDTH, 0)
             cell:SetWidth(TIP_CELL_WIDTH)
             cell:SetJustifyH("CENTER")
             line.cells[columnIndex] = cell
@@ -637,7 +648,7 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
         end
     end
 
-    tooltip:SetHeight(92 + math.max(1, memberCount) * 24)
+    tooltip:SetHeight(TIP_ROWS_TOP + 4 + math.max(1, memberCount) * TIP_ROW_STEP)
     tooltip:Show()
 end
 

@@ -154,6 +154,55 @@ local function MuteActionStateTextures(self, button)
     end
 end
 
+-- Квадратная рамка кнопки действия держит три состояния сразу, поэтому цвет
+-- назначается в одном месте: иначе наведение мышью затирало подсветку
+-- подсказанного заклинания, а обновление панели — наведение.
+local ACTION_EDGE_IDLE = { .08, .24, .29 }
+local ACTION_EDGE_HOVER = { .16, .80, .86, 1 }
+local ACTION_EDGE_SUGGESTED = { .24, .96, .48, 1 }
+
+local function ApplyActionBorderColor(button)
+    local border = button.__mbMinimalBorder
+    if not border then return end
+    if button.__mbSpellSuggested then
+        border:SetBackdropBorderColor(unpack(ACTION_EDGE_SUGGESTED))
+    elseif button.__mbHovered then
+        border:SetBackdropBorderColor(unpack(ACTION_EDGE_HOVER))
+    else
+        border:SetBackdropBorderColor(ACTION_EDGE_IDLE[1], ACTION_EDGE_IDLE[2], ACTION_EDGE_IDLE[3],
+            button.__mbEmptyAction and .52 or .92)
+    end
+end
+
+-- Blizzard подсказывает следующее заклинание круглой зелёной обводкой поверх
+-- кнопки. Её не было в списке скрываемого, поэтому она и оставалась круглой
+-- поверх нашего квадратного края. Саму подсказку не теряем: гасим штатную
+-- картинку и перекладываем её состояние на цвет нашей рамки.
+local function MuteSuggestionGlow(self, button, object, animation)
+    if not object or type(object.SetAlpha) ~= "function" then return end
+    self.savedTextureAlpha = self.savedTextureAlpha or {}
+    if self.savedTextureAlpha[object] == nil then self.savedTextureAlpha[object] = object:GetAlpha() end
+
+    local function Mirror(shown)
+        button.__mbSpellSuggested = shown or nil
+        if shown then
+            -- Анимация гоняет альфу сама и перебила бы разовый SetAlpha(0).
+            if animation and type(animation.Stop) == "function" then pcall(animation.Stop, animation) end
+            object:SetAlpha(0)
+        end
+        ApplyActionBorderColor(button)
+    end
+
+    if not object.__mbGlowHooked then
+        object.__mbGlowHooked = true
+        hooksecurefunc(object, "Show", function() Mirror(true) end)
+        hooksecurefunc(object, "Hide", function() Mirror(false) end)
+        hooksecurefunc(object, "SetShown", function(_, shown) Mirror(shown and true or false) end)
+    end
+    object:SetAlpha(0)
+    Mirror(object:IsShown() and true or false)
+end
+
 local function StyleMinimapZoneLabel(self, enabled)
     -- SexyMap прячет штатную кнопку зоны и создаёт собственную. Используем её
     -- первой, иначе мы двигаем невидимый Blizzard-фрейм, а видимая строка так
@@ -759,11 +808,40 @@ function MinimalUI:StyleObjectiveTracker(enabled)
         self.trackerLayout = nil
     end
 
-    -- Убираем остатки оформления старой реализации, не меняя новые элементы
-    -- Objective Tracker, их шрифты, точки привязки или размеры.
+    -- Панель и линия старой реализации не возвращаются ни в каком режиме.
     local panel = self.unifiedPanels and self.unifiedPanels[tracker] and self.unifiedPanels[tracker].tracker
     if panel then panel:Hide() end
     if self.questLine then self.questLine:Hide() end
+
+    if enabled then
+        StyleTrackerHeader(self, header)
+        RestyleTrackerTree(self, tracker)
+
+        -- Трекер пересобирает блоки на каждое изменение задания, и разовая
+        -- покраска слетает вместе с ними: именно поэтому оформление «пропало»
+        -- — обход дерева вызывался ровно один раз и только на старте.
+        -- Повторяем его после обновления трекера, схлопывая пачку вызовов
+        -- одного кадра в один проход.
+        if not self.trackerUpdateHooked and type(tracker.Update) == "function" then
+            self.trackerUpdateHooked = true
+            hooksecurefunc(tracker, "Update", function()
+                if not MinimalUI.trackerStyled or MinimalUI.trackerRestylePending then return end
+                MinimalUI.trackerRestylePending = true
+                C_Timer.After(0, function()
+                    MinimalUI.trackerRestylePending = nil
+                    local frame = _G.ObjectiveTrackerFrame
+                    if not MinimalUI.trackerStyled or not frame then return end
+                    RestyleTrackerTree(MinimalUI, frame)
+                    StyleTrackerHeader(MinimalUI, frame.Header)
+                end)
+            end)
+        end
+        self.trackerStyled = true
+        return
+    end
+
+    -- Дальше — возврат штатного вида: шрифты, кнопка сворачивания, подписи.
+    self.trackerStyled = nil
     for text in pairs(self.trackerToggleTexts or {}) do text:Hide() end
     for button, state in pairs(self.trackerButtonLayouts or {}) do
         if button then
@@ -779,6 +857,10 @@ function MinimalUI:StyleObjectiveTracker(enabled)
     end
     wipe(self.questFontColors or {})
 end
+
+-- Нижняя граница читаемости иконки микроменю. Всё, что уже, глаз опознаёт
+-- как цветное пятно, а не как кнопку.
+local MICRO_MIN_BUTTON_WIDTH = 26
 
 local MICRO_BUTTON_FALLBACK_ORDER = {
     "CharacterMicroButton",
@@ -846,14 +928,15 @@ function MinimalUI:StyleMicroMenu(enabled)
 
     local anchor = self.microMenuAnchor
     local mapWidth = math.max(120, Minimap:GetWidth() or 245)
-    -- Чуть расширяем ряд относительно карты и почти убираем промежуток:
-    -- значки становятся крупнее, но меню по-прежнему остаётся одной строкой.
-    local horizontalInset, gap = 0, .5
+    -- Ряд шире карты и почти без промежутка между кнопками. Вся выигранная
+    -- ширина уходит в раскладку ниже: чем её больше, тем больше колонок
+    -- помещается и тем меньше строк приходится занимать под картой.
+    local rowWidth, gap = mapWidth + 14, .5
     anchor:ClearAllPoints()
     -- Центром под картой, а не по правому краю: ряд может оказаться шире
     -- карты, и тогда он должен свисать одинаково с обеих сторон.
     anchor:SetPoint("TOP", Minimap, "BOTTOM", 0, -4)
-    anchor:SetWidth(mapWidth + 14)
+    anchor:SetWidth(rowWidth)
     anchor:Show()
 
     local visible = {}
@@ -875,13 +958,26 @@ function MinimalUI:StyleMicroMenu(enabled)
         return
     end
 
-    local availableWidth = anchor:GetWidth() or (mapWidth - horizontalInset * 2)
+    local availableWidth = anchor:GetWidth() or rowWidth
 
-    local targetWidth = math.max(16, (availableWidth - gap * (count - 1)) / count)
+    -- Раньше все кнопки втискивались в одну строку шириной с миникарту: на
+    -- четырнадцати кнопках каждой доставалось около двенадцати пикселей, и
+    -- масштаб упирался в нижний предел .35 — иконки переставали читаться.
+    -- Ряд переносится на несколько строк, чтобы кнопка держала осмысленный
+    -- размер, а свободная ширина под картой расходовалась на дело.
+    local columns = math.max(1, math.floor((availableWidth + gap) / (MICRO_MIN_BUTTON_WIDTH + gap)))
+    columns = math.min(columns, count)
+    local rows = math.ceil(count / columns)
+    -- Пересчёт по числу строк выравнивает их между собой: четырнадцать кнопок
+    -- при восьми колонках дали бы 8 + 6, а так — 7 + 7.
+    columns = math.ceil(count / rows)
+    local targetWidth = (availableWidth - gap * (columns - 1)) / columns
 
     local uiScale = type(UIParent.GetEffectiveScale) == "function" and UIParent:GetEffectiveScale() or 1
-    local rowHeight = 1
-    self.microMenuSlots = self.microMenuSlots or {}
+
+    -- Высота строки известна только после расчёта всех масштабов, а разложить
+    -- кнопки по строкам без неё нельзя — отсюда два прохода.
+    local scales, rowHeight = {}, 1
     for index, button in ipairs(visible) do
         local nativeWidth = math.max(1, button:GetWidth() or 28)
         local nativeHeight = math.max(1, button:GetHeight() or nativeWidth)
@@ -890,9 +986,13 @@ function MinimalUI:StyleMicroMenu(enabled)
             and parent:GetEffectiveScale() or uiScale
         local scale = (targetWidth / nativeWidth) * (uiScale / math.max(.01, parentScale))
         scale = math.max(.35, math.min(1.25, scale))
-        local displayHeight = nativeHeight * scale * (parentScale / math.max(.01, uiScale))
-        rowHeight = math.max(rowHeight, displayHeight)
+        scales[index] = scale
+        rowHeight = math.max(rowHeight, nativeHeight * scale * (parentScale / math.max(.01, uiScale)))
+    end
 
+    self.microMenuSlots = self.microMenuSlots or {}
+    for index, button in ipairs(visible) do
+        local column, row = (index - 1) % columns, math.floor((index - 1) / columns)
         local slot = self.microMenuSlots[index]
         if not slot then
             slot = CreateFrame("Frame", nil, anchor)
@@ -900,17 +1000,17 @@ function MinimalUI:StyleMicroMenu(enabled)
             self.microMenuSlots[index] = slot
         end
         slot:ClearAllPoints()
-        slot:SetPoint("TOPLEFT", anchor, "TOPLEFT", (index - 1) * (targetWidth + gap), 0)
-        slot:SetSize(targetWidth, displayHeight)
+        slot:SetPoint("TOPLEFT", anchor, "TOPLEFT",
+            column * (targetWidth + gap), -row * (rowHeight + gap))
+        slot:SetSize(targetWidth, rowHeight)
         slot:Show()
 
         button:ClearAllPoints()
-        button:SetScale(scale)
+        button:SetScale(scales[index])
         button:SetPoint("TOP", slot, "TOP", 0, 0)
     end
     for index = count + 1, #(self.microMenuSlots or {}) do self.microMenuSlots[index]:Hide() end
-    for index = 1, count do self.microMenuSlots[index]:SetHeight(rowHeight) end
-    anchor:SetHeight(rowHeight)
+    anchor:SetHeight(rows * rowHeight + (rows - 1) * gap)
 end
 
 local ACTION_BUTTON_PREFIXES = {
@@ -1457,20 +1557,22 @@ function MinimalUI:StyleActionButtons(enabled)
                 border:SetBackdropBorderColor(.08, .24, .29, .92)
                 button.__mbMinimalBorder = border
                 button:HookScript("OnEnter", function(self)
-                    if self.__mbMinimalBorder then self.__mbMinimalBorder:SetBackdropBorderColor(.16, .80, .86, 1) end
+                    self.__mbHovered = true
+                    ApplyActionBorderColor(self)
                     if self.HotKey and self.__mbEmptyAction then self.HotKey:SetAlpha(.90) end
                 end)
                 button:HookScript("OnLeave", function(self)
-                    if self.__mbMinimalBorder then
-                        self.__mbMinimalBorder:SetBackdropBorderColor(.08, .24, .29, self.__mbEmptyAction and .52 or .92)
-                    end
+                    self.__mbHovered = nil
+                    ApplyActionBorderColor(self)
                     if self.HotKey and self.__mbEmptyAction then self.HotKey:SetAlpha(.38) end
                 end)
             end
+            MuteSuggestionGlow(self, button, button.SpellHighlightTexture, button.SpellHighlightAnim)
+            MuteSuggestionGlow(self, button, button.AssistedCombatRotationFrame)
             button.__mbEmptyAction = IsEmptyActionButton(button)
             button.__mbEmptyFill:SetShown(button.__mbEmptyAction)
             button.__mbActionGloss:SetShown(not button.__mbEmptyAction)
-            button.__mbMinimalBorder:SetBackdropBorderColor(.08, .24, .29, button.__mbEmptyAction and .52 or .92)
+            ApplyActionBorderColor(button)
             if button.HotKey then button.HotKey:SetAlpha(button.__mbEmptyAction and .38 or 1) end
             button.__mbMinimalBorder:Show()
             local parent = button:GetParent()
@@ -1498,7 +1600,7 @@ function MinimalUI:StyleActionButtons(enabled)
                 if region and font and font[1] then region:SetFont(font[1], font[2], font[3]) end
             end
             if button.HotKey then button.HotKey:SetAlpha(1) end
-            button.__mbEmptyAction = nil
+            button.__mbEmptyAction, button.__mbHovered, button.__mbSpellSuggested = nil, nil, nil
         end
     end
 
