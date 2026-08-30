@@ -1,11 +1,12 @@
 local _, JP = ...
 local MinimalChat = {}
+local UI = JP.UI
 
 -- Prat owns timestamps, links and copying. MythicBoost only retains the
 -- transparent chat skin, without message filters, backgrounds or popups.
 local function RememberAndHide(self, object)
     if not object or type(object.IsShown) ~= "function" or type(object.SetShown) ~= "function" then return end
-    self.savedVisibility = self.savedVisibility or {}
+    self.savedVisibility = self.savedVisibility or UI.WeakKeys()
     if self.savedVisibility[object] == nil then self.savedVisibility[object] = object:IsShown() and true or false end
     object:Hide()
 end
@@ -25,7 +26,7 @@ local function Skin(self, chat, index, enabled)
     local oldFade = self.chatFades and self.chatFades[chat]
     if oldFade then oldFade:Hide() end
     if enabled then
-        self.chatFonts = self.chatFonts or {}
+        self.chatFonts = self.chatFonts or UI.WeakKeys()
         if not self.chatFonts[chat] and type(chat.GetFont) == "function" then
             self.chatFonts[chat] = { chat:GetFont() }
         end
@@ -41,7 +42,7 @@ local function Skin(self, chat, index, enabled)
             }) do RememberAndHide(self, _G["ChatFrame" .. index .. "Tab" .. suffix]) end
             local text = tab.Text or _G["ChatFrame" .. index .. "TabText"]
             if text then
-                self.tabColors = self.tabColors or {}
+                self.tabColors = self.tabColors or UI.WeakKeys()
                 if not self.tabColors[text] then self.tabColors[text] = { text:GetTextColor() } end
                 text:SetTextColor(.80, .88, .96, 1)
             end

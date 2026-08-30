@@ -47,7 +47,7 @@ function RCLootBridge:GetSettings()
     if type(MythicBoostDB) ~= "table" then return nil end
     MythicBoostDB.rcLoot = type(MythicBoostDB.rcLoot) == "table" and MythicBoostDB.rcLoot or {}
     local settings = MythicBoostDB.rcLoot
-    if settings.enabled == nil then settings.enabled = false end
+    if settings.enabled == nil then settings.enabled = true end
     return settings
 end
 

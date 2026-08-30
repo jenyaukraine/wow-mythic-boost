@@ -29,7 +29,7 @@ function MinimalUI:EnsurePanel(target, key, options)
     if not target or type(target.SetPoint) ~= "function" then return end
     key = key or "default"
     options = options or {}
-    self.unifiedPanels = self.unifiedPanels or {}
+    self.unifiedPanels = self.unifiedPanels or UI.WeakKeys()
     local bucket = self.unifiedPanels[target]
     if not bucket then bucket = {}; self.unifiedPanels[target] = bucket end
     local panel = bucket[key]
@@ -94,7 +94,7 @@ end
 
 local function RememberAndHide(self, object)
     if not IsObject(object) then return end
-    self.savedVisibility = self.savedVisibility or {}
+    self.savedVisibility = self.savedVisibility or UI.WeakKeys()
     if self.savedVisibility[object] == nil then self.savedVisibility[object] = object:IsShown() and true or false end
     object:Hide()
 end
@@ -125,7 +125,7 @@ end
 -- underneath our minimal glyph, while still allowing a clean restore.
 local function MuteButtonStateTextures(self, button)
     if not button then return end
-    self.savedTextureAlpha = self.savedTextureAlpha or {}
+    self.savedTextureAlpha = self.savedTextureAlpha or UI.WeakKeys()
     for _, getter in ipairs({
         "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture", "GetDisabledTexture",
     }) do
@@ -145,7 +145,7 @@ end
 -- state overlays; otherwise its rounded gold/green hover art reappears on top
 -- of our square cyan edge whenever the mouse enters a button.
 local function MuteActionStateTextures(self, button)
-    self.savedTextureAlpha = self.savedTextureAlpha or {}
+    self.savedTextureAlpha = self.savedTextureAlpha or UI.WeakKeys()
     for _, getter in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture", "GetDisabledTexture" }) do
         local texture = type(button[getter]) == "function" and button[getter](button)
         if texture and type(texture.SetAlpha) == "function" then
@@ -153,6 +153,55 @@ local function MuteActionStateTextures(self, button)
             texture:SetAlpha(0)
         end
     end
+end
+
+-- Квадратная рамка кнопки действия держит три состояния сразу, поэтому цвет
+-- назначается в одном месте: иначе наведение мышью затирало подсветку
+-- подсказанного заклинания, а обновление панели — наведение.
+local ACTION_EDGE_IDLE = { .08, .24, .29 }
+local ACTION_EDGE_HOVER = { .16, .80, .86, 1 }
+local ACTION_EDGE_SUGGESTED = { .24, .96, .48, 1 }
+
+local function ApplyActionBorderColor(button)
+    local border = button.__mbMinimalBorder
+    if not border then return end
+    if button.__mbSpellSuggested then
+        border:SetBackdropBorderColor(unpack(ACTION_EDGE_SUGGESTED))
+    elseif button.__mbHovered then
+        border:SetBackdropBorderColor(unpack(ACTION_EDGE_HOVER))
+    else
+        border:SetBackdropBorderColor(ACTION_EDGE_IDLE[1], ACTION_EDGE_IDLE[2], ACTION_EDGE_IDLE[3],
+            button.__mbEmptyAction and .52 or .92)
+    end
+end
+
+-- Blizzard подсказывает следующее заклинание круглой зелёной обводкой поверх
+-- кнопки. Её не было в списке скрываемого, поэтому она и оставалась круглой
+-- поверх нашего квадратного края. Саму подсказку не теряем: гасим штатную
+-- картинку и перекладываем её состояние на цвет нашей рамки.
+local function MuteSuggestionGlow(self, button, object, animation)
+    if not object or type(object.SetAlpha) ~= "function" then return end
+    self.savedTextureAlpha = self.savedTextureAlpha or UI.WeakKeys()
+    if self.savedTextureAlpha[object] == nil then self.savedTextureAlpha[object] = object:GetAlpha() end
+
+    local function Mirror(shown)
+        button.__mbSpellSuggested = shown or nil
+        if shown then
+            -- Анимация гоняет альфу сама и перебила бы разовый SetAlpha(0).
+            if animation and type(animation.Stop) == "function" then pcall(animation.Stop, animation) end
+            object:SetAlpha(0)
+        end
+        ApplyActionBorderColor(button)
+    end
+
+    if not object.__mbGlowHooked then
+        object.__mbGlowHooked = true
+        hooksecurefunc(object, "Show", function() Mirror(true) end)
+        hooksecurefunc(object, "Hide", function() Mirror(false) end)
+        hooksecurefunc(object, "SetShown", function(_, shown) Mirror(shown and true or false) end)
+    end
+    object:SetAlpha(0)
+    Mirror(object:IsShown() and true or false)
 end
 
 local function StyleMinimapZoneLabel(self, enabled)
@@ -321,8 +370,8 @@ local function StyleMinimapZoneLabel(self, enabled)
 end
 
 local function StyleMinimapAddonButtons(self, enabled)
-    self.minimapAddonLayouts = self.minimapAddonLayouts or {}
-    self.minimapButtonSlots = self.minimapButtonSlots or {}
+    self.minimapAddonLayouts = self.minimapAddonLayouts or UI.WeakKeys()
+    self.minimapButtonSlots = self.minimapButtonSlots or UI.WeakKeys()
     if not enabled then
         for button, state in pairs(self.minimapAddonLayouts) do
             if button and type(button.SetPoint) == "function" then
@@ -657,32 +706,49 @@ end
 
 local function RememberFontColor(self, fontString)
     if not fontString or type(fontString.GetTextColor) ~= "function" then return end
-    self.questFontColors = self.questFontColors or {}
+    self.questFontColors = self.questFontColors or UI.WeakKeys()
     if not self.questFontColors[fontString] then self.questFontColors[fontString] = { fontString:GetTextColor() } end
 end
 
-local function RestyleTrackerTree(self, owner, depth)
+-- Дерево трекера обходится заново на каждое его обновление, а в подземелье
+-- это десятки раз в минуту. Запись ipairs({ owner:GetRegions() }) создавала
+-- по таблице на каждый узел — и вторую на его детей. Перебор тех же
+-- значений через select не выделяет ничего вовсе.
+local RestyleTrackerTree
+
+local function RestyleRegions(self, ...)
+    for index = 1, select("#", ...) do
+        local region = select(index, ...)
+        local regionType = region and type(region.GetObjectType) == "function" and region:GetObjectType()
+        if regionType == "FontString" then
+            local r, g, b = region:GetTextColor()
+            RememberFontColor(self, region)
+            if r > .65 and g > .45 and b < .35 then
+                region:SetTextColor(.88, .94, 1, 1)
+            end
+        elseif regionType == "Texture" then
+            local width, height = region:GetWidth() or 0, region:GetHeight() or 0
+            -- Горизонтальные золотые плашки/завитки секций. Маленькие
+            -- квестовые иконки и полосы прогресса не трогаем.
+            if width >= 80 and height > 0 and height <= 60 then RememberAndHide(self, region) end
+        end
+    end
+end
+
+local function RestyleChildren(self, depth, ...)
+    for index = 1, select("#", ...) do
+        RestyleTrackerTree(self, select(index, ...), depth)
+    end
+end
+
+function RestyleTrackerTree(self, owner, depth)
     if not owner or (depth or 0) > 8 then return end
     local objectType = type(owner.GetObjectType) == "function" and owner:GetObjectType()
     if objectType ~= "StatusBar" and type(owner.GetRegions) == "function" then
-        for _, region in ipairs({ owner:GetRegions() }) do
-            local regionType = region and type(region.GetObjectType) == "function" and region:GetObjectType()
-            if regionType == "FontString" then
-                local r, g, b = region:GetTextColor()
-                RememberFontColor(self, region)
-                if r > .65 and g > .45 and b < .35 then
-                    region:SetTextColor(.88, .94, 1, 1)
-                end
-            elseif regionType == "Texture" then
-                local width, height = region:GetWidth() or 0, region:GetHeight() or 0
-                -- Горизонтальные золотые плашки/завитки секций. Маленькие
-                -- квестовые иконки и полосы прогресса не трогаем.
-                if width >= 80 and height > 0 and height <= 60 then RememberAndHide(self, region) end
-            end
-        end
+        RestyleRegions(self, owner:GetRegions())
     end
     if type(owner.GetChildren) == "function" then
-        for _, child in ipairs({ owner:GetChildren() }) do RestyleTrackerTree(self, child, (depth or 0) + 1) end
+        RestyleChildren(self, (depth or 0) + 1, owner:GetChildren())
     end
 end
 
@@ -692,7 +758,7 @@ local function StyleTrackerHeader(self, header)
     local minimize = header.MinimizeButton or header.HeaderMenu
     MuteButtonStateTextures(self, minimize)
     if minimize and not InCombatLockdown() then
-        self.trackerButtonLayouts = self.trackerButtonLayouts or {}
+        self.trackerButtonLayouts = self.trackerButtonLayouts or UI.WeakKeys()
         if not self.trackerButtonLayouts[minimize] then
             local state = { points = {} }
             for index = 1, minimize:GetNumPoints() do state.points[index] = { minimize:GetPoint(index) } end
@@ -718,7 +784,7 @@ local function StyleTrackerHeader(self, header)
         text:SetText("–")
         text:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
         minimize.__mbMinimalText = text
-        self.trackerToggleTexts = self.trackerToggleTexts or {}
+        self.trackerToggleTexts = self.trackerToggleTexts or UI.WeakKeys()
         self.trackerToggleTexts[text] = true
     elseif minimize and minimize.__mbMinimalText then
         minimize.__mbMinimalText:Show()
@@ -760,11 +826,40 @@ function MinimalUI:StyleObjectiveTracker(enabled)
         self.trackerLayout = nil
     end
 
-    -- Убираем остатки оформления старой реализации, не меняя новые элементы
-    -- Objective Tracker, их шрифты, точки привязки или размеры.
+    -- Панель и линия старой реализации не возвращаются ни в каком режиме.
     local panel = self.unifiedPanels and self.unifiedPanels[tracker] and self.unifiedPanels[tracker].tracker
     if panel then panel:Hide() end
     if self.questLine then self.questLine:Hide() end
+
+    if enabled then
+        StyleTrackerHeader(self, header)
+        RestyleTrackerTree(self, tracker)
+
+        -- Трекер пересобирает блоки на каждое изменение задания, и разовая
+        -- покраска слетает вместе с ними: именно поэтому оформление «пропало»
+        -- — обход дерева вызывался ровно один раз и только на старте.
+        -- Повторяем его после обновления трекера, схлопывая пачку вызовов
+        -- одного кадра в один проход.
+        if not self.trackerUpdateHooked and type(tracker.Update) == "function" then
+            self.trackerUpdateHooked = true
+            hooksecurefunc(tracker, "Update", function()
+                if not MinimalUI.trackerStyled or MinimalUI.trackerRestylePending then return end
+                MinimalUI.trackerRestylePending = true
+                C_Timer.After(0, function()
+                    MinimalUI.trackerRestylePending = nil
+                    local frame = _G.ObjectiveTrackerFrame
+                    if not MinimalUI.trackerStyled or not frame then return end
+                    RestyleTrackerTree(MinimalUI, frame)
+                    StyleTrackerHeader(MinimalUI, frame.Header)
+                end)
+            end)
+        end
+        self.trackerStyled = true
+        return
+    end
+
+    -- Дальше — возврат штатного вида: шрифты, кнопка сворачивания, подписи.
+    self.trackerStyled = nil
     for text in pairs(self.trackerToggleTexts or {}) do text:Hide() end
     for button, state in pairs(self.trackerButtonLayouts or {}) do
         if button then
@@ -780,6 +875,10 @@ function MinimalUI:StyleObjectiveTracker(enabled)
     end
     wipe(self.questFontColors or {})
 end
+
+-- Нижняя граница читаемости иконки микроменю. Всё, что уже, глаз опознаёт
+-- как цветное пятно, а не как кнопку.
+local MICRO_MIN_BUTTON_WIDTH = 26
 
 local MICRO_BUTTON_FALLBACK_ORDER = {
     "CharacterMicroButton",
@@ -825,7 +924,7 @@ end
 -- behavior), while their anchors and scale are fitted to the map width.
 function MinimalUI:StyleMicroMenu(enabled)
     if InCombatLockdown() then return end
-    self.microButtonLayouts = self.microButtonLayouts or {}
+    self.microButtonLayouts = self.microButtonLayouts or UI.WeakKeys()
 
     if not enabled or not Minimap then
         for button, state in pairs(self.microButtonLayouts) do
@@ -847,14 +946,15 @@ function MinimalUI:StyleMicroMenu(enabled)
 
     local anchor = self.microMenuAnchor
     local mapWidth = math.max(120, Minimap:GetWidth() or 245)
-    -- Чуть расширяем ряд относительно карты и почти убираем промежуток:
-    -- значки становятся крупнее, но меню по-прежнему остаётся одной строкой.
-    local horizontalInset, gap = 0, .5
+    -- Ряд шире карты и почти без промежутка между кнопками. Вся выигранная
+    -- ширина уходит в раскладку ниже: чем её больше, тем больше колонок
+    -- помещается и тем меньше строк приходится занимать под картой.
+    local rowWidth, gap = mapWidth + 14, .5
     anchor:ClearAllPoints()
     -- Центром под картой, а не по правому краю: ряд может оказаться шире
     -- карты, и тогда он должен свисать одинаково с обеих сторон.
     anchor:SetPoint("TOP", Minimap, "BOTTOM", 0, -4)
-    anchor:SetWidth(mapWidth + 14)
+    anchor:SetWidth(rowWidth)
     anchor:Show()
 
     local visible = {}
@@ -876,13 +976,26 @@ function MinimalUI:StyleMicroMenu(enabled)
         return
     end
 
-    local availableWidth = anchor:GetWidth() or (mapWidth - horizontalInset * 2)
+    local availableWidth = anchor:GetWidth() or rowWidth
 
-    local targetWidth = math.max(16, (availableWidth - gap * (count - 1)) / count)
+    -- Раньше все кнопки втискивались в одну строку шириной с миникарту: на
+    -- четырнадцати кнопках каждой доставалось около двенадцати пикселей, и
+    -- масштаб упирался в нижний предел .35 — иконки переставали читаться.
+    -- Ряд переносится на несколько строк, чтобы кнопка держала осмысленный
+    -- размер, а свободная ширина под картой расходовалась на дело.
+    local columns = math.max(1, math.floor((availableWidth + gap) / (MICRO_MIN_BUTTON_WIDTH + gap)))
+    columns = math.min(columns, count)
+    local rows = math.ceil(count / columns)
+    -- Пересчёт по числу строк выравнивает их между собой: четырнадцать кнопок
+    -- при восьми колонках дали бы 8 + 6, а так — 7 + 7.
+    columns = math.ceil(count / rows)
+    local targetWidth = (availableWidth - gap * (columns - 1)) / columns
 
     local uiScale = type(UIParent.GetEffectiveScale) == "function" and UIParent:GetEffectiveScale() or 1
-    local rowHeight = 1
-    self.microMenuSlots = self.microMenuSlots or {}
+
+    -- Высота строки известна только после расчёта всех масштабов, а разложить
+    -- кнопки по строкам без неё нельзя — отсюда два прохода.
+    local scales, rowHeight = {}, 1
     for index, button in ipairs(visible) do
         local nativeWidth = math.max(1, button:GetWidth() or 28)
         local nativeHeight = math.max(1, button:GetHeight() or nativeWidth)
@@ -891,9 +1004,13 @@ function MinimalUI:StyleMicroMenu(enabled)
             and parent:GetEffectiveScale() or uiScale
         local scale = (targetWidth / nativeWidth) * (uiScale / math.max(.01, parentScale))
         scale = math.max(.35, math.min(1.25, scale))
-        local displayHeight = nativeHeight * scale * (parentScale / math.max(.01, uiScale))
-        rowHeight = math.max(rowHeight, displayHeight)
+        scales[index] = scale
+        rowHeight = math.max(rowHeight, nativeHeight * scale * (parentScale / math.max(.01, uiScale)))
+    end
 
+    self.microMenuSlots = self.microMenuSlots or {}
+    for index, button in ipairs(visible) do
+        local column, row = (index - 1) % columns, math.floor((index - 1) / columns)
         local slot = self.microMenuSlots[index]
         if not slot then
             slot = CreateFrame("Frame", nil, anchor)
@@ -901,17 +1018,17 @@ function MinimalUI:StyleMicroMenu(enabled)
             self.microMenuSlots[index] = slot
         end
         slot:ClearAllPoints()
-        slot:SetPoint("TOPLEFT", anchor, "TOPLEFT", (index - 1) * (targetWidth + gap), 0)
-        slot:SetSize(targetWidth, displayHeight)
+        slot:SetPoint("TOPLEFT", anchor, "TOPLEFT",
+            column * (targetWidth + gap), -row * (rowHeight + gap))
+        slot:SetSize(targetWidth, rowHeight)
         slot:Show()
 
         button:ClearAllPoints()
-        button:SetScale(scale)
+        button:SetScale(scales[index])
         button:SetPoint("TOP", slot, "TOP", 0, 0)
     end
     for index = count + 1, #(self.microMenuSlots or {}) do self.microMenuSlots[index]:Hide() end
-    for index = 1, count do self.microMenuSlots[index]:SetHeight(rowHeight) end
-    anchor:SetHeight(rowHeight)
+    anchor:SetHeight(rows * rowHeight + (rows - 1) * gap)
 end
 
 local ACTION_BUTTON_PREFIXES = {
@@ -962,7 +1079,7 @@ end
 -- клавишам и сами ContainerFrame не затрагиваются.
 function MinimalUI:StyleBags(hidden)
     if InCombatLockdown() then return end
-    self.bagVisibility = self.bagVisibility or {}
+    self.bagVisibility = self.bagVisibility or UI.WeakKeys()
     for _, frame in ipairs(BagFrames()) do
         local state = self.bagVisibility[frame]
         if hidden then
@@ -1055,6 +1172,15 @@ local COOLDOWN_VIEWER_NAMES = {
     "BuffBarCooldownViewer",
 }
 
+-- Очередь и seen создаются один раз на обход, а вот { frame:GetChildren() }
+-- выделяла таблицу на каждый из ста шестидесяти узлов — и так каждые
+-- 2.5 секунды из страховочного прохода.
+local function PushChildren(queue, ...)
+    for index = 1, select("#", ...) do
+        queue[#queue + 1] = select(index, ...)
+    end
+end
+
 local function WalkCooldownViewer(root, callback)
     if not root then return end
     local queue, seen = { root }, {}
@@ -1066,7 +1192,7 @@ local function WalkCooldownViewer(root, callback)
             seen[frame] = true
             callback(frame)
             if type(frame.GetChildren) == "function" then
-                for _, child in ipairs({ frame:GetChildren() }) do queue[#queue + 1] = child end
+                PushChildren(queue, frame:GetChildren())
             end
         end
     end
@@ -1155,13 +1281,19 @@ local function EnsureEffectIconSkin(owner, icon)
     return skin
 end
 
+-- Цвета градиента постоянные, а CreateColor создаёт таблицу. Вызов стоял вне
+-- сторожа и шёл на каждый элемент каждый проход — две таблицы в мусор
+-- каждые 2.5 секунды на каждую полосу. Создаём один раз.
+local EFFECT_FILL_BOTTOM = CreateColor and CreateColor(.48, .13, .015, 1)
+local EFFECT_FILL_TOP = CreateColor and CreateColor(1, .45, .035, 1)
+
 function MinimalUI:StyleCooldownEffectBars(enabled)
     if InCombatLockdown() then return end
     local viewer = _G.BuffBarCooldownViewer
     if not viewer then return end
-    self.effectBarStates = self.effectBarStates or {}
-    self.effectFontStates = self.effectFontStates or {}
-    self.effectIconStates = self.effectIconStates or {}
+    self.effectBarStates = self.effectBarStates or UI.WeakKeys()
+    self.effectFontStates = self.effectFontStates or UI.WeakKeys()
+    self.effectIconStates = self.effectIconStates or UI.WeakKeys()
 
     if not enabled then
         for bar, state in pairs(self.effectBarStates) do
@@ -1212,10 +1344,8 @@ function MinimalUI:StyleCooldownEffectBars(enabled)
                 frame:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
                 frame:SetStatusBarColor(1, 1, 1, 1)
                 fill = frame:GetStatusBarTexture()
-                if fill then
-                    fill:SetGradient("VERTICAL",
-                        CreateColor(.48, .13, .015, 1),
-                        CreateColor(1, .45, .035, 1))
+                if fill and EFFECT_FILL_BOTTOM then
+                    fill:SetGradient("VERTICAL", EFFECT_FILL_BOTTOM, EFFECT_FILL_TOP)
                 end
                 local skin = EnsureEffectBarSkin(frame)
                 for _, region in pairs(skin) do
@@ -1277,7 +1407,7 @@ function MinimalUI:LayoutActionCluster(enabled)
     -- всё, что кластер успел сдвинуть за текущую сессию, и прячет якорь.
     -- Чтобы вернуть кластер, достаточно убрать одну строку ниже.
     enabled = false
-    self.actionClusterState = self.actionClusterState or {}
+    self.actionClusterState = self.actionClusterState or UI.WeakKeys()
 
     if not enabled then
         for button, state in pairs(self.actionClusterState) do RestoreClusterButton(button, state) end
@@ -1356,7 +1486,7 @@ function MinimalUI:LayoutActionCluster(enabled)
     -- Blizzard's Cooldown Manager is a separate Edit Mode family. Anchor its
     -- visible viewers to the same dynamic container so action rows can never
     -- grow underneath them or drift to another part of the screen.
-    self.cooldownViewerLayouts = self.cooldownViewerLayouts or {}
+    self.cooldownViewerLayouts = self.cooldownViewerLayouts or UI.WeakKeys()
     local viewerOffset = 9
     local editMode = _G.EditModeManagerFrame and _G.EditModeManagerFrame:IsShown()
     for _, name in ipairs(COOLDOWN_VIEWER_NAMES) do
@@ -1380,7 +1510,7 @@ function MinimalUI:StyleActionButtons(enabled)
     -- Экшен-кнопки защищены в бою. Настройка уже сохранена, а визуальное
     -- применение/возврат выполнится на PLAYER_REGEN_ENABLED.
     if InCombatLockdown() then return end
-    self.actionState = self.actionState or {}
+    self.actionState = self.actionState or UI.WeakKeys()
     local parents = {}
     for _, button in ipairs(ActionButtons()) do
         local state = self.actionState[button]
@@ -1458,20 +1588,22 @@ function MinimalUI:StyleActionButtons(enabled)
                 border:SetBackdropBorderColor(.08, .24, .29, .92)
                 button.__mbMinimalBorder = border
                 button:HookScript("OnEnter", function(self)
-                    if self.__mbMinimalBorder then self.__mbMinimalBorder:SetBackdropBorderColor(.16, .80, .86, 1) end
+                    self.__mbHovered = true
+                    ApplyActionBorderColor(self)
                     if self.HotKey and self.__mbEmptyAction then self.HotKey:SetAlpha(.90) end
                 end)
                 button:HookScript("OnLeave", function(self)
-                    if self.__mbMinimalBorder then
-                        self.__mbMinimalBorder:SetBackdropBorderColor(.08, .24, .29, self.__mbEmptyAction and .52 or .92)
-                    end
+                    self.__mbHovered = nil
+                    ApplyActionBorderColor(self)
                     if self.HotKey and self.__mbEmptyAction then self.HotKey:SetAlpha(.38) end
                 end)
             end
+            MuteSuggestionGlow(self, button, button.SpellHighlightTexture, button.SpellHighlightAnim)
+            MuteSuggestionGlow(self, button, button.AssistedCombatRotationFrame)
             button.__mbEmptyAction = IsEmptyActionButton(button)
             button.__mbEmptyFill:SetShown(button.__mbEmptyAction)
             button.__mbActionGloss:SetShown(not button.__mbEmptyAction)
-            button.__mbMinimalBorder:SetBackdropBorderColor(.08, .24, .29, button.__mbEmptyAction and .52 or .92)
+            ApplyActionBorderColor(button)
             if button.HotKey then button.HotKey:SetAlpha(button.__mbEmptyAction and .38 or 1) end
             button.__mbMinimalBorder:Show()
             local parent = button:GetParent()
@@ -1499,7 +1631,7 @@ function MinimalUI:StyleActionButtons(enabled)
                 if region and font and font[1] then region:SetFont(font[1], font[2], font[3]) end
             end
             if button.HotKey then button.HotKey:SetAlpha(1) end
-            button.__mbEmptyAction = nil
+            button.__mbEmptyAction, button.__mbHovered, button.__mbSpellSuggested = nil, nil, nil
         end
     end
 
@@ -1512,9 +1644,13 @@ function MinimalUI:StyleActionButtons(enabled)
     self:LayoutActionCluster(enabled)
 end
 
+-- То же самое для строк Details: градиент один и тот же на все полосы.
+local DETAILS_FILL_BOTTOM = CreateColor and CreateColor(.36, .36, .36, 1)
+local DETAILS_FILL_TOP = CreateColor and CreateColor(1, 1, 1, 1)
+
 function MinimalUI:StyleDetails(enabled)
     if not _G.Details or type(Details.GetAllInstances) ~= "function" then return end
-    self.detailsState = self.detailsState or {}
+    self.detailsState = self.detailsState or UI.WeakKeys()
     for _, instance in ipairs(Details:GetAllInstances() or {}) do
         local base = instance and instance.baseframe
         if base then
@@ -1559,10 +1695,8 @@ function MinimalUI:StyleDetails(enabled)
                         end
                         row.textura:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
                         local texture = row.textura:GetStatusBarTexture()
-                        if texture then
-                            texture:SetGradient("VERTICAL",
-                                CreateColor(.36, .36, .36, 1),
-                                CreateColor(1, 1, 1, 1))
+                        if texture and DETAILS_FILL_BOTTOM then
+                            texture:SetGradient("VERTICAL", DETAILS_FILL_BOTTOM, DETAILS_FILL_TOP)
                         end
                         if not row.__mbGloss then
                             local gloss = row.textura:CreateTexture(nil, "OVERLAY", nil, -7)
@@ -1652,7 +1786,7 @@ function MinimalUI:StylePlayerAuras(enabled)
         return
     end
 
-    self.auraLayouts = self.auraLayouts or {}
+    self.auraLayouts = self.auraLayouts or UI.WeakKeys()
     if not self.auraLayouts[buffs] then self.auraLayouts[buffs] = CaptureFrameLayout(buffs) end
 
     if enabled then
@@ -1702,6 +1836,19 @@ function MinimalUI:Apply()
     self:StyleBags(hideBags)
     if JP.MinimalChat then JP.MinimalChat:Apply() end
 
+    -- Страховочный проход для тех слоёв, у которых нет своего события: панель
+    -- кулдаунов и окна Details создаются на лету чужим кодом, лента
+    -- бафов и миникарта перестраиваются молча.
+    --
+    -- Микроменю, трекер и панели кнопок отсюда убраны — у каждого
+    -- есть точный триггер, и тикер повторял их работу вхолостую:
+    --   микроменю — hooksecurefunc("UpdateMicroButtons") ниже в Create;
+    --   трекер    — hooksecurefunc(tracker, "Update") в StyleObjectiveTracker;
+    --   кнопки    — десяток ACTIONBAR_*/UPDATE_* событий выше плюс
+    --                добавленный EDIT_MODE_LAYOUTS_UPDATED.
+    -- Это были три самых дорогих прохода: рекурсивный обход всего
+    -- дерева трекера и одиннадцать семейств кнопок — двадцать четыре
+    -- раза в минуту, всегда, даже когда менять нечего.
     if enabled and not self.maintenanceTicker and C_Timer and C_Timer.NewTicker then
         self.maintenanceTicker = C_Timer.NewTicker(2.5, function()
             if not MythicBoostDB or not MythicBoostDB.minimalUI then return end
@@ -1709,9 +1856,6 @@ function MinimalUI:Apply()
             -- показывать и двигать свои макеты без борьбы с нашим тикером.
             if _G.EditModeManagerFrame and _G.EditModeManagerFrame:IsShown() then return end
             self:StyleMinimap(true)
-            self:StyleMicroMenu(true)
-            self:StyleObjectiveTracker(true)
-            self:StyleActionButtons(true)
             self:StyleCooldownEffectBars(true)
             self:StyleDetails(true)
             self:StylePlayerAuras(true)
@@ -1739,23 +1883,28 @@ function MinimalUI:Create()
         end)
     end
     self.events = CreateFrame("Frame")
-    self.events:RegisterEvent("PLAYER_ENTERING_WORLD")
-    self.events:RegisterEvent("ADDON_LOADED")
-    self.events:RegisterEvent("QUEST_LOG_UPDATE")
-    self.events:RegisterEvent("QUEST_WATCH_LIST_CHANGED")
-    self.events:RegisterEvent("SCENARIO_UPDATE")
-    self.events:RegisterEvent("TRACKED_ACHIEVEMENT_UPDATE")
-    self.events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
-    self.events:RegisterEvent("UPDATE_BINDINGS")
-    self.events:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
-    self.events:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
-    self.events:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-    self.events:RegisterEvent("PET_BAR_UPDATE")
-    self.events:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR")
-    self.events:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR")
-    self.events:RegisterEvent("UPDATE_POSSESS_BAR")
-    self.events:RegisterEvent("UPDATE_EXTRA_ACTIONBAR")
-    self.events:RegisterEvent("PLAYER_REGEN_ENABLED")
+    -- RegisterEvent на событие, которого нет в клиенте, бросает ошибку, а
+    -- вместе с ней падает весь Create — и модуль остаётся выключенным
+    -- целиком из-за одной переименованной строки в следующем патче.
+    -- Регистрируем по одному и переживаем пропажу любого.
+    for _, event in ipairs({
+        "PLAYER_ENTERING_WORLD", "ADDON_LOADED",
+        "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED",
+        "SCENARIO_UPDATE", "TRACKED_ACHIEVEMENT_UPDATE",
+        "ACTIONBAR_SLOT_CHANGED", "UPDATE_BINDINGS", "ACTIONBAR_PAGE_CHANGED",
+        "UPDATE_SHAPESHIFT_FORMS", "UPDATE_SHAPESHIFT_FORM", "PET_BAR_UPDATE",
+        "UPDATE_VEHICLE_ACTIONBAR", "UPDATE_OVERRIDE_ACTIONBAR",
+        "UPDATE_POSSESS_BAR", "UPDATE_EXTRA_ACTIONBAR",
+        -- Правка макета в режиме редактирования меняет и число панелей, и
+        -- ширину миникарты. Без этого события их подхватывал только
+        -- страховочный тикер — с задержкой до двух с половиной секунд.
+        "EDIT_MODE_LAYOUTS_UPDATED",
+        "PLAYER_REGEN_ENABLED",
+    }) do
+        if not pcall(self.events.RegisterEvent, self.events, event) then
+            JP:Log("MinimalUI: событие %s недоступно в этом клиенте", event)
+        end
+    end
     -- Событий здесь два десятка, и часть приходит пачками: ACTIONBAR_SLOT_CHANGED
     -- прилетает по одному на слот, а UPDATE_SHAPESHIFT_FORM у друида — на каждое
     -- перекидывание. Раньше КАЖДОЕ событие заводило свой таймер, и каждый гонял

@@ -69,7 +69,12 @@ local function ItemMeta(link, currencyID, quest, slotType)
 
     itemType, itemSubType = SafeValue(itemType), SafeValue(itemSubType)
     equipLoc, itemLevel, bindType = SafeValue(equipLoc), SafeValue(itemLevel), SafeValue(bindType)
+    -- INVTYPE_NON_EQUIP существует в игре, но равен пустой строке. Пустая
+    -- строка в Lua истинна, поэтому хлам получал ведущую запятую (", Хлам")
+    -- и бессмысленный уровень предмета. Носибельность определяет непустой
+    -- перевод слота, а не сам факт наличия глобальной переменной.
     local equipText = type(equipLoc) == "string" and equipLoc ~= "" and _G[equipLoc] or nil
+    if equipText == "" then equipText = nil end
     local detail
     if quest then
         detail = L("Задание")

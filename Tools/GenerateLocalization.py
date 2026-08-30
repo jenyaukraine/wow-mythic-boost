@@ -69,6 +69,8 @@ MANUAL = {
         "Журнал ошибок": "Error log", "Журнал ошибок очищен.": "Error log cleared.",
         " будет пересобран после боя.": " will be reloaded after combat.", " пересобран.": " reloaded.",
         "Не удалось пересобрать ": "Failed to reload ",
+        "MinimalUI: событие %s недоступно в этом клиенте": "MinimalUI: event %s is unavailable in this client",
+        "Клик — снять сумку": "Click — unequip bag",
     },
     "de": {
         "АК": "AF", "СД": "BV", "БН": "DN", "ЗД": "MR",
@@ -109,6 +111,8 @@ MANUAL = {
         "Журнал ошибок": "Fehlerprotokoll", "Журнал ошибок очищен.": "Fehlerprotokoll geleert.",
         " будет пересобран после боя.": " wird nach dem Kampf neu geladen.", " пересобран.": " neu geladen.",
         "Не удалось пересобрать ": "Neuladen fehlgeschlagen: ",
+        "MinimalUI: событие %s недоступно в этом клиенте": "MinimalUI: Ereignis %s ist in diesem Client nicht verfügbar",
+        "Клик — снять сумку": "Klick — Tasche ablegen",
     },
 }
 

@@ -286,9 +286,18 @@ local function InitializeDatabase()
     -- Старый режим захвата штатной кнопки удалён: MythicBoost теперь
     -- открывается только своей кнопкой внутри Blizzard Group Finder.
     db.replaceGroupFinder = false
-    if db.minimalUI == nil then db.minimalUI = false end
+    if db.minimalUI == nil then db.minimalUI = true end
     db.convenience = type(db.convenience) == "table" and db.convenience or {}
     if db.convenience.hideBags == nil then db.convenience.hideBags = true end
+    -- Удобства включены сразу. Раньше им вообще не задавался дефолт, а
+    -- Enabled() требует строго true — девять возможностей молча лежали
+    -- выключенными, и о них никто не знал.
+    for _, key in ipairs({
+        "autoKeystone", "autoQuests", "guildRepair", "repair",
+        "resurrection", "resNoCombat", "sellJunk", "summon", "whisperInvite",
+    }) do
+        if db.convenience[key] == nil then db.convenience[key] = true end
+    end
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
     if db.unitFrames.enabled == nil then db.unitFrames.enabled = true end
     if db.unitFrames.hideBlizzard == nil then db.unitFrames.hideBlizzard = true end

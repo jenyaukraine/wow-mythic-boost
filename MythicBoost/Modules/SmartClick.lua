@@ -91,8 +91,8 @@ function SmartClick:GetSettings()
     if type(MythicBoostDB) ~= "table" then return nil end
     MythicBoostDB.smartClick = type(MythicBoostDB.smartClick) == "table" and MythicBoostDB.smartClick or {}
     local settings = MythicBoostDB.smartClick
-    if settings.buff == nil then settings.buff = false end
-    if settings.res == nil then settings.res = false end
+    if settings.buff == nil then settings.buff = true end
+    if settings.res == nil then settings.res = true end
     return settings
 end
 

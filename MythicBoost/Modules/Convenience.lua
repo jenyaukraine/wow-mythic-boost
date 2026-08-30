@@ -1,6 +1,7 @@
 local _, JP = ...
 local L = JP.L
 local Convenience = {}
+local UI = JP.UI
 
 local function Settings()
     MythicBoostDB.convenience = type(MythicBoostDB.convenience) == "table" and MythicBoostDB.convenience or {}
@@ -12,7 +13,9 @@ local function Enabled(key)
 end
 
 local function PrintMoney(prefix, copper)
-    if not copper or copper <= 0 then return end
+    -- Сумма собирается из цен, которые называет игра, а защищённое значение
+    -- нельзя сравнивать. Отсекаем его до «<= 0», а не после.
+    if not UI.UsableNumber(copper) or copper <= 0 then return end
     local text = GetMoneyString and GetMoneyString(copper, true) or tostring(copper)
     JP:Print(prefix .. ": " .. text)
 end
@@ -24,8 +27,11 @@ local function IsKeystone(itemID)
         if ok and type(result) == "boolean" and not issecretvalue(result) then return result end
     end
     if C_Item and type(C_Item.GetItemInfo) == "function" and Enum and Enum.ItemClass and Enum.ItemReagentSubclass then
+        -- Один вызов на два поля: GetItemInfo — из самых дорогих в API и при
+        -- промахе кэша уходит за данными на сервер.
         local ok, classID, subclassID = pcall(function()
-            return select(12, C_Item.GetItemInfo(itemID)), select(13, C_Item.GetItemInfo(itemID))
+            local _, _, _, _, _, _, _, _, _, _, _, class, subclass = C_Item.GetItemInfo(itemID)
+            return class, subclass
         end)
         return ok and classID == Enum.ItemClass.Reagent and subclassID == Enum.ItemReagentSubclass.Keystone
     end
@@ -84,12 +90,20 @@ function Convenience:SellJunk()
     local poor = Enum and Enum.ItemQuality and Enum.ItemQuality.Poor or 0
     local total = 0
     for bag = 0, (NUM_BAG_SLOTS or 4) do
-        for slot = 1, C_Container.GetContainerNumSlots(bag) do
+        local slots = C_Container.GetContainerNumSlots(bag)
+        for slot = 1, UI.UsableNumber(slots) and slots or 0 do
             local info = C_Container.GetContainerItemInfo(bag, slot)
-            if info and info.quality == poor and not info.isLocked and not info.hasNoValue then
+            -- Качество приходит от игры и под taint бывает защищённым. Такое
+            -- значение можно использовать в условии (isLocked, hasNoValue ниже),
+            -- но нельзя сравнивать — а здесь было именно сравнение, и «продать
+            -- хлам» падало на торговце с «attempt to compare a secret value».
+            local quality = info and UI.UsableNumber(info.quality) and info.quality or nil
+            if quality == poor and not info.isLocked and not info.hasNoValue then
                 local price = type(GetItemInfo) == "function"
                     and select(11, GetItemInfo(info.itemID or info.hyperlink or "")) or 0
-                total = total + price * (info.stackCount or 1)
+                if not UI.UsableNumber(price) then price = 0 end
+                local stack = UI.UsableNumber(info.stackCount) and info.stackCount or 1
+                total = total + price * stack
                 pcall(C_Container.UseContainerItem, bag, slot)
             end
         end

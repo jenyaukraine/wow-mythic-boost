@@ -3,8 +3,12 @@ local L = JP.L
 local SettingsHub = {}
 local UI, C = JP.UI, JP.UI.colors
 
+-- Дефолты теперь выставляет InitializeDatabase при загрузке. Здесь они
+-- остаются страховкой и обязаны с ним совпадать: раньше этот список
+-- был единственным источником, а применялся только при открытии окна
+-- настроек — до этого Convenience читал базу напрямую и видел nil.
 local DEFAULTS = {
-    autoQuests = false,
+    autoQuests = true,
     summon = true,
     resurrection = true,
     resNoCombat = true,
@@ -12,7 +16,7 @@ local DEFAULTS = {
     repair = true,
     guildRepair = true,
     merchantSummary = true,
-    whisperInvite = false,
+    whisperInvite = true,
     inviteKeyword = "inv",
     autoKeystone = true,
     movableKeystoneFrame = false,
@@ -360,12 +364,6 @@ function SettingsHub:Build(_, parent)
     automationInfo:SetPoint("TOPLEFT", 28, -432)
     automationInfo:SetWidth(740)
     automationInfo:SetJustifyH("LEFT")
-
-    local systemInfo = UI.Text(systemPage, "GameFontHighlightSmall",
-        L("Настройки применяются сразу. Защищённые действия во время боя безопасно пропускаются."), C.muted)
-    systemInfo:SetPoint("TOPLEFT", 28, -214)
-    systemInfo:SetWidth(740)
-    systemInfo:SetJustifyH("LEFT")
 
     SwitchCategory(MythicBoostDB.settingsCategory or "automation")
 end
