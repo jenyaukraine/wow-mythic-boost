@@ -1166,9 +1166,14 @@ function GroupSearchUI:RunDirectSearch(welcome, token)
     end
     local filterEnum = Enum and Enum.LFGListFilter or {}
     local languages = C_LFGList.GetLanguageSearchFilter and C_LFGList.GetLanguageSearchFilter() or nil
-    local searchFilter = filterEnum.PvE or 4
-    if bit and filterEnum.CurrentSeason then searchFilter = bit.bor(searchFilter, filterEnum.CurrentSeason) end
-    ok = pcall(C_LFGList.Search, 2, searchFilter, 0, languages, nil, advancedFilter, activityIDs)
+    -- Blizzard 12.1 resolves dungeon searches as Recommended in the second
+    -- argument and keeps PvE in preferredFilters. Passing PvE | CurrentSeason
+    -- as the primary filter is accepted by the C API, but no completion event
+    -- is emitted, leaving our request to expire on the timeout below.
+    local searchFilter = filterEnum.Recommended or 1
+    local preferredFilters = filterEnum.PvE or 4
+    ok = pcall(C_LFGList.Search, 2, searchFilter, preferredFilters,
+        languages, nil, advancedFilter, activityIDs)
     if not ok then
         FinishBlizzardSearch(welcome, token, L("Blizzard не разрешил выполнить поиск сейчас."))
         return
