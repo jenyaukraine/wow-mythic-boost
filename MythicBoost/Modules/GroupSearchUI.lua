@@ -34,12 +34,14 @@ local CARD_PAD = 12
 local CARD_ICON = 92
 local CARD_COLUMN = CARD_PAD + CARD_ICON + 12
 local CARD_ITEM_SIZE, CARD_ITEM_STEP = 24, 28
-local CARD_BADGE_W, CARD_BADGE_H = 58, 20
+-- Шанс на дроп и свой ключ — два числа, ради которых карточку и читают.
+-- Мелкий шрифт делал из них подпись, а не заголовок.
+local CARD_BADGE_W, CARD_BADGE_H = 64, 24
 --
 -- Вертикаль (высота карточки 116):
 --   12 поле сверху
 --   значок     -12 .. -104
---   название   -14 ..  -34   процент и ключ — на этой же строке, справа
+--   название   -14 ..  -38   процент и ключ — на этой же строке, справа
 --   предметы   -48 ..  -72   и второй ряд -76 .. -100
 --   12 поле снизу
 local CARD_ROW_TITLE = -14
@@ -147,6 +149,12 @@ local function CreateOwnKeystoneListing(button)
     end
 end
 
+-- Видимый кусок фона. Challenge Mode вшивает справа чёрный градиент под
+-- свой текст, поэтому кадрируем. Числа по ширине и высоте разные: одни и те
+-- же десять пикселей карточки — разная доля кадра, карточка шире, чем выше.
+local ART_LEFT, ART_RIGHT = .045, .725
+local ART_TOP, ART_BOTTOM = .177, .837
+
 -- fileID = 0 приходит от API как «текстуры нет». Без этой проверки
 -- SetTexture(0) рисует чёрный прямоугольник вместо карточки.
 local function ValidTexture(value)
@@ -157,6 +165,20 @@ end
 ---------------------------------------------------------------------------
 -- Данные Raider.IO
 ---------------------------------------------------------------------------
+
+-- Часть подземелий Challenge Mode отдаёт без фоновой картинки, и карточка
+-- оставалась чёрной: запасным вариантом шла квадратная иконка, растянутая на
+-- широкую карточку, — тёмное пятно, а не иллюстрация. У журнала подземелий
+-- широкий баннер есть почти всегда, берём его.
+local function DungeonBanner(instanceMapID)
+    if not UsableNumber(instanceMapID) then return end
+    if not C_EncounterJournal or type(C_EncounterJournal.GetInstanceForGameMap) ~= "function" then return end
+    local ok, journalID = pcall(C_EncounterJournal.GetInstanceForGameMap, instanceMapID)
+    if not ok or not UsableNumber(journalID) or type(EJ_GetInstanceInfo) ~= "function" then return end
+    local infoOK, _, _, bgImage, buttonImage = pcall(EJ_GetInstanceInfo, journalID)
+    if not infoOK then return end
+    return ValidTexture(bgImage) or ValidTexture(buttonImage)
+end
 
 local function PlayerRuns()
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return {} end
@@ -1321,7 +1343,7 @@ local function GetDungeonData()
             instanceMapID = instanceMapID,
             name = SafeString(name) or (L("Подземелье ") .. (#result + 1)),
             icon = ValidTexture(icon),
-            background = ValidTexture(background),
+            background = ValidTexture(background) or DungeonBanner(instanceMapID),
             activityIDs = rioDungeon and type(rioDungeon.lfd_activity_ids) == "table"
                 and rioDungeon.lfd_activity_ids or {},
             run = run,
@@ -1381,7 +1403,7 @@ local function SetCardSelected(card, selected)
         card:SetBackdropBorderColor(UI.Unpack(C.line))
     end
     card.accent:SetShown(card.selected)
-    card.art:SetAlpha(selected and .32 or .10)
+    card.art:SetAlpha(selected and .32 or .16)
     card.art:SetDesaturated(not selected)
     card.icon:SetDesaturated(not selected)
     card.icon:SetAlpha(selected and 1 or .55)
@@ -1491,9 +1513,7 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
 
             if dungeon.background then
                 card.art:SetTexture(dungeon.background)
-                -- Справа в Challenge Mode-фон уже вшит чёрный градиент под текст.
-                -- Обрезаем эту часть и растягиваем чистую иллюстрацию на всю карточку.
-                card.art:SetTexCoord(.02, .70, .12, .78)
+                card.art:SetTexCoord(ART_LEFT, ART_RIGHT, ART_TOP, ART_BOTTOM)
                 card.art:Show()
             elseif dungeon.icon then
                 card.art:SetTexture(dungeon.icon)
@@ -1625,7 +1645,7 @@ local function CreateDungeonCard(parent, welcome)
     card.bestBadge:SetPoint("TOPRIGHT", -CARD_PAD, CARD_ROW_TITLE)
     UI.Backdrop(card.bestBadge, { .025, .055, .045, .88 }, { .16, .48, .34, .82 })
 
-    card.loot = UI.Text(card, "GameFontNormalSmall", "", C.faint)
+    card.loot = UI.Text(card, "GameFontNormal", "", C.faint)
     card.loot:SetPoint("RIGHT", card.bestBadge, "LEFT", -10, 0)
     card.loot:SetHeight(CARD_BADGE_H)
     card.loot:SetJustifyH("RIGHT")
@@ -1641,7 +1661,7 @@ local function CreateDungeonCard(parent, welcome)
     card.title:SetWordWrap(false)
     card.title:SetShadowColor(0, 0, 0, 1)
     card.title:SetShadowOffset(1, -1)
-    card.best = UI.Text(card.bestBadge, "GameFontNormalSmall", "")
+    card.best = UI.Text(card.bestBadge, "GameFontNormal", "")
     card.best:SetPoint("CENTER", 0, 0)
     card.best:SetWordWrap(false)
 
@@ -1825,8 +1845,20 @@ local function CreateResultRow(parent, index)
     row.keyBox:SetSize(COL.keyWidth, 30)
     row.keyBox:SetPoint("LEFT", COL.keyLeft, 0)
     UI.Backdrop(row.keyBox, { .035, .050, .065, 1 }, { .16, .30, .24, 1 })
+    -- Сам камень за числом. Пустой квадрат с цифрой ничем не говорил, что это
+    -- ключ; иконка предмета читается мгновенно. Держим её тускло и приглушённо,
+    -- иначе она спорит с числом, ради которого квадрат и существует.
+    row.keyIcon = row.keyBox:CreateTexture(nil, "BACKGROUND", nil, 1)
+    row.keyIcon:SetPoint("TOPLEFT", 1, -1)
+    row.keyIcon:SetPoint("BOTTOMRIGHT", -1, 1)
+    row.keyIcon:SetTexture("Interface\\Icons\\INV_Relics_Hourglass")
+    row.keyIcon:SetTexCoord(.10, .90, .22, .78)
+    row.keyIcon:SetDesaturated(true)
+    row.keyIcon:SetAlpha(.22)
     row.key = UI.Text(row.keyBox, "GameFontNormalLarge", "", C.green)
     row.key:SetPoint("CENTER", 0, 0)
+    row.key:SetShadowColor(0, 0, 0, 1)
+    row.key:SetShadowOffset(1, -1)
 
     row.roles = UI.Text(row, "GameFontHighlight", "")
     row.roles:SetPoint("RIGHT", -COL.rolesRight, 0)
