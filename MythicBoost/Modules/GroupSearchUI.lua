@@ -501,6 +501,8 @@ end
 -- может прийти от игры. 164 пикселя оставляли треть колонки пустой, и таблица
 -- уезжала за край экрана шире, чем несёт данных.
 local TIP_NAME_WIDTH, TIP_CELL_WIDTH = 116, 44
+-- Ниже этого колонка уже заголовка «ИГРОК» и двух иконок в строке.
+local TIP_NAME_MIN = 62
 local TIP_ROW_STEP, TIP_ROW_HEIGHT = 21, 19
 local TIP_ROW_INSET, TIP_TEXT_INSET = 8, 12
 local TIP_ROWS_TOP = 72
@@ -574,6 +576,31 @@ local function GetGroupTooltip()
     frame:Hide()
     GroupSearchUI.groupTooltip = frame
     return frame
+end
+
+-- Ширина колонки имени и число колонок подземелий известны только в момент
+-- показа. Раньше и то и другое было прибито под худший случай: колонка имени
+-- под ник в двенадцать символов с двумя иконками, окно — под восемь колонок
+-- всегда. На коротком «Komit» с одной колонкой между ником и его ключом
+-- зияло полсотни пикселей, а справа висели семь пустых колонок.
+local function LayoutGroupTooltip(tooltip, columnCount, nameWidth)
+    columnCount = math.max(1, columnCount)
+    tooltip.playerHeader:SetWidth(nameWidth)
+    for index, header in ipairs(tooltip.columnHeaders) do
+        header:SetShown(index <= columnCount)
+        header:ClearAllPoints()
+        header:SetPoint("TOPLEFT", TIP_TEXT_INSET + nameWidth + (index - 1) * TIP_CELL_WIDTH, -56)
+    end
+    for _, line in ipairs(tooltip.playerRows) do
+        line.name:SetWidth(nameWidth - 4)
+        for index, cell in ipairs(line.cells) do
+            cell:SetShown(index <= columnCount)
+            cell:ClearAllPoints()
+            cell:SetPoint("LEFT", TIP_TEXT_INSET - TIP_ROW_INSET + nameWidth
+                + (index - 1) * TIP_CELL_WIDTH, 0)
+        end
+    end
+    tooltip:SetWidth(TIP_TEXT_INSET * 2 + nameWidth + TIP_CELL_WIDTH * columnCount)
 end
 
 local function ShowGroupTooltip(row, externalResultID, externalDungeonName, placement)
@@ -672,6 +699,15 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
             line:Hide()
         end
     end
+
+    -- Мерить можно только после SetText: GetStringWidth считает и вставленные
+    -- в строку иконки роли с классом, а они и занимают половину колонки.
+    local widest = 0
+    for _, line in ipairs(tooltip.playerRows) do
+        if line:IsShown() then widest = math.max(widest, line.name:GetStringWidth() or 0) end
+    end
+    LayoutGroupTooltip(tooltip, #columns,
+        math.max(TIP_NAME_MIN, math.min(TIP_NAME_WIDTH, math.ceil(widest) + 10)))
 
     tooltip:SetHeight(TIP_ROWS_TOP + 4 + math.max(1, memberCount) * TIP_ROW_STEP)
     tooltip:Show()
