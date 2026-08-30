@@ -45,10 +45,24 @@ local function BuildHeader(self, frame)
     local mark = UI.Text(badge, "GameFontNormalLarge", "MB", { 1, 1, 1, 1 })
     mark:SetPoint("CENTER", 0, 0)
 
-    local title = UI.Text(header, "GameFontNormalLarge", "MythicBoost", C.text)
-    title:SetPoint("TOPLEFT", badge, "TOPRIGHT", 14, -1)
-    local subtitle = UI.Text(header, "GameFontHighlightSmall", "ПОДБОР ГРУПП MYTHIC+", C.faint)
-    subtitle:SetPoint("BOTTOMLEFT", badge, "BOTTOMRIGHT", 14, 1)
+    -- Вместо повторения названия аддона показываем полезное состояние пати.
+    -- Каждый слот — настоящий Frame/Texture, поэтому пустые места больше не
+    -- превращаются в квадраты из-за отсутствующего символа в шрифте клиента.
+    local partyLabel = UI.Text(header, "GameFontNormalSmall", "ТВОЯ ГРУППА", C.faint)
+    partyLabel:SetPoint("TOPLEFT", badge, "TOPRIGHT", 14, -1)
+    self.partySlots = {}
+    for index = 1, 5 do
+        local slot = UI.Panel(header, { .035, .047, .061, 1 }, { .16, .22, .29, 1 })
+        slot:SetSize(20, 20)
+        slot:SetPoint("BOTTOMLEFT", badge, "BOTTOMRIGHT", 14 + (index - 1) * 26, 0)
+        slot.icon = slot:CreateTexture(nil, "ARTWORK")
+        slot.icon:SetPoint("TOPLEFT", 2, -2)
+        slot.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        slot.unknown = UI.Text(slot, "GameFontHighlightSmall", "?", C.muted)
+        slot.unknown:SetPoint("CENTER", 0, 0)
+        slot.unknown:Hide()
+        self.partySlots[index] = slot
+    end
 
     local close = UI.CloseButton(header)
     close:SetPoint("TOPRIGHT", -10, -10)
@@ -72,7 +86,7 @@ local function BuildHeader(self, frame)
     blizzard:HookScript("OnLeave", GameTooltip_Hide)
 
     self.status = UI.Text(header, "GameFontHighlightSmall", "", C.muted)
-    self.status:SetPoint("RIGHT", maximize, "LEFT", -14, 0)
+    self.status:SetPoint("RIGHT", blizzard, "LEFT", -14, 0)
     self.status:SetJustifyH("RIGHT")
 
     return header
@@ -128,6 +142,7 @@ function Welcome:Create()
         { key = "groups", label = "ПОДБОР ГРУПП" },
         { key = "applicants", label = "ПАТИ / КАНДИДАТЫ" },
         { key = "guild", label = "РЕЙТИНГ ГИЛЬДИИ" },
+        { key = "settings", label = "НАСТРОЙКИ" },
     }
     for index, item in ipairs(order) do
         local tab = UI.Tab(frame, item.label, 168)
@@ -154,7 +169,13 @@ function Welcome:Create()
     applicants:Hide()
     JP.ApplicantBoard:Build(self, applicants)
 
-    self.pages = { groups = groups, applicants = applicants, guild = guild }
+    local settings = UI.Panel(frame, C.panel, C.line)
+    settings:SetPoint("TOPLEFT", 12, pageTop)
+    settings:SetPoint("BOTTOMRIGHT", -12, 12)
+    settings:Hide()
+    JP.SettingsHub:Build(self, settings)
+
+    self.pages = { groups = groups, applicants = applicants, guild = guild, settings = settings }
     self.currentPage = "groups"
     self.tabs.groups:SetActive(true)
 
@@ -245,6 +266,11 @@ function Welcome:Refresh()
         self.status:SetText("")
         return
     end
+    if self.currentPage == "settings" then
+        JP.SettingsHub:Refresh()
+        self.status:SetText("")
+        return
+    end
 
     JP.GroupSearchUI:Layout(self)
     JP.GroupSearchUI:RefreshDungeonCards(self)
@@ -257,7 +283,7 @@ function Welcome:Refresh()
         matches, scanned, rejected = batch.matches or {}, batch.scanned or 0, batch.rejected or {}
     else
         matches, message, scanned, rejected = JP.AutoMatch:Scan(
-            self.tank:GetChecked(), self.bloodlust:GetChecked(), self:GetGroupFilters(), {
+            self:GetGroupFilters(), {
                 bestByMap = self.bestByMap,
                 bestByActivity = self.bestByActivity,
             })

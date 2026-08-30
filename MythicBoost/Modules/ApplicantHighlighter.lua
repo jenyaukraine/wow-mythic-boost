@@ -11,6 +11,14 @@ local function UsableNumber(value)
     return type(value) == "number" and not issecretvalue(value)
 end
 
+local function SafeString(value)
+    return type(value) == "string" and not issecretvalue(value) and value or nil
+end
+
+local function SafeBoolean(value)
+    return type(value) == "boolean" and not issecretvalue(value) and value or false
+end
+
 local function PlayerRole(unit)
     local role = UnitGroupRolesAssigned(unit)
     if role == "TANK" or role == "HEALER" or role == "DAMAGER" then return role end
@@ -47,18 +55,23 @@ local function BuildSelection()
     local missing = MissingRoles()
     local byRole = { TANK = {}, HEALER = {}, DAMAGER = {} }
 
-    for _, applicantID in ipairs(C_LFGList.GetApplicants() or {}) do
+    local applicants = C_LFGList.GetApplicants()
+    if type(applicants) ~= "table" or issecretvalue(applicants) then return end
+    for _, applicantID in ipairs(applicants) do
         local applicant = C_LFGList.GetApplicantInfo(applicantID)
-        if applicant and applicant.applicationStatus == "applied" then
-            for memberIdx = 1, (applicant.numMembers or 0) do
+        local applicationStatus = applicant and SafeString(applicant.applicationStatus)
+        local numMembers = applicant and UsableNumber(applicant.numMembers) and applicant.numMembers or 0
+        if applicant and applicationStatus == "applied" then
+            for memberIdx = 1, numMembers do
                 local _, _, _, _, itemLevel, _, tank, healer, damage, assignedRole = C_LFGList.GetApplicantMemberInfo(applicantID, memberIdx)
                 if UsableNumber(itemLevel) then
+                    assignedRole = SafeString(assignedRole)
                     if assignedRole == "TANK" or assignedRole == "HEALER" or assignedRole == "DAMAGER" then
                         AddForRole(byRole, assignedRole, applicantID, memberIdx, itemLevel)
                     else
-                        if tank then AddForRole(byRole, "TANK", applicantID, memberIdx, itemLevel) end
-                        if healer then AddForRole(byRole, "HEALER", applicantID, memberIdx, itemLevel) end
-                        if damage then AddForRole(byRole, "DAMAGER", applicantID, memberIdx, itemLevel) end
+                        if SafeBoolean(tank) then AddForRole(byRole, "TANK", applicantID, memberIdx, itemLevel) end
+                        if SafeBoolean(healer) then AddForRole(byRole, "HEALER", applicantID, memberIdx, itemLevel) end
+                        if SafeBoolean(damage) then AddForRole(byRole, "DAMAGER", applicantID, memberIdx, itemLevel) end
                     end
                 end
             end

@@ -7,6 +7,7 @@ local UI = {}
 JP.UI = UI
 
 UI.colors = {
+    edge      = { .16, .80, .86, 1 },
     accent    = { .16, .72, .96, 1 },
     accentSoft= { .16, .72, .96, .18 },
     accentDim = { .10, .40, .55, 1 },
@@ -25,6 +26,16 @@ UI.colors = {
     rowHover  = { .112, .150, .190, .95 },
     line      = { .15, .20, .26, 1 },
     lineSoft  = { .12, .16, .21, .85 },
+
+    -- Канонические поверхности. Любая панель аддона — и в окне, и поверх
+    -- игрового мира — обязана брать фон и контур ОТСЮДА, а не объявлять свои
+    -- рядом с собой. До этого каждый модуль держал собственный почти-такой-же
+    -- тёмный: UnitFrames .012/.017/.024, MinimalUI .018/.026/.034, LootUI
+    -- .008/.012/.018, PlayerTooltip .008/.012/.020. Пять чуть разных серых с
+    -- пятью разными контурами на одном экране глаз читает как пять разных
+    -- аддонов; одинаковые — как один интерфейс.
+    surface     = { .014, .020, .028, .94 },
+    surfaceEdge = { .16, .21, .27, .96 },
 }
 
 local C = UI.colors
@@ -62,7 +73,14 @@ end
 function UI.Text(parent, template, value, color)
     local text = parent:CreateFontString(nil, "OVERLAY", template or "GameFontHighlightSmall")
     text:SetText(value or "")
-    if color then text:SetTextColor(Unpack(color)) end
+    -- Цвет проверяем, а не доверяем. Один лишний аргумент у вызывающего — и
+    -- сюда прилетает строка вместо таблицы, Unpack отдаёт nil, а SetTextColor
+    -- роняет весь модуль на этапе Create. Так уже случилось с KeystoneTimer,
+    -- и стоило это целой мёртвой функции: модуль просто не создавался.
+    if type(color) == "table" and type(color[1]) == "number"
+        and type(color[2]) == "number" and type(color[3]) == "number" then
+        text:SetTextColor(Unpack(color))
+    end
     return text
 end
 
@@ -99,6 +117,12 @@ local ROLE_ATLAS = {
     TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps",
 }
 
+local ROLE_FALLBACK_COORDS = {
+    TANK = { 0 / 64, 19 / 64, 22 / 64, 41 / 64 },
+    HEALER = { 20 / 64, 39 / 64, 1 / 64, 20 / 64 },
+    DAMAGER = { 20 / 64, 39 / 64, 22 / 64, 41 / 64 },
+}
+
 local atlasCache = {}
 local function AtlasMarkup(atlas, size)
     if not atlas or not CreateAtlasMarkup then return end
@@ -133,6 +157,27 @@ function UI.RoleIcon(role, size)
     return "|cff8292a3" .. (ROLE_LETTER[role] or "?") .. "|r"
 end
 
+-- FontString-разметка атласов удобна внутри таблиц, но пустые места группы
+-- раньше рисовались символом «○», которого нет в некоторых WoW-шрифтах —
+-- вместо него игрок видел квадрат. В шапке используем настоящие Texture.
+function UI.SetRoleTexture(texture, role)
+    if not texture then return false end
+    local atlas = ROLE_ATLAS[role]
+    if atlas and texture.SetAtlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas) then
+        texture:SetAtlas(atlas, false)
+        texture:SetTexCoord(0, 1, 0, 1)
+        return true
+    end
+    local coords = ROLE_FALLBACK_COORDS[role]
+    if coords then
+        texture:SetTexture("Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES")
+        texture:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+        return true
+    end
+    texture:SetTexture(nil)
+    return false
+end
+
 function UI.ClassColor(classFilename)
     local color = classFilename and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFilename]
     if color then return color.r, color.g, color.b end
@@ -151,8 +196,6 @@ end
 -- Кнопки повторяют язык панелей действий DandersFrames: тёмная заливка и
 -- тонкая яркая бирюзовая обводка вместо залитого прямоугольника. Состояние
 -- читается по яркости контура, а не по смене цвета фона.
-local EDGE = { .16, .80, .86, 1 }
-
 local function ButtonVisual(button)
     local enabled = button:IsEnabled()
     local hovered = button.hovered and enabled
@@ -162,11 +205,11 @@ local function ButtonVisual(button)
         button.label:SetTextColor(.36, .40, .45, 1)
     elseif button.primary then
         button:SetBackdropColor(hovered and .055 or .035, hovered and .135 or .100, hovered and .150 or .115, 1)
-        button:SetBackdropBorderColor(EDGE[1], EDGE[2], EDGE[3], hovered and 1 or .92)
+        button:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], hovered and 1 or .92)
         button.label:SetTextColor(hovered and 1 or .88, 1, 1, 1)
     else
         button:SetBackdropColor(hovered and .062 or .040, hovered and .085 or .052, hovered and .098 or .064, 1)
-        button:SetBackdropBorderColor(EDGE[1], EDGE[2], EDGE[3], hovered and .95 or .55)
+        button:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], hovered and .95 or .55)
         button.label:SetTextColor(hovered and .94 or .78, hovered and .98 or .86, hovered and 1 or .90, 1)
     end
 end
@@ -401,4 +444,124 @@ function UI.Tab(parent, label, width)
     end
     tab:SetActive(false)
     return tab
+end
+
+---------------------------------------------------------------------------
+-- Портреты, полосы и ауры
+---------------------------------------------------------------------------
+
+-- Настоящий живой портрет, как в X-Perl 2.4.3. Двумерная текстура остаётся
+-- под моделью как запасной вариант для невидимых/ещё не загруженных юнитов.
+function UI.Portrait(parent, size, thickness)
+    size, thickness = size or 38, math.max(thickness or 2, 1)
+    local portrait = {}
+    local ring = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    ring:SetSize(size + thickness * 2, size + thickness * 2)
+    UI.Backdrop(ring, C.field, C.edge, thickness)
+
+    local face = ring:CreateTexture(nil, "ARTWORK")
+    -- XPerl_Portrait_Template из 2.4.3: 50x50 внутри рамки 60x62.
+    -- Смещения намеренно несимметричны — это часть старого объёмного канта.
+    face:SetPoint("TOPLEFT", 6, -5)
+    face:SetPoint("BOTTOMRIGHT", -4, 4)
+    face:SetTexCoord(0, 1, 0, 1)
+    local model = CreateFrame("PlayerModel", nil, ring)
+    -- Геометрия актуального Z-Perl: живая модель заполняет портрет плотнее
+    -- двумерной запасной текстуры и не оставляет чёрную круглую «дырку».
+    model:SetPoint("TOPLEFT", 3, -3)
+    model:SetPoint("BOTTOMRIGHT", -4, 4)
+    model:SetFrameLevel(ring:GetFrameLevel() + 1)
+    model:EnableMouse(false)
+    model:SetScript("OnModelLoaded", function(self)
+        -- SetPortraitZoom(1) — тот же путь, которым пользуется современный
+        -- Z-Perl. Camera 0 в Midnight у некоторых обликов показывает всё тело.
+        pcall(self.SetPortraitZoom, self, 1)
+    end)
+    portrait.ring, portrait.face, portrait.model = ring, face, model
+
+    function portrait:SetUnit(unit)
+        self.face:SetVertexColor(1, 1, 1, 1)
+        local exists = unit and UnitExists(unit)
+        local missing = type(exists) == "boolean" and not issecretvalue(exists) and not exists
+        local textureOK = false
+        if unit and not missing and type(SetPortraitTexture) == "function" then
+            textureOK = pcall(SetPortraitTexture, self.face, unit)
+        end
+        if not textureOK or not self.face:GetTexture() then
+            self.face:SetTexture(WHITE)
+            self.face:SetVertexColor(.09, .11, .14, 1)
+        end
+
+        if unit and not missing then
+            pcall(self.model.ClearModel, self.model)
+            local modelOK = pcall(self.model.SetUnit, self.model, unit)
+            if modelOK then
+                pcall(self.model.SetPortraitZoom, self.model, 1)
+                -- 2D SetPortraitTexture имеет круглую альфа-маску. Она должна
+                -- быть видна только как fallback, а не просвечивать под 3D.
+                self.face:Hide()
+                self.model:Show()
+            else
+                self.model:Hide()
+                self.face:Show()
+            end
+        else
+            pcall(self.model.ClearModel, self.model)
+            self.model:Hide()
+            self.face:Show()
+        end
+    end
+
+    function portrait:SetStateAlpha(alpha)
+        self.ring:SetBackdropBorderColor(.50, .50, .50, alpha or 1)
+        self.ring:SetAlpha(math.max(alpha or 1, .55))
+    end
+    return portrait
+end
+
+function UI.StatusBar(parent, height, color)
+    local holder = UI.Panel(parent, { .02, .03, .04, .72 }, C.line)
+    holder:SetHeight(height or 12)
+    local bar = CreateFrame("StatusBar", nil, holder)
+    bar:SetPoint("TOPLEFT", 1, -1)
+    bar:SetPoint("BOTTOMRIGHT", -1, 1)
+    bar:SetStatusBarTexture(WHITE)
+    bar:SetStatusBarColor(Unpack(color or C.accent))
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(1)
+    local void = bar:CreateTexture(nil, "BACKGROUND")
+    void:SetAllPoints()
+    void:SetColorTexture(.02, .03, .04, .76)
+    bar.holder = holder
+    return bar, holder
+end
+
+function UI.AuraIcon(parent, size)
+    size = size or 24
+    local icon = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    icon:SetSize(size, size)
+    icon:EnableMouse(true)
+    icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    UI.Backdrop(icon, { .02, .03, .04, .35 }, C.line, 1)
+    icon.texture = icon:CreateTexture(nil, "ARTWORK")
+    icon.texture:SetPoint("TOPLEFT", 1, -1)
+    icon.texture:SetPoint("BOTTOMRIGHT", -1, 1)
+    icon.texture:SetTexCoord(.08, .92, .08, .92)
+    icon.cooldown = CreateFrame("Cooldown", nil, icon, "CooldownFrameTemplate")
+    icon.cooldown:SetAllPoints(icon.texture)
+    icon.cooldown:SetDrawEdge(false)
+    icon.cooldown:SetHideCountdownNumbers(true)
+    local overlay = CreateFrame("Frame", nil, icon)
+    overlay:SetAllPoints()
+    overlay:SetFrameLevel(icon.cooldown:GetFrameLevel() + 1)
+    icon.count = UI.Text(overlay, "NumberFontNormalSmall", "")
+    icon.count:SetPoint("BOTTOMRIGHT", -1, 1)
+    icon.timer = UI.Text(overlay, "NumberFontNormalSmall", "", C.amber)
+    icon.timer:SetPoint("TOPLEFT", 1, -1)
+    icon.dispel = CreateFrame("Frame", nil, icon, "BackdropTemplate")
+    icon.dispel:SetPoint("TOPLEFT", -2, 2)
+    icon.dispel:SetPoint("BOTTOMRIGHT", 2, -2)
+    UI.Backdrop(icon.dispel, { 0, 0, 0, 0 }, C.edge, 2)
+    icon.dispel:Hide()
+    return icon
 end

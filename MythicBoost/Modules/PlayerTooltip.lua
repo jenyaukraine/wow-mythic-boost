@@ -1,5 +1,102 @@
 local _, JP = ...
 local PlayerTooltip = {}
+local C = JP.UI.colors
+
+-- Единые токены из UI.colors: панели этого модуля стоят на экране
+-- рядом с юнит-фреймами и окном добычи и обязаны совпадать с ними точно.
+local TOOLTIP_BG = { JP.UI.colors.surface[1], JP.UI.colors.surface[2], JP.UI.colors.surface[3], .97 }
+local TOOLTIP_EDGE = { JP.UI.colors.surfaceEdge[1], JP.UI.colors.surfaceEdge[2], JP.UI.colors.surfaceEdge[3], .96 }
+
+local function ApplyTooltipSkin(tooltip)
+    if not tooltip then return end
+    if tooltip.NineSlice and type(tooltip.NineSlice.SetAlpha) == "function" then
+        tooltip.NineSlice:SetAlpha(0)
+        tooltip.NineSlice:Hide()
+    end
+    -- Фон и рамку тултипа в современном Retail рисует NineSlice, а метода
+    -- SetBackdrop у GameTooltip больше нет. Прежняя проверка type(...) всегда
+    -- была ложной: NineSlice выше гасился, замена не ставилась, и тултип
+    -- оставался полностью прозрачным — сквозь него просвечивал трекер задач.
+    -- Рисуем подложку текстурами на самом тултипе: они привязаны к его краям и
+    -- переживают любое изменение размера, а BACKGROUND с отрицательным
+    -- подуровнем гарантированно оказывается под строками текста.
+    if not tooltip.__mbBackdrop then
+        local background = tooltip:CreateTexture(nil, "BACKGROUND", nil, -8)
+        background:SetPoint("TOPLEFT")
+        background:SetPoint("BOTTOMRIGHT")
+        background:SetColorTexture(unpack(TOOLTIP_BG))
+        tooltip.__mbBackdrop = background
+
+        local shade = tooltip:CreateTexture(nil, "BACKGROUND", nil, -6)
+        shade:SetPoint("TOPLEFT", 1, -1)
+        shade:SetPoint("BOTTOMRIGHT", -1, 1)
+        shade:SetColorTexture(1, 1, 1, 1)
+        shade:SetGradient("HORIZONTAL",
+            CreateColor(1, .24, .02, .11),
+            CreateColor(.02, .78, 1, .08))
+        tooltip.__mbBackdropShade = shade
+
+        local edges = {}
+        for index = 1, 4 do
+            edges[index] = tooltip:CreateTexture(nil, "BACKGROUND", nil, -7)
+            edges[index]:SetColorTexture(unpack(TOOLTIP_EDGE))
+        end
+        edges[1]:SetPoint("TOPLEFT");    edges[1]:SetPoint("TOPRIGHT");    edges[1]:SetHeight(1)
+        edges[2]:SetPoint("BOTTOMLEFT"); edges[2]:SetPoint("BOTTOMRIGHT"); edges[2]:SetHeight(1)
+        edges[3]:SetPoint("TOPLEFT");    edges[3]:SetPoint("BOTTOMLEFT");  edges[3]:SetWidth(1)
+        edges[4]:SetPoint("TOPRIGHT");   edges[4]:SetPoint("BOTTOMRIGHT"); edges[4]:SetWidth(1)
+    end
+    if not tooltip.__mbTopAccent then
+        local accent = tooltip:CreateTexture(nil, "OVERLAY", nil, 7)
+        accent:SetPoint("TOPLEFT", 1, -1)
+        accent:SetPoint("TOPRIGHT", -1, -1)
+        accent:SetHeight(2)
+        accent:SetColorTexture(1, 1, 1, 1)
+        -- Один фирменный цвет, а не переход из оранжевого в бирюзовый:
+        -- два акцентных цвета в одной полоске — это два разных бренда
+        -- рядом, и именно они ломали целостность вместе с ModernBackdrop.
+        accent:SetGradient("HORIZONTAL",
+            CreateColor(C.accent[1], C.accent[2], C.accent[3], .30),
+            CreateColor(C.accent[1], C.accent[2], C.accent[3], .95))
+        tooltip.__mbTopAccent = accent
+    end
+    tooltip.__mbTopAccent:Show()
+end
+
+local function HookTooltipSkin(tooltip)
+    if not tooltip or tooltip.__mbSkinHooked then return end
+    tooltip.__mbSkinHooked = true
+    tooltip:HookScript("OnShow", function(owner)
+        ApplyTooltipSkin(owner)
+        C_Timer.After(0, function()
+            if owner:IsShown() then ApplyTooltipSkin(owner) end
+        end)
+    end)
+    ApplyTooltipSkin(tooltip)
+end
+
+-- Raider.IO uses separate GameTooltipTemplate instances for the movable
+-- profile card and character search. They are not children of GameTooltip,
+-- so skinning only the Blizzard singleton leaves exactly the large default
+-- black/grey card visible in Group Finder.
+local RAIDERIO_TOOLTIPS = {
+    "RaiderIO_ProfileTooltip",
+    "RaiderIO_SearchTooltip",
+    "LibDBIconTooltip",
+}
+
+local function HookRaiderIOTooltips()
+    local profileReady = false
+    for _, name in ipairs(RAIDERIO_TOOLTIPS) do
+        local tooltip = _G[name]
+        if tooltip then
+            HookTooltipSkin(tooltip)
+            ApplyTooltipSkin(tooltip)
+            if name == "RaiderIO_ProfileTooltip" then profileReady = true end
+        end
+    end
+    return profileReady
+end
 
 local function IsUsableNumber(value)
     return type(value) == "number" and not issecretvalue(value)
@@ -67,16 +164,15 @@ local function AddPotential(tooltip, runs, itemLevel, fullName, saveRecent)
     end
 end
 
-local function AddRunCount(tooltip, keystone)
-    local total, capped = 0, false
-    for _, level in ipairs({ 10, 12, 15 }) do
-        local count = keystone["keystoneMilestone" .. level]
-        if IsUsableNumber(count) then
-            total = total + count
-            if count >= 255 then capped = true end
-        end
+local function AddRunCount(tooltip, runs)
+    -- Считаем прямо из того же свежего списка Raider.IO, который показан
+    -- строками выше. Milestone-поля профиля обновляются отдельно и могли
+    -- показывать старое «2», когда в списке уже восемь рекордов +10.
+    local total = 0
+    for _, run in ipairs(type(runs) == "table" and runs or {}) do
+        if IsUsableNumber(run.level) and run.level >= 10 then total = total + 1 end
     end
-    tooltip:AddDoubleLine("Пройдено ключей +10 и выше", tostring(total) .. (capped and "+" or ""), .75, .78, .82, 1, .82, .25)
+    tooltip:AddDoubleLine("Подземелий с рекордом +10 и выше", tostring(total), .75, .78, .82, 1, .82, .25)
 end
 
 local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, saveRecent)
@@ -99,7 +195,7 @@ local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, s
         local chests = IsUsableNumber(run.chests) and run.chests or 0
         tooltip:AddDoubleLine(dungeonName, FormatRun(level, chests), .86, .89, .93, 1, 1, 1)
     end
-    AddRunCount(tooltip, keystone)
+    AddRunCount(tooltip, runs)
     AddPotential(tooltip, runs, itemLevel, fullName, saveRecent)
     tooltip:Show()
 end
@@ -110,7 +206,9 @@ end
 -- повторялась на каждой подсказке, больше двух тысяч раз за сессию.
 -- Поэтому здесь ничего не предполагаем: непригодное значение просто пропускаем.
 local function IsUsableString(value)
-    return type(value) == "string" and value ~= "" and not issecretvalue(value)
+    -- Даже сравнение secret-строки с "" запрещено. Сначала проверяем метку,
+    -- и только после этого выполняем любые операции со значением.
+    return type(value) == "string" and not issecretvalue(value) and value ~= ""
 end
 
 local function AddUnitProfile(tooltip)
@@ -162,6 +260,11 @@ local function AddGenericRaiderIOProfile(tooltip)
 end
 
 local function AddSearchResultProfile(tooltip, searchResultID)
+    if JP.GroupSearchUI and JP.GroupSearchUI.IsMythicPlusSearchResult
+        and not JP.GroupSearchUI:IsMythicPlusSearchResult(searchResultID) then
+        JP.GroupSearchUI:HideBlizzardResultTooltip()
+        return
+    end
     if JP.GroupSearchUI and JP.GroupSearchUI.ShowBlizzardResultTooltip then
         pcall(JP.GroupSearchUI.ShowBlizzardResultTooltip, JP.GroupSearchUI, tooltip:GetOwner(), searchResultID)
     end
@@ -238,6 +341,21 @@ function PlayerTooltip:Create()
         end
     end)
 
+    HookTooltipSkin(_G.GameTooltip)
+    HookTooltipSkin(_G.ItemRefTooltip)
+    HookTooltipSkin(_G.ShoppingTooltip1)
+    HookTooltipSkin(_G.ShoppingTooltip2)
+    HookTooltipSkin(_G.EmbeddedItemTooltip)
+    HookTooltipSkin(_G.FriendsTooltip)
+    HookRaiderIOTooltips()
+
+    -- The profile tooltip is created when Raider.IO enables its profile
+    -- module, which can happen after our ADDON_LOADED callback. A short,
+    -- bounded retry catches that late construction without a permanent poll.
+    if C_Timer and C_Timer.NewTicker then
+        self.raiderSkinTicker = C_Timer.NewTicker(.5, HookRaiderIOTooltips, 20)
+    end
+
     HookSearchEntryTooltip(self)
     HookFriendsTooltip(self)
     if not self.searchHooked or not self.friendsHooked then
@@ -245,7 +363,11 @@ function PlayerTooltip:Create()
         self.loader:RegisterEvent("ADDON_LOADED")
         self.loader:SetScript("OnEvent", function(_, _, addonName)
             if addonName == "Blizzard_GroupFinder" then HookSearchEntryTooltip(self) end
-            if addonName == "Blizzard_FriendsFrame" then HookFriendsTooltip(self) end
+            if addonName == "RaiderIO" then HookRaiderIOTooltips() end
+            if addonName == "Blizzard_FriendsFrame" then
+                HookFriendsTooltip(self)
+                HookTooltipSkin(_G.FriendsTooltip)
+            end
         end)
     end
 end

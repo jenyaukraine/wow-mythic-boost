@@ -2,14 +2,9 @@ local _, JP = ...
 local FrameSwitch = {}
 local UI = JP.UI
 
--- Подмена штатного окна поиска групп своим.
---
--- Работает как переключатель, а не как захват: кнопка появляется на окне
--- Blizzard, а в нашем окне есть обратная. Если включён режим замены, окно
--- «Подземелья и рейды» само уступает место нашему.
---
--- В бою не вмешиваемся вообще: система панелей Blizzard в это время
--- защищена, и попытка спрятать окно оборвётся ошибкой.
+-- MythicBoost больше не перехватывает штатную кнопку «Поиск группы».
+-- Она всегда открывает Blizzard Group Finder, а переход в наше окно живёт
+-- отдельной кнопкой непосредственно внутри этого окна.
 
 local function Welcome()
     return JP.modules.Welcome
@@ -31,6 +26,8 @@ local function OpenBlizzard()
         JP:Print("В бою переключать окна нельзя.")
         return
     end
+    local welcome = Welcome()
+    if welcome and welcome.frame then welcome.frame:Hide() end
     if type(PVEFrame_ToggleFrame) == "function" then
         pcall(PVEFrame_ToggleFrame, "GroupFinderFrame")
     elseif PVEFrame and type(ShowUIPanel) == "function" then
@@ -40,25 +37,23 @@ end
 FrameSwitch.OpenBlizzard = function() OpenBlizzard() end
 
 function FrameSwitch:IsReplacing()
-    return MythicBoostDB and MythicBoostDB.replaceGroupFinder == true
+    return false
 end
 
-function FrameSwitch:SetReplacing(enabled)
-    MythicBoostDB.replaceGroupFinder = enabled and true or false
-    if self.button then
-        self.button:SetText(enabled and "Открыть MythicBoost" or "MythicBoost")
-    end
-    JP:Print(enabled
-        and "Окно поиска групп будет заменяться на MythicBoost. Вернуть: |cff28b8f5/mb replace|r"
-        or "Штатное окно поиска групп больше не подменяется.")
+function FrameSwitch:SetReplacing()
+    if MythicBoostDB then MythicBoostDB.replaceGroupFinder = false end
+    if self.button then self.button:SetText("MB") end
+    JP:Print("Штатная кнопка «Поиск группы» не подменяется. MythicBoost открывается кнопкой внутри окна Blizzard.")
 end
 
 -- Кнопка на окне Blizzard: даже при выключенной замене отсюда можно попасть
 -- в наше окно одним кликом.
 local function EnsureButton(module)
     if module.button or not PVEFrame then return end
-    local button = UI.Button(PVEFrame, module:IsReplacing() and "Открыть MythicBoost" or "MythicBoost", 150, 22, true)
-    button:SetPoint("TOPRIGHT", -60, -26)
+    local button = UI.Button(PVEFrame, "MB", 38, 22, true)
+    -- Keep it flush with the right end of the secondary header row. The
+    -- close button occupies the row above, so this does not overlap it.
+    button:SetPoint("TOPRIGHT", -8, -26)
     button:SetFrameStrata("HIGH")
     button:SetScript("OnClick", function()
         if InCombatLockdown() then
@@ -73,36 +68,21 @@ local function EnsureButton(module)
     button:HookScript("OnEnter", function(self)
         UI.Tooltip(self, "MythicBoost",
             "Открыть окно подбора групп: фильтры, кандидаты и рейтинг гильдии.",
-            "Постоянная замена этого окна включается командой /mb replace")
+            "Штатная кнопка «Поиск группы» всегда продолжает открывать окно Blizzard.")
     end)
     button:HookScript("OnLeave", GameTooltip_Hide)
     module.button = button
 end
 
-local function EnsureReplacement(module)
-    if module.hooked or not PVEFrame then return end
-    module.hooked = true
-    PVEFrame:HookScript("OnShow", function()
-        if not module:IsReplacing() or InCombatLockdown() then return end
-        -- Прячем на следующем кадре: в момент OnShow система панелей ещё
-        -- достраивает окно, и вмешательство внутрь этого вызова ломает её.
-        C_Timer.After(0, function()
-            if not module:IsReplacing() or InCombatLockdown() then return end
-            if PVEFrame and PVEFrame:IsShown() and type(HideUIPanel) == "function" then
-                pcall(HideUIPanel, PVEFrame)
-            end
-            OpenOurs()
-        end)
-    end)
-end
-
 function FrameSwitch:Install()
     EnsureButton(self)
-    EnsureReplacement(self)
     return self.button ~= nil
 end
 
 function FrameSwitch:Create()
+    -- Миграция старой настройки: даже если подмена была сохранена включённой,
+    -- после обновления штатная микрокнопка немедленно освобождается.
+    if MythicBoostDB then MythicBoostDB.replaceGroupFinder = false end
     if self:Install() then return end
     if self.loader then return end
     self.loader = CreateFrame("Frame")

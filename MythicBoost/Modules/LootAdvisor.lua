@@ -98,12 +98,13 @@ local function RestoreJournal(state)
     end
 end
 
-local function AnalyzeDungeon(dungeon)
+local function AnalyzeDungeon(dungeon, specID)
     local instanceMapID = InstanceMapID(dungeon)
     local journalID = instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID)
     if not journalID or not EJ_SelectInstance or not EJ_GetNumLoot then return {percent=0,total=0,upgrades={},pending=false} end
     EJ_SelectInstance(journalID)
     local total, upgrades, pending, totalGain = 0, {}, false, 0
+    local usefulCount, upgradeCount, bisCount, topCount = 0, 0, 0, 0
     local upgradeSlots = {}
     for lootIndex = 1, EJ_GetNumLoot() do
         local item = C_EncounterJournal.GetLootInfoByIndex(lootIndex)
@@ -130,26 +131,48 @@ local function AnalyzeDungeon(dungeon)
                 end
             end
             local dropLevel = PREVIEW_DROP_ITEM_LEVEL
-            if dropLevel > equipped then
+            local recommendation = JP.BiSData and JP.BiSData.GetItem
+                and JP.BiSData:GetItem(specID, item.itemID)
+            local isUpgrade = dropLevel > equipped
+            -- BIS/TOP остаётся полезной целью даже при том же ilvl: именно
+            -- ради этого советчик больше не является только сравнением уровня.
+            if isUpgrade or recommendation then
                 local itemName = item.name
                 if not itemName and item.itemID and C_Item and C_Item.GetItemNameByID then itemName = C_Item.GetItemNameByID(item.itemID) end
-                totalGain = totalGain + dropLevel - equipped
+                local gain = math.max(0, dropLevel - equipped)
+                usefulCount = usefulCount + 1
+                if isUpgrade then
+                    upgradeCount = upgradeCount + 1
+                    totalGain = totalGain + gain
+                end
+                if recommendation and recommendation.kind == "bis" then bisCount = bisCount + 1 end
+                if recommendation and recommendation.kind == "top" then topCount = topCount + 1 end
                 upgradeSlots[filterType] = true
                 upgrades[#upgrades + 1] = {
                     itemID=item.itemID, name=itemName or "Предмет",
                     icon=item.icon, link=item.link, slot=item.slot or "Слот", equipped=equipped,
-                    level=dropLevel, gain=dropLevel-equipped,
+                    level=dropLevel, gain=gain, isUpgrade=isUpgrade,
+                    recommendation=recommendation,
                 }
             end
         end
     end
-    table.sort(upgrades, function(a,b) return a.gain > b.gain end)
+    table.sort(upgrades, function(a,b)
+        local aKind = a.recommendation and (a.recommendation.kind == "bis" and 3 or 2) or 1
+        local bKind = b.recommendation and (b.recommendation.kind == "bis" and 3 or 2) or 1
+        if aKind ~= bKind then return aKind > bKind end
+        local aShare = a.recommendation and a.recommendation.share or 0
+        local bShare = b.recommendation and b.recommendation.share or 0
+        if aShare ~= bShare then return aShare > bShare end
+        return (a.gain or 0) > (b.gain or 0)
+    end)
     local slotCount = 0
     for _ in pairs(upgradeSlots) do slotCount = slotCount + 1 end
     return {
-        percent=total>0 and math.floor(#upgrades/total*100+.5) or 0,
-        total=total, useful=#upgrades, slotCount=slotCount, upgrades=upgrades,
-        averageGain=#upgrades>0 and math.floor(totalGain/#upgrades+.5) or 0,
+        percent=total>0 and math.floor(usefulCount/total*100+.5) or 0,
+        total=total, useful=usefulCount, upgradeCount=upgradeCount,
+        bisCount=bisCount, topCount=topCount, slotCount=slotCount, upgrades=upgrades,
+        averageGain=upgradeCount>0 and math.floor(totalGain/upgradeCount+.5) or 0,
         pending=pending,
         keyLevel=PREVIEW_KEY_LEVEL,
         dropLevel=PREVIEW_DROP_ITEM_LEVEL,
@@ -168,9 +191,10 @@ function LootAdvisor:Analyze(dungeons)
     local results = {}
     local journalState = ConfigureJournal()
     if not journalState then return results end
+    local specID = JP.BiSData and JP.BiSData.GetCurrentSpecID and JP.BiSData:GetCurrentSpecID()
     local pending = false
     for _, dungeon in ipairs(dungeons or {}) do
-        results[dungeon.mapID] = AnalyzeDungeon(dungeon)
+        results[dungeon.mapID] = AnalyzeDungeon(dungeon, specID)
         pending = results[dungeon.mapID].pending or pending
     end
     RestoreJournal(journalState)

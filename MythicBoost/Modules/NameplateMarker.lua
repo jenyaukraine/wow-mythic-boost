@@ -1,4 +1,5 @@
 local _, JP = ...
+local C = JP.UI.colors
 local NameplateMarker = { plates = {} }
 
 local function FullUnitName(unit)
@@ -17,7 +18,7 @@ local function CreateMarker(plate)
         edgeFile = "Interface/Buttons/WHITE8X8",
         edgeSize = 2,
     })
-    marker:SetBackdropColor(.06, .08, .10, .92)
+    marker:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], .92)
     marker:SetBackdropBorderColor(1, .74, .24, 1)
     marker.text = marker:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     marker.text:SetPoint("CENTER", 0, 1)

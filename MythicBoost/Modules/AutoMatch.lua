@@ -2,6 +2,7 @@ local _, JP = ...
 local AutoMatch = {}
 
 local BLOODLUST_CLASSES = { HUNTER = true, MAGE = true, SHAMAN = true, EVOKER = true }
+local BATTLE_REZ_CLASSES = { DEATHKNIGHT = true, DRUID = true, PALADIN = true, WARLOCK = true }
 local MIN_KEY_LEVEL, MAX_KEY_LEVEL = 2, 40
 
 local function UsableNumber(value)
@@ -14,6 +15,14 @@ end
 local function SafeString(value)
     if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
     return value
+end
+
+local function SafeBoolean(value)
+    return type(value) == "boolean" and not issecretvalue(value) and value or false
+end
+
+local function SafeTable(value)
+    return type(value) == "table" and not issecretvalue(value) and value or nil
 end
 
 local function Contains(list, value)
@@ -160,40 +169,91 @@ local function PlayerRole()
     return "DAMAGER"
 end
 
+local function OwnPartyProfile()
+    local profile = {
+        roles = { TANK = 0, HEALER = 0, DAMAGER = 0 },
+        hasBloodlust = false,
+        hasBattleRes = false,
+    }
+    local units = { "player" }
+    if IsInGroup and IsInGroup() and not (IsInRaid and IsInRaid()) then
+        for index = 1, GetNumSubgroupMembers() do units[#units + 1] = "party" .. index end
+    end
+    for _, unit in ipairs(units) do
+        if UnitExists(unit) then
+            local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit)
+            if (not role or role == "NONE") and unit == "player" then role = PlayerRole() end
+            if role ~= "TANK" and role ~= "HEALER" and role ~= "DAMAGER" then role = "DAMAGER" end
+            profile.roles[role] = profile.roles[role] + 1
+            local _, classFilename = UnitClass(unit)
+            if BLOODLUST_CLASSES[classFilename] then profile.hasBloodlust = true end
+            if BATTLE_REZ_CLASSES[classFilename] then profile.hasBattleRes = true end
+        end
+    end
+    return profile
+end
+
 local function Composition(searchResultID, numMembers)
-    local counts = C_LFGList.GetSearchResultMemberCounts and C_LFGList.GetSearchResultMemberCounts(searchResultID)
-    local hasTank = counts and (counts.TANK or 0) > 0 or false
-    local hasHealer = counts and (counts.HEALER or 0) > 0 or false
+    local counts = C_LFGList.GetSearchResultMemberCounts and SafeTable(C_LFGList.GetSearchResultMemberCounts(searchResultID))
+    local tankCount = counts and counts.TANK
+    local healerCount = counts and counts.HEALER
+    local hasTank = UsableNumber(tankCount) and tankCount > 0 or false
+    local hasHealer = UsableNumber(healerCount) and healerCount > 0 or false
     local hasBloodlust = false
+    local hasBattleRes = false
     local memberInfo = {}
     for index = 1, (numMembers or 0) do
         local member = C_LFGList.GetSearchResultPlayerInfo(searchResultID, index)
         if member then
+            local classFilename = SafeString(member.classFilename)
+            local role = SafeString(member.assignedRole)
+            local lfgRoles = SafeTable(member.lfgRoles)
             memberInfo[#memberInfo + 1] = {
                 name = SafeString(member.name),
-                classFilename = member.classFilename,
-                assignedRole = member.assignedRole,
-                isLeader = member.isLeader or index == 1,
+                classFilename = classFilename,
+                assignedRole = role,
+                isLeader = SafeBoolean(member.isLeader) or index == 1,
             }
-            local role = member.assignedRole
-            if not counts and (role == "TANK" or ((not role or role == "NONE") and member.lfgRoles and member.lfgRoles.tank)) then hasTank = true end
-            if not counts and (role == "HEALER" or ((not role or role == "NONE") and member.lfgRoles and member.lfgRoles.healer)) then hasHealer = true end
-            if BLOODLUST_CLASSES[member.classFilename] then hasBloodlust = true end
+            if not counts and (role == "TANK" or ((not role or role == "NONE") and lfgRoles and SafeBoolean(lfgRoles.tank))) then hasTank = true end
+            if not counts and (role == "HEALER" or ((not role or role == "NONE") and lfgRoles and SafeBoolean(lfgRoles.healer))) then hasHealer = true end
+            if classFilename and BLOODLUST_CLASSES[classFilename] then hasBloodlust = true end
+            if classFilename and BATTLE_REZ_CLASSES[classFilename] then hasBattleRes = true end
         end
     end
-    return hasTank, hasHealer, hasBloodlust, counts, memberInfo
+    return hasTank, hasHealer, hasBloodlust, hasBattleRes, counts, memberInfo
 end
 
 ---------------------------------------------------------------------------
 -- Фильтры
 ---------------------------------------------------------------------------
 
-local function HasPlayerRoleSlot(counts)
+local ROLE_LIMIT = { TANK = 1, HEALER = 1, DAMAGER = 3 }
+
+local function RemainingRoleSlots(counts, role)
+    if not counts then return end
+    local remaining = counts[role .. "_REMAINING"]
+    if UsableNumber(remaining) then return math.max(0, remaining) end
+    local current = counts[role]
+    if UsableNumber(current) then return math.max(0, ROLE_LIMIT[role] - current) end
+end
+
+local function PartyFits(counts, party)
     if not counts then return true end
-    local role = PlayerRole()
-    local key = role == "TANK" and "TANK_REMAINING" or role == "HEALER" and "HEALER_REMAINING" or "DAMAGER_REMAINING"
-    local remaining = counts[key]
-    return not UsableNumber(remaining) or remaining > 0
+    for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+        local remaining = RemainingRoleSlots(counts, role)
+        if remaining and party.roles[role] > remaining then return false end
+    end
+    return true
+end
+
+local function UtilityFits(counts, party, groupHasUtility, utilityRoles)
+    if groupHasUtility then return true end
+    if not counts then return true end
+    for role in pairs(utilityRoles) do
+        local remaining = RemainingRoleSlots(counts, role)
+        if remaining and remaining - party.roles[role] > 0 then return true end
+    end
+    return false
 end
 
 local function InRange(value, minimum, maximum, allowUnknown)
@@ -216,6 +276,7 @@ end
 local function IsDeclined(searchResultID)
     if not C_LFGList.GetApplicationInfo then return false end
     local _, status, pending = C_LFGList.GetApplicationInfo(searchResultID)
+    status, pending = SafeString(status), SafeString(pending)
     return status == "declined" or pending == "declined" or status == "declined_full" or status == "declined_delisted"
 end
 
@@ -230,18 +291,19 @@ end
 -- кто закрыл +11, тот примерно на +11 и набирает.
 local function LeaderRunLevel(info, mapID)
     local list = info.leaderDungeonScoreInfo
-    if type(list) == "table" then
+    if SafeTable(list) then
         local fallback
         for _, entry in ipairs(list) do
             if type(entry) == "table" and UsableNumber(entry.bestRunLevel) and entry.bestRunLevel > 0 then
-                if mapID and entry.mapChallengeModeID == mapID then return entry.bestRunLevel end
+                local entryMapID = UsableNumber(entry.mapChallengeModeID) and entry.mapChallengeModeID or nil
+                if mapID and entryMapID == mapID then return entry.bestRunLevel end
                 fallback = fallback or entry.bestRunLevel
             end
         end
         if fallback then return fallback end
     end
     local best = info.leaderBestDungeonScoreInfo
-    if type(best) == "table" and UsableNumber(best.bestRunLevel) and best.bestRunLevel > 0 then
+    if SafeTable(best) and UsableNumber(best.bestRunLevel) and best.bestRunLevel > 0 then
         return best.bestRunLevel
     end
 end
@@ -255,23 +317,24 @@ local REASON = {
     notUpgrade = "ключ не поднимает рейтинг",
     keyUnknown = "уровень ключа не распознан",
     recordUnknown = "не найден твой рекорд подземелья",
-    roleFit = "нет места под твою роль",
+    roleFit = "нет места под роли твоей пати",
     tank = "в группе нет танка",
-    bloodlust = "в группе нет Bloodlust",
+    healer = "в группе нет лекаря",
+    bloodlust = "после вступления негде взять Bloodlust",
+    battleRes = "после вступления негде взять боевое воскрешение",
     declined = "тебе уже отказали",
     dungeon = "подземелье выключено",
     keyRange = "ключ вне диапазона",
     score = "рейтинг лидера вне диапазона",
     runsUnknown = "нет данных Raider.IO о лидере",
     runs = "мало ключей +10 у лидера",
-    members = "размер группы вне диапазона",
-    age = "объявление старше лимита",
 }
 
-local function BuildMatch(searchResultID, requireTank, requireBloodlust, filters, runtime)
+local function BuildMatch(searchResultID, filters, runtime, party)
     local info = C_LFGList.GetSearchResultInfo(searchResultID)
-    if not info or info.isDelisted then return nil, REASON.delisted end
-    if (info.numMembers or 0) >= 5 then return nil, REASON.full end
+    if not info or SafeBoolean(info.isDelisted) then return nil, REASON.delisted end
+    local members = UsableNumber(info.numMembers) and info.numMembers or 0
+    if members >= 5 then return nil, REASON.full end
     filters = filters or {}
 
     local activityID = GetActivityID(info)
@@ -296,8 +359,7 @@ local function BuildMatch(searchResultID, requireTank, requireBloodlust, filters
     local score = UsableNumber(info.leaderOverallDungeonScore) and info.leaderOverallDungeonScore or 0
     local leaderRuns = LeaderRunCount(info.leaderName)
     local age = UsableNumber(info.age) and info.age or nil
-    local members = UsableNumber(info.numMembers) and info.numMembers or 0
-    local hasTank, hasHealer, hasBloodlust, counts, memberInfo = Composition(searchResultID, members)
+    local hasTank, hasHealer, hasBloodlust, hasBattleRes, counts, memberInfo = Composition(searchResultID, members)
 
     -- Сначала отбираем подземелье: activityID остаётся обычным числом даже
     -- тогда, когда Blizzard защищает пользовательское название объявления.
@@ -322,9 +384,17 @@ local function BuildMatch(searchResultID, requireTank, requireBloodlust, filters
         end
         if keyLevel and not keyApprox and keyLevel ~= targetLevel then return nil, REASON.notUpgrade end
     end
-    if filters.roleFit ~= false and not HasPlayerRoleSlot(counts) then return nil, REASON.roleFit end
-    if requireTank and not hasTank then return nil, REASON.tank end
-    if requireBloodlust and not hasBloodlust then return nil, REASON.bloodlust end
+    if filters.roleFit ~= false and not PartyFits(counts, party) then return nil, REASON.roleFit end
+    if filters.requireTank and not hasTank then return nil, REASON.tank end
+    if filters.requireHealer and not hasHealer then return nil, REASON.healer end
+    if filters.bloodlustFit and not party.hasBloodlust
+        and not UtilityFits(counts, party, hasBloodlust, { HEALER = true, DAMAGER = true }) then
+        return nil, REASON.bloodlust
+    end
+    if filters.battleResFit and not party.hasBattleRes
+        and not UtilityFits(counts, party, hasBattleRes, { TANK = true, HEALER = true, DAMAGER = true }) then
+        return nil, REASON.battleRes
+    end
     if filters.notDeclined and IsDeclined(searchResultID) then return nil, REASON.declined end
     -- Уровень ключа в заголовке может быть скрыт клиентом. Неизвестный
     -- уровень оставляем видимым, вместо того чтобы выкинуть годную группу.
@@ -336,11 +406,6 @@ local function BuildMatch(searchResultID, requireTank, requireBloodlust, filters
         if leaderRuns == nil then return nil, REASON.runsUnknown end
         if not InRange(leaderRuns, filters.runsMin, nil, false) then return nil, REASON.runs end
     end
-    -- Поля «Игроков от/до» и «Возраст» есть в интерфейсе, поэтому они обязаны
-    -- влиять на выдачу: молча игнорировать введённое значение нельзя.
-    if not InRange(members, filters.membersMin, filters.membersMax, false) then return nil, REASON.members end
-    local maxAge = tonumber(filters.maxAge)
-    if maxAge and age and age > maxAge * 60 then return nil, REASON.age end
     return {
         searchResultID = searchResultID,
         activityID = activityID,
@@ -365,10 +430,11 @@ local function BuildMatch(searchResultID, requireTank, requireBloodlust, filters
         hasTank = hasTank,
         hasHealer = hasHealer,
         hasBloodlust = hasBloodlust,
+        hasBattleRes = hasBattleRes,
     }
 end
 
-function AutoMatch:Scan(requireTank, requireBloodlust, filters, runtime)
+function AutoMatch:Scan(filters, runtime)
     local matches = {}
     if not C_LFGList or not C_LFGList.GetSearchResults then return matches, "Поиск групп недоступен." end
     local _, resultIDs = C_LFGList.GetSearchResults()
@@ -377,6 +443,8 @@ function AutoMatch:Scan(requireTank, requireBloodlust, filters, runtime)
     end
 
     ResetCache()
+    filters = filters or {}
+    local party = OwnPartyProfile()
     local total = #resultIDs
     -- Уровень ключа в Midnight может приходить защищённым значением. Журнал
     -- показывает, что именно вернул API, вместо догадок по пустой колонке.
@@ -385,13 +453,13 @@ function AutoMatch:Scan(requireTank, requireBloodlust, filters, runtime)
             local info = C_LFGList.GetSearchResultInfo(resultIDs[index])
             local title = info and info.name
             JP:Log("скан #%d: тип=%s secret=%s имя=%s ключ=%s", index,
-                type(title), tostring(issecretvalue(title)), tostring(title),
+                type(title), tostring(issecretvalue(title)), SafeString(title) or "<secret>",
                 tostring(ParseKeyLevel(SafeString(title))))
         end
     end
     local rejected = {}
     for _, searchResultID in ipairs(resultIDs) do
-        local match, reason = BuildMatch(searchResultID, requireTank, requireBloodlust, filters, runtime)
+        local match, reason = BuildMatch(searchResultID, filters, runtime, party)
         if match then
             matches[#matches + 1] = match
         elseif reason then
@@ -419,20 +487,64 @@ function AutoMatch:Scan(requireTank, requireBloodlust, filters, runtime)
     return matches, nil, total, rejected
 end
 
-function AutoMatch:Apply(match)
+function AutoMatch:Apply(match, editBeforeApply)
     local searchResultID = type(match) == "table" and match.searchResultID or match
     local info = searchResultID and C_LFGList.GetSearchResultInfo(searchResultID)
-    if not info or info.isDelisted then
+    if not info or SafeBoolean(info.isDelisted) then
         JP:Print("Эта группа уже исчезла. Обнови список.")
         return false
     end
-    if type(C_LFGList.ApplyToGroup) ~= "function" then
-        JP:Print("Заявка недоступна: API поиска групп не отвечает.")
-        return false
+    -- Both branches begin with Blizzard's own protected dialog. Because this
+    -- function is called directly from the user's mouse click, its Sign Up
+    -- button may also be clicked synchronously in the same hardware event.
+    -- Shift deliberately keeps the dialog open for role/note editing.
+    if type(LFGListApplicationDialog_Show) == "function" and LFGListApplicationDialog then
+        if not editBeforeApply and type(SetLFGRoles) == "function"
+            and type(GetSpecialization) == "function" and type(GetSpecializationRole) == "function" then
+            local spec = GetSpecialization()
+            local role = spec and GetSpecializationRole(spec)
+            if role == "TANK" or role == "HEALER" or role == "DAMAGER" then
+                pcall(SetLFGRoles, role == "TANK", role == "HEALER", role == "DAMAGER")
+            end
+        end
+        local ok = pcall(LFGListApplicationDialog_Show, LFGListApplicationDialog, searchResultID)
+        if ok then
+            -- MythicBoost сам находится на strata DIALOG. Штатное окно в
+            -- некоторых раскладках оказывалось под ним и выглядело обрезанным.
+            -- Поднимаем только этот подтверждающий диалог поверх основного UI.
+            if LFGListApplicationDialog.SetFrameStrata then
+                pcall(LFGListApplicationDialog.SetFrameStrata, LFGListApplicationDialog, "FULLSCREEN_DIALOG")
+            end
+            if LFGListApplicationDialog.SetFrameLevel then
+                pcall(LFGListApplicationDialog.SetFrameLevel, LFGListApplicationDialog, 100)
+            end
+            if editBeforeApply then
+                local description = _G.LFGListApplicationDialogDescription
+                local editBox = description and description.EditBox
+                if editBox then
+                    editBox:Show()
+                    editBox:SetFocus()
+                    editBox:HighlightText(0, 0)
+                end
+                return true
+            end
+
+            -- Another addon may already implement one-click signup in its
+            -- OnShow hook. In that case the dialog has disappeared and the
+            -- application is already sent; never click the stale button twice.
+            if not LFGListApplicationDialog:IsShown() then return true end
+            local signUp = LFGListApplicationDialog.SignUpButton
+            if signUp and signUp:IsEnabled() then
+                local clicked = pcall(signUp.Click, signUp)
+                if clicked then return true end
+            end
+            JP:Print("Не удалось отправить заявку одним кликом — проверь выбранную роль в открытом окне.")
+            return true
+        end
     end
-    local role = PlayerRole()
-    C_LFGList.ApplyToGroup(searchResultID, role == "TANK", role == "HEALER", role == "DAMAGER")
-    return true
+
+    JP:Print("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз.")
+    return false
 end
 
 function AutoMatch:Cancel(match)
@@ -441,8 +553,22 @@ function AutoMatch:Cancel(match)
         JP:Print("Отмена заявки сейчас недоступна.")
         return false
     end
-    -- CancelApplication защищён hardware event, поэтому этот вызов должен
-    -- оставаться непосредственно внутри клика пользователя по кнопке.
+    local okInfo, _, status, pendingStatus = pcall(C_LFGList.GetApplicationInfo, searchResultID)
+    if not okInfo or issecretvalue(status) or issecretvalue(pendingStatus) then
+        JP:Print("Blizzard пока не отдал состояние заявки.")
+        return false
+    end
+    if pendingStatus then
+        JP:Print("Заявка ещё обрабатывается. Повтори отмену через секунду.")
+        return false
+    end
+    if status ~= "applied" then
+        JP:Print(status == "invited" and "На эту группу уже пришло приглашение." or "Активной заявки уже нет.")
+        return false
+    end
+
+    -- CancelApplication защищён hardware event, поэтому вызов остаётся
+    -- непосредственно внутри клика пользователя по кнопке.
     local ok = pcall(C_LFGList.CancelApplication, searchResultID)
     if not ok then
         JP:Print("Blizzard не разрешил отменить заявку сейчас.")

@@ -1,0 +1,9 @@
+MythicBoost includes the following visual assets from X-Perl UnitFrames 2.4.3g:
+
+- XPerl_FrameBack.blp
+- XPerl_ThinEdge.blp
+
+X-Perl UnitFrames was distributed under the GNU General Public License,
+version 3. The original copyright notices and full license text are retained
+in LICENSE-XPERL.txt. These assets are used to reproduce the visual character
+of the original X-Perl interface inside MythicBoost.

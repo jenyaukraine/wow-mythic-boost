@@ -50,11 +50,19 @@ local function SafeString(value)
     return value
 end
 
+local function SafeBoolean(value)
+    return type(value) == "boolean" and not issecretvalue(value) and value or false
+end
+
+local function SafeTable(value)
+    return type(value) == "table" and not issecretvalue(value) and value or nil
+end
+
 -- fileID = 0 приходит от API как «текстуры нет». Без этой проверки
 -- SetTexture(0) рисует чёрный прямоугольник вместо карточки.
 local function ValidTexture(value)
     if type(value) == "number" and not issecretvalue(value) and value > 0 then return value end
-    if type(value) == "string" and value ~= "" then return value end
+    if type(value) == "string" and not issecretvalue(value) and value ~= "" then return value end
 end
 
 ---------------------------------------------------------------------------
@@ -430,12 +438,29 @@ function GroupSearchUI:GetBelowKeyColor()
     return BELOW_KEY_COLOR
 end
 
+-- Уровень, относительно которого окрашивается таблица текущей пати.
+-- В первую очередь это явно введённый/последний запрошенный ключ. Собственный
+-- камень игрока может быть заметно выше и не должен делать всю таблицу красной
+-- во время поиска, например, +11.
+function GroupSearchUI:GetComparisonKeyLevel(welcome)
+    local filters = welcome and welcome.groupFilters
+    local keyMin = filters and tonumber(filters.keyMin)
+    local keyMax = filters and tonumber(filters.keyMax)
+    if keyMin and keyMin > 0 and (not keyMax or keyMax <= 0 or keyMin == keyMax) then return keyMin end
+    if self.lastSearchTarget and self.lastSearchTarget > 0 then return self.lastSearchTarget end
+    if self.currentSearchTarget and self.currentSearchTarget > 0 then return self.currentSearchTarget end
+    local own = C_MythicPlus and C_MythicPlus.GetOwnedKeystoneLevel and C_MythicPlus.GetOwnedKeystoneLevel()
+    return tonumber(own) or 0
+end
+
 local function BlizzardRunsByDungeon(scoreInfo, columns)
     local mapped = {}
-    for index, entry in ipairs(type(scoreInfo) == "table" and scoreInfo or {}) do
-        local key = entry.challengeModeID or entry.mapChallengeModeID
-        if not key and entry.mapName then
-            for _, column in ipairs(columns) do if column.name == entry.mapName then key = column.key break end end
+    for index, entry in ipairs(SafeTable(scoreInfo) or {}) do
+        local key = UsableNumber(entry.challengeModeID) and entry.challengeModeID
+            or (UsableNumber(entry.mapChallengeModeID) and entry.mapChallengeModeID)
+        local mapName = SafeString(entry.mapName)
+        if not key and mapName then
+            for _, column in ipairs(columns) do if column.name == mapName then key = column.key break end end
         end
         mapped[key or (columns[index] and columns[index].key) or index] = entry
     end
@@ -560,11 +585,12 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
         listingKeyLevel = ParseListingLevel(info.name) or ParseListingLevel(info.comment)
     end
     local ratingText
+    local memberCount = UsableNumber(info.numMembers) and info.numMembers or 0
     if match and match.partyScoreAverage then
         ratingText = ("средний RIO %d · найдено %d/%d"):format(
             math.floor(match.partyScoreAverage + .5),
             match.partyScoreKnown or 0,
-            match.partyScoreMembers or info.numMembers or 0)
+            match.partyScoreMembers or memberCount)
     else
         ratingText = ("RIO лидера %d"):format(
             math.floor(UsableNumber(info.leaderOverallDungeonScore) and info.leaderOverallDungeonScore or 0))
@@ -577,19 +603,21 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
     end
 
     for playerIndex, line in ipairs(tooltip.playerRows) do
-        local member = playerIndex <= (info.numMembers or 0) and C_LFGList.GetSearchResultPlayerInfo(searchResultID, playerIndex)
+        local member = playerIndex <= memberCount and C_LFGList.GetSearchResultPlayerInfo(searchResultID, playerIndex)
         if member then
             local leaderBase = leaderName and leaderName:match("^([^%-]+)")
             local memberName = SafeString(member.name)
-            local isLeader = member.isLeader or (leaderBase and memberName and leaderBase:lower() == memberName:lower())
-            local mapped = RunsByDungeon(ResolveRaiderRuns(member.name, leaderName, member.classFilename))
+            local classFilename = SafeString(member.classFilename)
+            local role = SafeString(member.assignedRole)
+            local isLeader = SafeBoolean(member.isLeader) or (leaderBase and memberName and leaderBase:lower() == memberName:lower())
+            local mapped = RunsByDungeon(ResolveRaiderRuns(memberName, leaderName, classFilename))
             if isLeader and next(mapped) == nil then mapped = BlizzardRunsByDungeon(info.leaderDungeonScoreInfo, columns) end
 
             line.name:SetText(("%s %s %s"):format(
-                UI.RoleIcon(member.assignedRole, 14),
-                UI.ClassIcon(member.classFilename, 16),
+                UI.RoleIcon(role, 14),
+                UI.ClassIcon(classFilename, 16),
                 memberName or "Игрок"))
-            line.name:SetTextColor(UI.ClassColor(member.classFilename))
+            line.name:SetTextColor(UI.ClassColor(classFilename))
 
             for columnIndex, column in ipairs(columns) do
                 local run = mapped[column.key]
@@ -609,7 +637,7 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
         end
     end
 
-    tooltip:SetHeight(92 + math.max(1, info.numMembers or 0) * 24)
+    tooltip:SetHeight(92 + math.max(1, memberCount) * 24)
     tooltip:Show()
 end
 
@@ -620,10 +648,45 @@ end
 
 -- Тот же полный тултип доступен и на штатных строках Blizzard. Стандартный
 -- GameTooltip остаётся на месте, а таблица участников открывается снизу.
+function GroupSearchUI:IsMythicPlusSearchResult(searchResultID, suppliedInfo)
+    local info = suppliedInfo or (searchResultID and C_LFGList.GetSearchResultInfo(searchResultID))
+    if not info then return false end
+    local activityID = UsableNumber(info.activityID) and info.activityID or nil
+    if not activityID and type(info.activityIDs) == "table" and not issecretvalue(info.activityIDs) then
+        local first = info.activityIDs[1]
+        if UsableNumber(first) then activityID = first end
+    end
+    if not activityID then return false end
+
+    local activity = C_LFGList.GetActivityInfoTable(activityID)
+    if not activity then return false end
+    for _, field in ipairs({ "isMythicPlusActivity", "isMythicPlus" }) do
+        local value = activity[field]
+        if type(value) == "boolean" and not issecretvalue(value) then return value end
+    end
+
+    -- Рейды находятся в другой категории. Это главный барьер против окна
+    -- «участники × ключи» на объявлениях вроде 2/4/14.
+    local categoryID = activity.categoryID
+    if UsableNumber(categoryID) and categoryID ~= 2 then return false end
+    local difficultyID = activity.difficultyID
+    if UsableNumber(difficultyID) then return difficultyID == 8 end
+    if JP.SeasonMapByActivity and JP.SeasonMapByActivity[activityID] then return true end
+    if C_LFGList.GetKeystoneForActivity then
+        local ok, level = pcall(C_LFGList.GetKeystoneForActivity, activityID)
+        if ok and UsableNumber(level) and level > 0 then return true end
+    end
+    return false
+end
+
 function GroupSearchUI:ShowBlizzardResultTooltip(owner, searchResultID)
     if not owner or not searchResultID then return end
     local info = C_LFGList.GetSearchResultInfo(searchResultID)
     if not info then return end
+    if not self:IsMythicPlusSearchResult(searchResultID, info) then
+        self:HideBlizzardResultTooltip()
+        return
+    end
     local activityID = UsableNumber(info.activityID) and info.activityID or nil
     if not activityID and type(info.activityIDs) == "table" and not issecretvalue(info.activityIDs) then
         local first = info.activityIDs[1]
@@ -686,7 +749,6 @@ local function CopyFilters(welcome, targetLevel)
             copy[key] = value
         end
     end
-    copy.roleFit = true
     copy.searchTargetLevel = targetLevel
     return copy
 end
@@ -744,7 +806,7 @@ end
 function GroupSearchUI:CaptureCurrentSearch(welcome)
     local targetLevel = self.currentSearchTarget
     local matches, _, scanned, rejected = JP.AutoMatch:Scan(
-        welcome.tank:GetChecked(), welcome.bloodlust:GetChecked(), CopyFilters(welcome, targetLevel), {
+        CopyFilters(welcome, targetLevel), {
             bestByMap = welcome.bestByMap,
             bestByActivity = welcome.bestByActivity,
         })
@@ -782,9 +844,9 @@ end
 --
 -- Раньше мы просили у сервера все подземелья подряд и отбирали нужное уже у
 -- себя: из сотни присланных групп до выбранного подземелья доживали единицы,
--- а героики и обычные забивали выдачу. C_LFGList.SaveAdvancedFilter — тот же
--- фильтр, что стоит за кнопкой «Фильтр» в стандартном окне, и он доступен
--- аддонам без taint, в отличие от строки поиска.
+-- а героики и обычные забивали выдачу. Фильтр передаём только в свой
+-- запрос. Глобальный SaveAdvancedFilter трогать нельзя: логи показали secret-taint
+-- в штатном LFGListSearchEntry_Update после такой записи.
 ---------------------------------------------------------------------------
 
 local activityGroupByMap
@@ -863,13 +925,13 @@ function GroupSearchUI:BuildServerFilter(welcome)
         needsHealer = false,
         needsDamage = false,
         needsMyClass = false,
-        hasHealer = false,
+        hasHealer = welcome.groupFilters.requireHealer == true,
         difficultyNormal = false,
         difficultyHeroic = false,
         difficultyMythic = false,
         difficultyMythicPlus = true,
         minimumRating = tonumber(welcome.groupFilters.scoreMin) or 0,
-        hasTank = welcome.tank and welcome.tank:GetChecked() and true or false,
+        hasTank = welcome.groupFilters.requireTank == true,
         activities = wantedGroups,
     }
     -- PGF передаёт сюда именно activityGroupID, а не activityID отдельных
@@ -891,6 +953,7 @@ function GroupSearchUI:RunDirectSearch(welcome, token)
     local targetLevel = self.searchQueue and self.searchQueue[step]
     if targetLevel == false then targetLevel = nil end
     self.currentSearchTarget = targetLevel
+    if targetLevel and targetLevel > 0 then self.lastSearchTarget = targetLevel end
     self.searchStep = (self.searchStep or 0) + 1
     local searchStep = self.searchStep
     self.searchAwaitingResults = true
@@ -908,24 +971,6 @@ function GroupSearchUI:RunDirectSearch(welcome, token)
         JP:Log("ошибка серверного фильтра: %s", tostring(advancedFilter))
         FinishBlizzardSearch(welcome, token, "Не удалось собрать фильтр Blizzard. Нажми «Обновить» ещё раз.")
         return
-    end
-    -- SaveAdvancedFilter — ровно тот путь, которым PGF устанавливает фильтр
-    -- подземелий. Благодаря этому стандартное окно (если оно открыто) тоже
-    -- отображает тот же whitelist, а не старую смешанную выдачу.
-    if type(C_LFGList.SaveAdvancedFilter) == "function" then
-        -- Мы перезаписываем настройку стандартного окна, поэтому исходную
-        -- сохраняем один раз: без этого /mb restorefilter вернуть уже нечего.
-        if not MythicBoostDB.blizzardFilterBackup and type(C_LFGList.GetAdvancedFilter) == "function" then
-            local okBackup, previous = pcall(C_LFGList.GetAdvancedFilter)
-            if okBackup and type(previous) == "table" and CopyTable then
-                MythicBoostDB.blizzardFilterBackup = CopyTable(previous)
-            end
-        end
-        local saved = pcall(C_LFGList.SaveAdvancedFilter, advancedFilter)
-        if not saved then
-            FinishBlizzardSearch(welcome, token, "Blizzard не принял фильтр подземелий.")
-            return
-        end
     end
     local filterEnum = Enum and Enum.LFGListFilter or {}
     local languages = C_LFGList.GetLanguageSearchFilter and C_LFGList.GetLanguageSearchFilter() or nil
@@ -1113,12 +1158,26 @@ end
 
 local function SetLootItem(button, item)
     button.item = item
-    if not item then button:Hide(); return end
+    if not item then button.badge:SetText(""); button:Hide(); return end
     local texture = item.icon
     if not texture and item.itemID and C_Item and C_Item.GetItemIconByID then texture = C_Item.GetItemIconByID(item.itemID) end
     button.icon:SetTexture(texture or 134400)
     button.icon:SetTexCoord(.07, .93, .07, .93)
-    button.gain:SetText(item.gain and ("+" .. item.gain) or "")
+    button.gain:SetText((item.gain or 0) > 0 and ("+" .. item.gain) or "")
+    local recommendation = item.recommendation
+    if recommendation then
+        button.badge:SetText(recommendation.label or (recommendation.kind == "bis" and "BIS" or "TOP"))
+        if recommendation.kind == "bis" then
+            button.badge:SetTextColor(1, .73, .12, 1)
+            button:SetBackdropBorderColor(1, .58, .10, 1)
+        else
+            button.badge:SetTextColor(.73, .42, 1, 1)
+            button:SetBackdropBorderColor(.60, .28, .94, 1)
+        end
+    else
+        button.badge:SetText("")
+        button:SetBackdropBorderColor(.25, .32, .40, 1)
+    end
     button:Show()
 end
 
@@ -1257,12 +1316,19 @@ local function CardTooltip(card)
         for index = 1, math.min(5, #loot.upgrades) do
             local item = loot.upgrades[index]
             local icon = item.icon and ("|T" .. item.icon .. ":16:16:0:0|t ") or ""
+            local recommendation = item.recommendation
+            local marker = recommendation and (recommendation.kind == "bis"
+                and " |cffffb91f[BIS]|r"
+                or (" |cffb36cff[TOP %d%%]|r"):format(recommendation.share or 0)) or ""
             GameTooltip:AddDoubleLine(icon .. (item.name or "Предмет"),
-                ("%s  %d -> %d  (+%d)"):format(item.slot or "Слот", item.equipped, item.level, item.gain),
+                (("%s  %d -> %d  (+%d)"):format(item.slot or "Слот", item.equipped, item.level, item.gain)) .. marker,
                 .90, .92, .96, .25, 1, .55)
         end
         GameTooltip:AddLine("Процент = полезные предметы / весь доступный твоему спеку пул. Это шанс апгрейда при условии, что предмет достался тебе.", .52, .68, .82, true)
-        GameTooltip:AddLine("Эффекты аксессуаров и вторичные характеристики пока не учитываются.", .52, .58, .66, true)
+        if (loot.bisCount or 0) > 0 or (loot.topCount or 0) > 0 then
+            GameTooltip:AddLine(("Цели в этом данже: BIS %d, TOP %d."):format(loot.bisCount or 0, loot.topCount or 0), 1, .72, .22)
+        end
+        GameTooltip:AddLine("BIS — список гайда Wowhead; TOP — самая частая экипировка сильных M+ игроков Murlok.io. Эффекты и твоя конкретная сборка всё равно требуют проверки.", .52, .58, .66, true)
     else
         GameTooltip:AddLine("Подходящей добычи для текущей специализации не найдено.", .52, .58, .66, true)
     end
@@ -1336,6 +1402,10 @@ local function CreateDungeonCard(parent, welcome)
         itemButton.gain:SetPoint("BOTTOMRIGHT", 3, -2)
         itemButton.gain:SetShadowColor(0, 0, 0, 1)
         itemButton.gain:SetShadowOffset(1, -1)
+        itemButton.badge = UI.Text(itemButton, "GameFontNormalSmall", "")
+        itemButton.badge:SetPoint("TOPLEFT", 1, 1)
+        itemButton.badge:SetShadowColor(0, 0, 0, 1)
+        itemButton.badge:SetShadowOffset(1, -1)
         itemButton:SetScript("OnEnter", function(self)
             local item = self.item
             if not item then return end
@@ -1347,6 +1417,15 @@ local function CreateDungeonCard(parent, welcome)
             end
             GameTooltip:AddLine(("Надето: %d   Дроп: %d   Прирост: +%d")
                 :format(item.equipped or 0, item.level or 0, item.gain or 0), .30, .92, .56)
+            local recommendation = item.recommendation
+            if recommendation and recommendation.kind == "bis" then
+                GameTooltip:AddLine("BIS Mythic+ по гайду Wowhead", 1, .72, .12)
+                GameTooltip:AddLine(("Сверено: %s"):format(recommendation.updatedAt or "—"), .62, .68, .76)
+            elseif recommendation then
+                GameTooltip:AddLine(("TOP M+ игроков: %d%% из %d"):format(
+                    recommendation.share or 0, recommendation.sample or 0), .73, .42, 1)
+                GameTooltip:AddLine(("Murlok.io, сезон %s"):format(recommendation.season or "—"), .62, .68, .76)
+            end
             GameTooltip:Show()
             if GameTooltip_ShowCompareItem then GameTooltip_ShowCompareItem(GameTooltip) end
         end)
@@ -1394,16 +1473,28 @@ end
 -- Строки результатов
 ---------------------------------------------------------------------------
 
-GroupSearchUI.applicationStartedAt = GroupSearchUI.applicationStartedAt or {}
+function GroupSearchUI:GetApplicationState(searchResultID)
+    if not searchResultID or type(C_LFGList.GetApplicationInfo) ~= "function" then
+        return "none", false, false
+    end
+    local ok, _, status, pendingStatus, duration = pcall(C_LFGList.GetApplicationInfo, searchResultID)
+    if not ok or issecretvalue(status) or issecretvalue(pendingStatus) then
+        return "none", false, false
+    end
+
+    status = type(status) == "string" and status or "none"
+    -- pendingStatus означает переход между состояниями. В этот момент Blizzard
+    -- не принимает повторный Apply/Cancel, поэтому кнопку временно блокируем.
+    local pending = pendingStatus and pendingStatus ~= "none"
+    local cancellable = status == "applied" and not pending
+    local active = status == "applied" or status == "invited" or pending
+    duration = type(duration) == "number" and not issecretvalue(duration) and duration or nil
+    return status, cancellable, active, pending, duration
+end
 
 function GroupSearchUI:IsApplicationListed(searchResultID)
-    if not searchResultID or type(C_LFGList.GetApplications) ~= "function" then return false end
-    local ok, applications = pcall(C_LFGList.GetApplications)
-    if not ok or type(applications) ~= "table" then return false end
-    for _, resultID in ipairs(applications) do
-        if resultID == searchResultID then return true end
-    end
-    return false
+    local _, _, active = self:GetApplicationState(searchResultID)
+    return active
 end
 
 function GroupSearchUI:UpdateApplicationButton(button)
@@ -1411,26 +1502,38 @@ function GroupSearchUI:UpdateApplicationButton(button)
     local resultID = match and match.searchResultID
     if not resultID then return end
 
-    local started = self.applicationStartedAt[resultID]
-    local listed = self:IsApplicationListed(resultID)
-    if listed and not started then
-        started = GetTime()
-        self.applicationStartedAt[resultID] = started
-    elseif not listed and started and GetTime() - started > 3 then
-        self.applicationStartedAt[resultID] = nil
-        started = nil
+    local status, cancellable, active, pending, duration = self:GetApplicationState(resultID)
+    if button.cancelRequestedAt and (not active or GetTime() - button.cancelRequestedAt >= 2) then
+        button.cancelRequestedAt = nil
     end
-
-    if listed or started then
-        -- CancelApplication разрешён только из hardware event. Не изображаем
-        -- ложную автоматическую отмену таймером: кнопка доступна сразу и
-        -- каждый её клик напрямую отменяет именно эту заявку.
-        button:SetText("Отменить")
-        button:Enable()
-        button:SetAlpha(1)
-        button.applicationActive = true
+    if cancellable then
+        if button.cancelRequestedAt then
+            button:SetText("Отмена…")
+            button:Disable()
+            button:SetAlpha(.55)
+            button.applicationActive = false
+        else
+            local remaining = duration and math.max(0, math.floor(duration + .5))
+            local timer = remaining and (remaining >= 60
+                and (" %d:%02d"):format(math.floor(remaining / 60), remaining % 60)
+                or (" %dс"):format(remaining)) or ""
+            button:SetText("Отменить" .. timer)
+            button:Enable()
+            button:SetAlpha(1)
+            button.applicationActive = true
+        end
+    elseif pending then
+        button:SetText("Обработка…")
+        button:Disable()
+        button:SetAlpha(.55)
+        button.applicationActive = false
+    elseif status == "invited" then
+        button:SetText("Приглашение")
+        button:Disable()
+        button:SetAlpha(.75)
+        button.applicationActive = false
     else
-        button:SetText("Заявка")
+        button:SetText("Заявка…")
         button:Enable()
         button:SetAlpha(1)
         button.applicationActive = false
@@ -1486,23 +1589,32 @@ local function CreateResultRow(parent, index)
 
     row.apply = UI.Button(row, "Заявка", COL.applyWidth, 26, true)
     row.apply:SetPoint("RIGHT", -COL.applyRight, 0)
+    row.apply:HookScript("OnEnter", function(self)
+        UI.Tooltip(self, "Заявка в группу",
+            "Клик — подать сразу с ролью текущей специализации.\nShift+клик — открыть роли и написать комментарий.")
+    end)
+    row.apply:HookScript("OnLeave", GameTooltip_Hide)
     row.apply:SetScript("OnClick", function(self)
         local resultID = self.match and self.match.searchResultID
         if not resultID then return end
-        if self.applicationActive or GroupSearchUI:IsApplicationListed(resultID) then
+        local _, cancellable = GroupSearchUI:GetApplicationState(resultID)
+        if cancellable then
             if JP.AutoMatch:Cancel(self.match) then
-                GroupSearchUI.applicationStartedAt[resultID] = nil
                 self.applicationActive = false
-                self:SetText("Отменено")
-                C_Timer.After(.8, function()
+                self.cancelRequestedAt = GetTime()
+                self:SetText("Отмена…")
+                self:Disable()
+                C_Timer.After(.5, function()
                     if self.match and self.match.searchResultID == resultID then
                         GroupSearchUI:UpdateApplicationButton(self)
                     end
                 end)
             end
-        elseif JP.AutoMatch:Apply(self.match) then
-            GroupSearchUI.applicationStartedAt[resultID] = GetTime()
-            GroupSearchUI:UpdateApplicationButton(self)
+        else
+            -- Read the modifier inside the actual hardware click. The old
+            -- handler never inspected it, so both tooltip shortcuts followed
+            -- the same path regardless of Shift.
+            JP.AutoMatch:Apply(self.match, IsShiftKeyDown and IsShiftKeyDown())
         end
     end)
     row.apply:SetScript("OnUpdate", function(self, elapsed)
@@ -1569,9 +1681,9 @@ function GroupSearchUI:RenderRows(welcome)
                     if member then
                         refreshed[#refreshed + 1] = {
                             name = SafeString(member.name),
-                            classFilename = member.classFilename,
-                            assignedRole = member.assignedRole,
-                            isLeader = member.isLeader or memberIndex == 1,
+                            classFilename = SafeString(member.classFilename),
+                            assignedRole = SafeString(member.assignedRole),
+                            isLeader = SafeBoolean(member.isLeader) or memberIndex == 1,
                         }
                     end
                 end
@@ -1608,10 +1720,11 @@ function GroupSearchUI:RenderRows(welcome)
                 row.detail:SetText(comment and ("|cffa9b4c2" .. comment .. "|r") or names)
             end
 
-            row.roles:SetText(("%s  %s  %s"):format(
+            row.roles:SetText(("%s %s %s %s"):format(
                 match.hasTank and UI.RoleIcon("TANK", 16) or "|cff3d434c—|r",
                 match.hasHealer and UI.RoleIcon("HEALER", 16) or "|cff3d434c—|r",
-                match.hasBloodlust and "|cff28b8f5БЛ|r" or "|cff3d434cБЛ|r"))
+                match.hasBloodlust and "|cff28b8f5БЛ|r" or "|cff3d434cБЛ|r",
+                match.hasBattleRes and "|cff43d17aБР|r" or "|cff3d434cБР|r"))
 
             local partyAverage = match.partyScoreAverage or match.score or 0
             row.score:SetText(("|cff%s[%d]|r"):format(PartyRatingColorCode(partyAverage), math.floor(partyAverage + .5)))
@@ -1715,16 +1828,9 @@ local function BuildFilterPanel(welcome, body)
     local title = UI.Text(panel, "GameFontNormalLarge", "ФИЛЬТРЫ", C.accent)
     title:SetPoint("TOPLEFT", 14, -14)
 
-    local partyLabel = UI.Text(panel, "GameFontNormalSmall", "ТВОЯ ГРУППА", C.faint)
-    partyLabel:SetPoint("TOPLEFT", 14, -44)
-    welcome.partyComposition = UI.Text(panel, "GameFontHighlight", "")
-    welcome.partyComposition:SetPoint("TOPLEFT", 14, -60)
-    welcome.partyComposition:SetPoint("TOPRIGHT", -14, -60)
-    welcome.partyComposition:SetJustifyH("LEFT")
-
     -- Вертикальный ритм подобран так, чтобы весь столбец помещался при
     -- минимальной высоте окна и не наезжал на сводку и кнопки внизу.
-    local y = -92
+    local y = -44
     SectionLabel(panel, "КЛЮЧ", y); y = y - 20
     welcome.scoreUpgrade = UI.CheckBox(panel, "Только повышающие рейтинг", welcome.groupFilters.scoreUpgrade == true)
     welcome.scoreUpgrade:SetPoint("TOPLEFT", 14, y)
@@ -1750,12 +1856,31 @@ local function BuildFilterPanel(welcome, body)
     NumberField(panel, welcome, "Ключей +10 от", "runsMin", defaultRuns, y); y = y - 30
 
     SectionLabel(panel, "ОТБОР", y); y = y - 22
-    welcome.tank = UI.CheckBox(panel, "Танк уже в группе", MythicBoostDB.autoMatch.requireTank ~= false,
-        function(checked) MythicBoostDB.autoMatch.requireTank = checked; welcome:Refresh() end)
-    welcome.tank:SetPoint("TOPLEFT", 14, y); welcome.tank:SetWidth(FILTERS_WIDTH - 28); y = y - 23
-    welcome.bloodlust = UI.CheckBox(panel, "Нужен Bloodlust", MythicBoostDB.autoMatch.requireBloodlust == true,
-        function(checked) MythicBoostDB.autoMatch.requireBloodlust = checked; welcome:Refresh() end)
-    welcome.bloodlust:SetPoint("TOPLEFT", 14, y); welcome.bloodlust:SetWidth(FILTERS_WIDTH - 28); y = y - 23
+
+    local function FilterCheck(key, label, tooltipTitle, tooltipText)
+        local check = UI.CheckBox(panel, label, welcome.groupFilters[key] == true, function(checked)
+            welcome.groupFilters[key] = checked
+            if key == "requireTank" then MythicBoostDB.autoMatch.requireTank = checked end
+            welcome:Refresh()
+        end)
+        check:SetPoint("TOPLEFT", 14, y)
+        check:SetWidth(FILTERS_WIDTH - 28)
+        if tooltipText then
+            check:HookScript("OnEnter", function(self) UI.Tooltip(self, tooltipTitle or label, tooltipText) end)
+            check:HookScript("OnLeave", GameTooltip_Hide)
+        end
+        y = y - 23
+        return check
+    end
+
+    welcome.roleFit = FilterCheck("roleFit", "Места для всей пати", "Подходящие роли",
+        "Показывать только группы, где хватает свободных мест под роли всех участников твоей текущей пати.")
+    welcome.tank = FilterCheck("requireTank", "Танк уже в группе")
+    welcome.healer = FilterCheck("requireHealer", "Лекарь уже в группе")
+    welcome.bloodlust = FilterCheck("bloodlustFit", "Подходит Bloodlust", "Умный Bloodlust",
+        "Если Bloodlust уже есть у тебя или группы — пропускает её. Иначе оставляет группу только когда после вашего вступления остаётся место лекарю или бойцу с Bloodlust.")
+    welcome.battleRes = FilterCheck("battleResFit", "Подходит боевой рес", "Боевое воскрешение",
+        "Если боевой рес уже есть у тебя или группы — пропускает её. Иначе проверяет, останется ли место классу с боевым воскрешением.")
     welcome.notDeclined = UI.CheckBox(panel, "Скрыть отказавших", welcome.groupFilters.notDeclined,
         function(checked) welcome.groupFilters.notDeclined = checked; welcome:Refresh() end)
     welcome.notDeclined:SetPoint("TOPLEFT", 14, y); welcome.notDeclined:SetWidth(FILTERS_WIDTH - 28)
@@ -1805,7 +1930,17 @@ local function BuildFilterPanel(welcome, body)
             if welcome.filterFields[key] then welcome.filterFields[key]:SetText(tostring(value)) end
         end
         wipe(welcome.groupFilters.dungeons)
-        welcome.groupFilters.notDeclined = true
+        local checkDefaults = {
+            roleFit = true, requireTank = true, requireHealer = false,
+            bloodlustFit = false, battleResFit = false, notDeclined = true,
+        }
+        for key, value in pairs(checkDefaults) do welcome.groupFilters[key] = value end
+        MythicBoostDB.autoMatch.requireTank = true
+        welcome.roleFit:SetChecked(true)
+        welcome.tank:SetChecked(true)
+        welcome.healer:SetChecked(false)
+        welcome.bloodlust:SetChecked(false)
+        welcome.battleRes:SetChecked(false)
         welcome.notDeclined:SetChecked(true)
         welcome.scoreUpgrade:SetChecked(false)
         UpdateUpgradeMode(false)
@@ -1961,29 +2096,36 @@ end
 ---------------------------------------------------------------------------
 
 function GroupSearchUI:RefreshOwnComposition(welcome)
-    if welcome.partyComposition then
+    if welcome.partySlots then
         local units = { "player" }
         if IsInGroup and IsInGroup() and not (IsInRaid and IsInRaid()) then
             for index = 1, GetNumSubgroupMembers() do units[#units + 1] = "party" .. index end
         end
-        local roles = { TANK = 0, HEALER = 0, DAMAGER = 0, NONE = 0 }
-        for _, unit in ipairs(units) do
-            if UnitExists(unit) then
+        local roleColor = {
+            TANK = { .20, .55, .95 }, HEALER = { .20, .86, .45 }, DAMAGER = { .95, .31, .32 },
+        }
+        for index, slot in ipairs(welcome.partySlots) do
+            local unit = units[index]
+            if unit and UnitExists(unit) then
                 local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit)
                 if (not role or role == "NONE") and unit == "player" then
                     local spec = GetSpecialization and GetSpecialization()
                     role = spec and GetSpecializationRole and GetSpecializationRole(spec) or role
                 end
                 if role ~= "TANK" and role ~= "HEALER" and role ~= "DAMAGER" then role = "NONE" end
-                roles[role] = roles[role] + 1
+                local known = UI.SetRoleTexture(slot.icon, role)
+                slot.icon:SetShown(known)
+                slot.unknown:SetShown(not known)
+                local color = roleColor[role] or { .45, .51, .59 }
+                slot:SetBackdropColor(.045, .065, .085, 1)
+                slot:SetBackdropBorderColor(color[1], color[2], color[3], .95)
+            else
+                slot.icon:Hide()
+                slot.unknown:Hide()
+                slot:SetBackdropColor(.025, .034, .045, 1)
+                slot:SetBackdropBorderColor(.14, .19, .25, 1)
             end
         end
-        local parts = {}
-        for _, role in ipairs({ "TANK", "HEALER", "DAMAGER", "NONE" }) do
-            for _ = 1, roles[role] do parts[#parts + 1] = UI.RoleIcon(role, 22) end
-        end
-        for _ = #parts + 1, 5 do parts[#parts + 1] = "|cff3d4652○|r" end
-        welcome.partyComposition:SetText(#parts > 0 and table.concat(parts, "   ") or "|cff5b6470нет данных|r")
     end
 
     if welcome.ownKey then
@@ -2012,7 +2154,15 @@ end
 function GroupSearchUI:Build(welcome, body)
     welcome.groupFilters = MythicBoostDB.groupFilters
     welcome.groupFilters.dungeons = welcome.groupFilters.dungeons or {}
-    welcome.groupFilters.roleFit = true
+    if welcome.groupFilters.roleFit == nil then welcome.groupFilters.roleFit = true end
+    if welcome.groupFilters.requireTank == nil then
+        welcome.groupFilters.requireTank = MythicBoostDB.autoMatch.requireTank ~= false
+    end
+    if welcome.groupFilters.requireHealer == nil then welcome.groupFilters.requireHealer = false end
+    if welcome.groupFilters.bloodlustFit == nil then
+        welcome.groupFilters.bloodlustFit = MythicBoostDB.autoMatch.requireBloodlust == true
+    end
+    if welcome.groupFilters.battleResFit == nil then welcome.groupFilters.battleResFit = false end
     if welcome.groupFilters.notDeclined == nil then welcome.groupFilters.notDeclined = true end
     welcome.filterFields = {}
 
@@ -2046,7 +2196,6 @@ function GroupSearchUI:Build(welcome, body)
     end)
 
     function welcome:GetGroupFilters()
-        self.groupFilters.roleFit = true
         -- У выбранных подземелий разные следующие уровни. Один общий target
         -- оставлял только данжи с минимальной целью и скрывал остальные.
         self.groupFilters.searchTargetLevel = nil

@@ -41,6 +41,11 @@ local function SafeString(value)
     return value
 end
 
+
+local function SafeBoolean(value)
+    return type(value) == "boolean" and not issecretvalue(value) and value or false
+end
+
 ---------------------------------------------------------------------------
 -- Данные
 ---------------------------------------------------------------------------
@@ -48,7 +53,7 @@ end
 function ApplicantBoard:Collect()
     if type(C_LFGList.GetApplicants) ~= "function" then return {}, nil end
     local ok, applicantIDs = pcall(C_LFGList.GetApplicants)
-    if not ok or type(applicantIDs) ~= "table" then return {}, nil end
+    if not ok or type(applicantIDs) ~= "table" or issecretvalue(applicantIDs) then return {}, nil end
 
     local highlighter = JP.modules.ApplicantHighlighter
     local selected = highlighter and highlighter.GetSelection and highlighter:GetSelection() or {}
@@ -57,26 +62,28 @@ function ApplicantBoard:Collect()
     local entries = {}
     for _, applicantID in ipairs(applicantIDs) do
         local applicant = C_LFGList.GetApplicantInfo(applicantID)
-        if applicant and applicant.applicationStatus == "applied" then
-            for memberIdx = 1, (applicant.numMembers or 0) do
+        local status = applicant and SafeString(applicant.applicationStatus)
+        local numMembers = applicant and UsableNumber(applicant.numMembers) and applicant.numMembers or 0
+        if applicant and status == "applied" then
+            for memberIdx = 1, numMembers do
                 local name, classFile, _, _, itemLevel, _, tank, healer, damage, assignedRole, _, score =
                     C_LFGList.GetApplicantMemberInfo(applicantID, memberIdx)
-                local role = assignedRole
+                local role = SafeString(assignedRole)
                 if role ~= "TANK" and role ~= "HEALER" and role ~= "DAMAGER" then
-                    role = tank and "TANK" or healer and "HEALER" or damage and "DAMAGER" or "DAMAGER"
+                    role = SafeBoolean(tank) and "TANK" or SafeBoolean(healer) and "HEALER" or SafeBoolean(damage) and "DAMAGER" or "DAMAGER"
                 end
                 entries[#entries + 1] = {
                     applicantID = applicantID,
                     memberIdx = memberIdx,
                     name = SafeString(name) or "Кандидат",
-                    classFile = classFile,
+                    classFile = SafeString(classFile),
                     role = role,
                     itemLevel = UsableNumber(itemLevel) and itemLevel or 0,
                     score = UsableNumber(score) and score or 0,
                     status = selected[applicantID .. ":" .. memberIdx],
                     dungeons = JP.GroupSearchUI and JP.GroupSearchUI.GetDungeonSummary
-                        and JP.GroupSearchUI:GetDungeonSummary(SafeString(name), classFile) or nil,
-                    numMembers = applicant.numMembers or 1,
+                        and JP.GroupSearchUI:GetDungeonSummary(SafeString(name), SafeString(classFile)) or nil,
+                    numMembers = numMembers,
                 }
             end
         end
@@ -342,8 +349,6 @@ end
 
 function ApplicantBoard:RefreshParty()
     if not self.partyRows then return end
-    local ownKeyLevel = C_MythicPlus and C_MythicPlus.GetOwnedKeystoneLevel
-        and tonumber(C_MythicPlus.GetOwnedKeystoneLevel()) or 0
     local units = { "player" }
     for index = 1, 4 do
         local unit = "party" .. index
@@ -356,6 +361,7 @@ function ApplicantBoard:RefreshParty()
     end
 
     local total, known = 0, 0
+    local memberStrengths = {}
     for index, row in ipairs(self.partyRows) do
         local unit = units[index]
         if unit then
@@ -364,6 +370,22 @@ function ApplicantBoard:RefreshParty()
             local profile = JP.GroupSearchUI:GetPartyMemberProfile(unit) or { score = 0, cells = {} }
             local score = tonumber(profile.score) or 0
             if score > 0 then total, known = total + score, known + 1 end
+
+            -- Прогноз строится по трём сильнейшим подземельям игрока. +2/+3
+            -- дают небольшой запас, но не превращаются в обещание нескольких
+            -- уровней сверху. Затем усредняем силу всех найденных участников.
+            local runs = {}
+            local gradeBonus = { plusTwo = .5, plusThree = 1 }
+            for _, data in ipairs(profile.cells or {}) do
+                local level = tonumber(data.level) or tonumber(tostring(data.value or ""):match("(%d+)") or "")
+                if level and level > 0 then runs[#runs + 1] = level + (gradeBonus[data.grade] or 0) end
+            end
+            table.sort(runs, function(a, b) return a > b end)
+            if #runs > 0 then
+                local count, strength = math.min(3, #runs), 0
+                for runIndex = 1, count do strength = strength + runs[runIndex] end
+                memberStrengths[#memberStrengths + 1] = strength / count
+            end
 
             row.name:SetText(('%s  %s%s'):format(
                 UI.ClassIcon(classFilename, 16),
@@ -381,10 +403,7 @@ function ApplicantBoard:RefreshParty()
             for cellIndex, cell in ipairs(row.cells) do
                 local data = profile.cells and profile.cells[cellIndex]
                 cell:SetText(data and data.value or "—")
-                local belowOwnKey = ownKeyLevel > 0 and data and (tonumber(data.level) or 0) > 0
-                    and data.level < ownKeyLevel
-                local color = belowOwnKey and JP.GroupSearchUI:GetBelowKeyColor()
-                    or JP.GroupSearchUI:GetRunGradeColor(data and data.grade)
+                local color = JP.GroupSearchUI:GetRunGradeColor(data and data.grade)
                 cell:SetTextColor(color[1], color[2], color[3], 1)
             end
             row:Show()
@@ -395,8 +414,11 @@ function ApplicantBoard:RefreshParty()
 
     local members = math.max(1, #units)
     local average = total / members
-    self.partyPower:SetText(("|cff8a939fучастников|r %d   |cff8a939fсумма RIO|r %d   |cff%sсредний %d|r   |cff8a939fнайдено|r %d/%d"):format(
-        members, math.floor(total + .5), JP.GroupSearchUI:GetPartyRatingColor(average), math.floor(average + .5), known, members))
+    local forecast = 0
+    for _, strength in ipairs(memberStrengths) do forecast = forecast + strength end
+    if #memberStrengths > 0 then forecast = math.max(2, math.floor(forecast / #memberStrengths)) end
+    self.partyPower:SetText(("|cff8a939fучастников|r %d   |cff8a939fсумма RIO|r %d   |cff%sсредний %d|r   |cff8a939fнайдено|r %d/%d   |cff28c8f5прогноз группы ~+%d|r"):format(
+        members, math.floor(total + .5), JP.GroupSearchUI:GetPartyRatingColor(average), math.floor(average + .5), known, members, forecast))
 end
 
 function ApplicantBoard:Render()

@@ -4,7 +4,7 @@ JP.name = addonName
 JP.modules, JP.pendingReloads = {}, {}
 JP.positivePlayers = {}
 
-local DB_VERSION = 2
+local DB_VERSION = 5
 local SCANNED_TTL = 30 * 24 * 60 * 60   -- запись об игроке живёт месяц
 local SCANNED_LIMIT = 300               -- и база не растёт бесконечно
 
@@ -188,7 +188,16 @@ end
 local function SafeCall(module, methodName)
     local method = module[methodName]
     if type(method) ~= "function" then return true end
-    local ok, err = xpcall(method, CallErrorHandler, module)
+    local function ErrorHandler(err)
+        local message = tostring(err or "неизвестная ошибка")
+        local handler = type(CallErrorHandler) == "function" and CallErrorHandler
+            or (type(geterrorhandler) == "function" and geterrorhandler())
+        if type(handler) == "function" then pcall(handler, message) end
+        -- xpcall возвращает именно результат error handler. Blizzard
+        -- CallErrorHandler возвращает nil, поэтому сохраняем текст сами.
+        return message
+    end
+    local ok, err = xpcall(method, ErrorHandler, module)
     if not ok then JP:Print(("|cffff6b6bОшибка|r %s в модуле %s: %s"):format(methodName, module.name, tostring(err))) end
     return ok
 end
@@ -268,12 +277,37 @@ local function InitializeDatabase()
     db.scannedPlayers = type(db.scannedPlayers) == "table" and db.scannedPlayers or {}
     db.groupFilters = type(db.groupFilters) == "table" and db.groupFilters or {}
     db.localBests = type(db.localBests) == "table" and db.localBests or {}
-    db.autoMatch = type(db.autoMatch) == "table" and db.autoMatch or { requireTank = true, requireBloodlust = false }
+    db.autoMatch = type(db.autoMatch) == "table" and db.autoMatch or { requireTank = true }
     db.window = type(db.window) == "table" and db.window or {}
     if db.minimumKeystoneRuns ~= nil and not tonumber(db.minimumKeystoneRuns) then db.minimumKeystoneRuns = nil end
     if db.filterGroupFinder == nil then db.filterGroupFinder = true end
     if db.logging == nil then db.logging = false end
-    if db.replaceGroupFinder == nil then db.replaceGroupFinder = false end
+    -- Старый режим захвата штатной кнопки удалён: MythicBoost теперь
+    -- открывается только своей кнопкой внутри Blizzard Group Finder.
+    db.replaceGroupFinder = false
+    if db.minimalUI == nil then db.minimalUI = false end
+    db.convenience = type(db.convenience) == "table" and db.convenience or {}
+    if db.convenience.hideBags == nil then db.convenience.hideBags = true end
+    db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
+    if db.unitFrames.enabled == nil then db.unitFrames.enabled = true end
+    if db.unitFrames.hideBlizzard == nil then db.unitFrames.hideBlizzard = true end
+    db.castBar = type(db.castBar) == "table" and db.castBar or {}
+    if db.castBar.enabled == nil then db.castBar.enabled = true end
+    db.lootUI = type(db.lootUI) == "table" and db.lootUI or {}
+    if db.lootUI.enabled == nil then db.lootUI.enabled = true end
+    if db.lootUI.atCursor == nil then db.lootUI.atCursor = true end
+    if db.lootUI.showRolls == nil then db.lootUI.showRolls = true end
+    if db.lootUI.showHistory == nil then db.lootUI.showHistory = true end
+    -- Начиная с версии БД 3 все перемещаемые элементы используют один режим.
+    -- При первом запуске после обновления сохраняем прежнее разблокированное
+    -- состояние, но больше не держим три независимых переключателя.
+    if db.interfaceUnlocked == nil then
+        db.interfaceUnlocked = db.unitFrames.unlocked == true or db.castBar.unlocked == true
+    end
+    db.interfaceUnlocked = db.interfaceUnlocked == true
+    db.unitFrames.unlocked = db.interfaceUnlocked
+    db.castBar.unlocked = db.interfaceUnlocked
+    db.convenience.movableKeystoneFrame = db.interfaceUnlocked
     JP.db = db
 end
 
@@ -408,15 +442,18 @@ end
 local function ShowHelp()
     JP:Print("версия " .. JP:GetVersion())
     JP:Print("|cff28b8f5/mb|r — открыть или закрыть окно")
-    JP:Print("|cff28b8f5/mb filter|r — фильтр в стандартном поиске групп вкл/выкл")
+    JP:Print("|cff28b8f5/mb filter|r — открыть безопасные фильтры MythicBoost")
     JP:Print("|cff28b8f5/mb players|r — сколько перспективных игроков сохранено")
     JP:Print("|cff28b8f5/mb clear|r — очистить базу игроков")
     JP:Print("|cff28b8f5/mb modules|r — список модулей")
     JP:Print("|cff28b8f5/mb reload|r [модуль] — перезагрузить интерфейс или один модуль")
+    JP:Print("|cff28b8f5/mb smartclick|r — разбор умного клика: заклинания, кнопки, атрибуты")
+    JP:Print("|cff28b8f5/mb errors|r — журнал перехваченных ошибок (clear — очистить)")
     JP:Print("|cff28b8f5/mb debug|r — снимок структуры от API поиска групп")
     JP:Print("|cff28b8f5/mb log|r [on|off|clear] — журнал последних событий")
     JP:Print("|cff28b8f5/mb restorefilter|r — вернуть фильтр стандартного окна групп")
     JP:Print("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп")
+    JP:Print("|cff28b8f5/mb frames|r [reset] — свои фреймы игрока и цели, reset — сбросить позиции")
 end
 
 SLASH_MYTHICBOOST1 = "/mythicboost"
@@ -431,10 +468,21 @@ SlashCmdList.MYTHICBOOST = function(input)
     elseif command == "modules" or command == "list" then
         JP:ListModules()
     elseif command == "filter" then
-        MythicBoostDB.filterGroupFinder = not MythicBoostDB.filterGroupFinder
-        JP:Print("Фильтр стандартного поиска групп: " ..
-            (MythicBoostDB.filterGroupFinder and "|cff43d17aвключён|r" or "|cffff9966выключен|r") ..
-            ". Открой поиск заново.")
+        MythicBoostDB.filterGroupFinder = false
+        JP:Print("Фильтры работают в окне MythicBoost. Штатный список Blizzard не изменяется: в Midnight это вызывает secret-taint.")
+        ToggleWindow()
+    elseif command == "smartclick" or command == "click" then
+        if JP.SmartClick then JP.SmartClick:Diagnose() else JP:Print("Модуль SmartClick не загружен.") end
+    elseif command == "errors" or command == "error" then
+        if JP.ErrorGuard then
+            if argument == "clear" then
+                JP.ErrorGuard:Clear()
+            else
+                local unique, total = JP.ErrorGuard:Count()
+                JP:Print(("Ошибок в журнале: %d (срабатываний %d)"):format(unique, total))
+                JP.ErrorGuard:Toggle()
+            end
+        end
     elseif command == "players" then
         JP:Print(("Сохранено перспективных игроков: %d"):format(PruneScannedPlayers()))
     elseif command == "clear" then
@@ -445,7 +493,7 @@ SlashCmdList.MYTHICBOOST = function(input)
         JP:Print("База перспективных игроков очищена.")
     elseif command == "replace" then
         if JP.FrameSwitch then
-            JP.FrameSwitch:SetReplacing(not JP.FrameSwitch:IsReplacing())
+            JP.FrameSwitch:SetReplacing(false)
         end
     elseif command == "restorefilter" then
         local backup = MythicBoostDB.blizzardFilterBackup
@@ -472,6 +520,17 @@ SlashCmdList.MYTHICBOOST = function(input)
             JP:Print(("Последние записи (%d):"):format(#JP.log))
             for index = math.max(1, #JP.log - 19), #JP.log do JP:Print("  " .. JP.log[index]) end
         end
+    elseif command == "frames" then
+        local settings = MythicBoostDB.unitFrames
+        if argument:lower() == "reset" then
+            settings.player, settings.target = nil, nil
+            if JP.UnitFrames and JP.UnitFrames.ResetPositions then JP.UnitFrames:ResetPositions() end
+            JP:Print("Позиции фреймов игрока и цели сброшены.")
+        else
+            settings.enabled = not settings.enabled
+            JP:Print("Свои фреймы: " .. (settings.enabled and "|cff43d17aвключены|r" or "|cffff9966выключены|r"))
+        end
+        JP:ReloadModule("UnitFrames")
     else
         ShowHelp()
     end
