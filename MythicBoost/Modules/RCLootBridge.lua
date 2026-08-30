@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local RCLootBridge = {}
 local UI, C = JP.UI, JP.UI.colors
 
@@ -124,7 +125,7 @@ function RCLootBridge:BuildWindow()
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
     UI.Backdrop(frame, C.surface, C.surfaceEdge)
 
-    frame.title = UI.Text(frame, "GameFontNormal", "РОЗЫГРЫШ ДОБЫЧИ", C.accent)
+    frame.title = UI.Text(frame, "GameFontNormal", L("РОЗЫГРЫШ ДОБЫЧИ"), C.accent)
     frame.title:SetPoint("TOPLEFT", 12, -10)
 
     local close = UI.CloseButton(frame)
@@ -178,9 +179,9 @@ function RCLootBridge:BuildRow(index)
         end)
         return button
     end
-    Button("Пас", 44, 6, RESPONSE.PASS)
-    Button("Гриди", 52, 54, RESPONSE.GREED)
-    Button("Нужно", 56, 110, RESPONSE.NEED)
+    Button(L("Пас"), 44, 6, RESPONSE.PASS)
+    Button(L("Гриди"), 52, 54, RESPONSE.GREED)
+    Button(L("Нужно"), 56, 110, RESPONSE.NEED)
 
     frame.rows[index] = row
     return row
@@ -196,7 +197,7 @@ function RCLootBridge:ShowSessions(lootTable)
         row.session, row.link, row.answered = entry.session or index, link, false
         row:SetAlpha(1)
 
-        local icon, name = 134400, link or "Предмет"
+        local icon, name = 134400, link or L("Предмет")
         if link and C_Item and C_Item.GetItemInfoInstant then
             local ok, _, _, _, _, texture = pcall(C_Item.GetItemInfoInstant, link)
             if ok and texture then icon = texture end
@@ -206,12 +207,12 @@ function RCLootBridge:ShowSessions(lootTable)
 
         local verdict = self:Verdict(link)
         if verdict and verdict.label == "BIS" then
-            row.verdict:SetText("|cff4deb8fBIS для твоего спека|r   " .. (verdict.slot or ""))
+            row.verdict:SetText(L("|cff4deb8fBIS для твоего спека|r   ") .. (verdict.slot or ""))
         elseif verdict then
-            row.verdict:SetText(("|cffb35cffTOP|r   носят %d%% лучших   %s")
+            row.verdict:SetText((L("|cffb35cffTOP|r   носят %d%% лучших   %s"))
                 :format(math.floor(tonumber(verdict.share) or 0), verdict.slot or ""))
         else
-            row.verdict:SetText("|cff6a7078в списках BiS не значится|r")
+            row.verdict:SetText(L("|cff6a7078в списках BiS не значится|r"))
         end
         row:Show()
         shown = index
@@ -261,13 +262,13 @@ function RCLootBridge:SetEnabled(value)
     settings.enabled = value and true or false
     if settings.enabled then
         if not self:Register() then
-            JP:Print("Мост к RCLootCouncil не запустился: не нашлись библиотеки Ace. Нужен |cff28b8f5/reload|r.")
+            JP:Print(L("Мост к RCLootCouncil не запустился: не нашлись библиотеки Ace. Нужен |cff28b8f5/reload|r."))
             return
         end
-        JP:Print("Мост к RCLootCouncil включён. Если у тебя стоит сам RCLootCouncil — отключи его, иначе ответите оба.")
+        JP:Print(L("Мост к RCLootCouncil включён. Если у тебя стоит сам RCLootCouncil — отключи его, иначе ответите оба."))
     else
         if self.frame then self.frame:Hide() end
-        JP:Print("Мост к RCLootCouncil выключен.")
+        JP:Print(L("Мост к RCLootCouncil выключен."))
     end
 end
 

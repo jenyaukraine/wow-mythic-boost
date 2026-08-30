@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local ApplicantHighlighter = {}
 local UI = JP.UI
 local C = UI.colors
@@ -56,12 +57,14 @@ local function BuildSelection()
     local byRole = { TANK = {}, HEALER = {}, DAMAGER = {} }
 
     local applicants = C_LFGList.GetApplicants()
-    if type(applicants) ~= "table" or issecretvalue(applicants) then return end
+    if type(applicants) ~= "table" or issecretvalue(applicants) then return 0 end
+    local visibleMembers = 0
     for _, applicantID in ipairs(applicants) do
         local applicant = C_LFGList.GetApplicantInfo(applicantID)
         local applicationStatus = applicant and SafeString(applicant.applicationStatus)
         local numMembers = applicant and UsableNumber(applicant.numMembers) and applicant.numMembers or 0
         if applicant and applicationStatus == "applied" then
+            visibleMembers = visibleMembers + numMembers
             for memberIdx = 1, numMembers do
                 local _, _, _, _, itemLevel, _, tank, healer, damage, assignedRole = C_LFGList.GetApplicantMemberInfo(applicantID, memberIdx)
                 if UsableNumber(itemLevel) then
@@ -90,6 +93,7 @@ local function BuildSelection()
             end
         end
     end
+    return visibleMembers
 end
 
 ---------------------------------------------------------------------------
@@ -105,8 +109,8 @@ end
 ---------------------------------------------------------------------------
 
 local STATUS_COLORS = {
-    best = { color = C.amber, label = "ЛУЧШИЙ" },
-    needed = { color = { .62, .40, .95, 1 }, label = "ПОДХОДИТ" },
+    best = { color = C.amber, label = L("ЛУЧШИЙ") },
+    needed = { color = { .62, .40, .95, 1 }, label = L("ПОДХОДИТ") },
 }
 
 local function HideRegion(region)
@@ -153,8 +157,31 @@ local function SkinPanel(viewer)
 
     local inset = viewer.Inset
     if inset then
-        if inset.Bg and inset.Bg.SetColorTexture then inset.Bg:SetColorTexture(UI.Unpack(C.panel)) end
+        if inset.Bg and inset.Bg.SetColorTexture then inset.Bg:SetColorTexture(UI.Unpack(C.raised)) end
         if inset.NineSlice then HideRegion(inset.NineSlice) end
+
+        local topLine = inset:CreateTexture(nil, "OVERLAY")
+        topLine:SetPoint("TOPLEFT", 1, -1)
+        topLine:SetPoint("TOPRIGHT", -1, -1)
+        topLine:SetHeight(2)
+        topLine:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .75)
+        viewer.__mbTopLine = topLine
+
+        local empty = CreateFrame("Frame", nil, inset, "BackdropTemplate")
+        empty:SetSize(390, 68)
+        empty:SetPoint("TOP", 0, -34)
+        UI.Backdrop(empty, { .075, .105, .140, .98 }, { .16, .52, .70, 1 })
+        local emptyAccent = empty:CreateTexture(nil, "OVERLAY")
+        emptyAccent:SetPoint("TOPLEFT", 1, -1)
+        emptyAccent:SetPoint("BOTTOMLEFT", 1, 1)
+        emptyAccent:SetWidth(3)
+        emptyAccent:SetColorTexture(UI.Unpack(C.accent))
+        empty.title = UI.Text(empty, "GameFontNormal", L("ОЖИДАЕМ КАНДИДАТОВ"), C.accent)
+        empty.title:SetPoint("TOP", 0, -12)
+        empty.description = UI.Text(empty, "GameFontHighlightSmall",
+            L("Группа открыта. Новые заявки появятся в этом списке."), C.text)
+        empty.description:SetPoint("TOP", empty.title, "BOTTOM", 0, -8)
+        viewer.__mbEmptyState = empty
     end
 
     for _, key in ipairs({ "NameColumnHeader", "RoleColumnHeader", "ItemLevelColumnHeader", "RatingColumnHeader" }) do
@@ -166,7 +193,7 @@ local function SkinPanel(viewer)
                     if region:GetObjectType() == "Texture" then
                         HideRegion(region)
                     elseif region:GetObjectType() == "FontString" then
-                        region:SetTextColor(UI.Unpack(C.muted))
+                        region:SetTextColor(UI.Unpack(C.accent))
                     end
                 end
             end
@@ -214,8 +241,9 @@ function ApplicantHighlighter:Refresh()
     local viewer = LFGListFrame and LFGListFrame.ApplicationViewer
     local scrollBox = viewer and viewer.ScrollBox
     if not scrollBox or not viewer:IsVisible() then return end
-    BuildSelection()
+    local visibleMembers = BuildSelection()
     SkinPanel(viewer)
+    if viewer.__mbEmptyState then viewer.__mbEmptyState:SetShown((visibleMembers or 0) == 0) end
     local rowIndex = 0
     scrollBox:ForEachFrame(function(button)
         rowIndex = rowIndex + 1

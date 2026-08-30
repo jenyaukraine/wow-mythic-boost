@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local UI = JP.UI
 local C = JP.UI.colors
 
@@ -293,7 +294,7 @@ function CastBar:SetUnlocked(unlocked)
         self.active, self.fadeUntil = nil, nil
         frame:SetAlpha(1)
         frame.icon:SetTexture("Interface\\Icons\\Spell_Holy_MagicalSentry")
-        frame.name:SetText("Перетащи кастбар")
+        frame.name:SetText(L("Перетащи кастбар"))
         frame.time:SetText("1.5")
         frame.time:SetTextColor(1, .72, .12, 1)
         frame.bar:SetMinMaxValues(0, 1); frame.bar:SetValue(.72)

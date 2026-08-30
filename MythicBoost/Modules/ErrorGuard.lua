@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local ErrorGuard = {}
 local UI, C = JP.UI, JP.UI.colors
 
@@ -187,7 +188,7 @@ function ErrorGuard:BuildWindow()
     end)
     UI.Backdrop(frame, C.window, C.surfaceEdge)
 
-    local title = UI.Text(frame, "GameFontNormalLarge", "ОШИБКИ", C.accent)
+    local title = UI.Text(frame, "GameFontNormalLarge", L("ОШИБКИ"), C.accent)
     title:SetPoint("TOPLEFT", 14, -14)
 
     frame.summary = UI.Text(frame, "GameFontHighlightSmall", "", C.muted)
@@ -204,14 +205,14 @@ function ErrorGuard:BuildWindow()
     -- Второй экземпляр той же кнопки в шапке. Дубль намеренный: журнал
     -- открывают, чтобы отдать ошибки целиком, и искать кнопку внизу под
     -- девятью строками — лишний шаг в самом частом сценарии.
-    local copyTop = UI.Button(frame, "Копировать всё", 150, 22, true)
+    local copyTop = UI.Button(frame, L("Копировать всё"), 150, 22, true)
     copyTop:SetPoint("RIGHT", close, "LEFT", -10, 0)
     copyTop:SetScript("OnClick", function() ErrorGuard:ShowAll() end)
     copyTop:HookScript("OnEnter", function(owner)
-        UI.Tooltip(owner, "Копировать всё",
-            "Собирает ВЕСЬ журнал — все ошибки с трейсами, а не выбранную строку.",
-            "Текст ложится в нижнее поле и выделяется целиком: дальше Ctrl+C.",
-            "Буфер обмена аддонам недоступен, выделить может только игрок.")
+        UI.Tooltip(owner, L("Копировать всё"),
+            L("Собирает ВЕСЬ журнал — все ошибки с трейсами, а не выбранную строку."),
+            L("Текст ложится в нижнее поле и выделяется целиком: дальше Ctrl+C."),
+            L("Буфер обмена аддонам недоступен, выделить может только игрок."))
     end)
     copyTop:HookScript("OnLeave", GameTooltip_Hide)
     frame.summary:SetPoint("RIGHT", copyTop, "LEFT", -10, 0)
@@ -279,26 +280,26 @@ function ErrorGuard:BuildWindow()
     scroll:SetScrollChild(box)
     frame.detailBox = box
 
-    local copyAll = UI.Button(frame, "Копировать всё", 150, 24, true)
+    local copyAll = UI.Button(frame, L("Копировать всё"), 150, 24, true)
     copyAll:SetPoint("BOTTOMLEFT", 12, 12)
     copyAll:SetScript("OnClick", function()
         ErrorGuard:ShowAll()
     end)
     copyAll:HookScript("OnEnter", function(owner)
-        UI.Tooltip(owner, "Копировать всё",
-            "Собирает весь журнал в нижнее поле и выделяет его целиком.",
-            "Дальше жми Ctrl+C — буфер обмена аддонам недоступен, выделить текст может только игрок.")
+        UI.Tooltip(owner, L("Копировать всё"),
+            L("Собирает весь журнал в нижнее поле и выделяет его целиком."),
+            L("Дальше жми Ctrl+C — буфер обмена аддонам недоступен, выделить текст может только игрок."))
     end)
     copyAll:HookScript("OnLeave", GameTooltip_Hide)
 
-    local clear = UI.Button(frame, "Очистить", 120, 24)
+    local clear = UI.Button(frame, L("Очистить"), 120, 24)
     clear:SetPoint("LEFT", copyAll, "RIGHT", 8, 0)
     clear:SetScript("OnClick", function()
         ErrorGuard:Clear()
     end)
 
     local copyHint = UI.Text(frame, "GameFontHighlightSmall",
-        "Щёлкни строку — внизу появится полный трейс. Выдели и Ctrl+C, чтобы скопировать.", C.faint)
+        L("Щёлкни строку — внизу появится полный трейс. Выдели и Ctrl+C, чтобы скопировать."), C.faint)
     copyHint:SetPoint("LEFT", clear, "RIGHT", 12, 0)
 
     frame:Hide()
@@ -312,7 +313,7 @@ function ErrorGuard:ShowDetail(entry)
     local parts = {
         entry.message or "",
         "",
-        ("Повторов: %d    Впервые: %s    Последний раз: %s"):format(
+        (L("Повторов: %d    Впервые: %s    Последний раз: %s")):format(
             tonumber(entry.count) or 1, FormatWhen(entry.first), FormatWhen(entry.last)),
         "",
         entry.stack or "",
@@ -328,16 +329,16 @@ function ErrorGuard:ShowAll()
     if not self.window then return end
     local log = self:GetLog()
     if #log == 0 then
-        self.window.detailBox:SetText("Журнал пуст.")
+        self.window.detailBox:SetText(L("Журнал пуст."))
         return
     end
     local out = {
-        ("MythicBoost %s — журнал ошибок, %s"):format(JP:GetVersion(), date("%Y-%m-%d %H:%M:%S")),
-        ("уникальных: %d"):format(#log),
+        (L("MythicBoost %s — журнал ошибок, %s")):format(JP:GetVersion(), date("%Y-%m-%d %H:%M:%S")),
+        (L("уникальных: %d")):format(#log),
         "",
     }
     for index, entry in ipairs(log) do
-        out[#out + 1] = ("=== %d/%d   повторов: %d   впервые: %s   последний раз: %s ==="):format(
+        out[#out + 1] = (L("=== %d/%d   повторов: %d   впервые: %s   последний раз: %s ===")):format(
             index, #log, tonumber(entry.count) or 1, FormatWhen(entry.first), FormatWhen(entry.last))
         out[#out + 1] = entry.message or ""
         if entry.stack and entry.stack ~= "" then
@@ -358,7 +359,7 @@ function ErrorGuard:Refresh()
     local log = self:GetLog()
     local total = 0
     for _, entry in ipairs(log) do total = total + (tonumber(entry.count) or 1) end
-    frame.summary:SetFormattedText("уникальных: %d    всего срабатываний: %d", #log, total)
+    frame.summary:SetFormattedText(L("уникальных: %d    всего срабатываний: %d"), #log, total)
 
     for index, row in ipairs(frame.rows) do
         local entry = log[index]
@@ -395,7 +396,7 @@ function ErrorGuard:Clear()
         self.window.detailBox:SetText("")
         self:Refresh()
     end
-    JP:Print("Журнал ошибок очищен.")
+    JP:Print(L("Журнал ошибок очищен."))
 end
 
 function ErrorGuard:Count()
@@ -452,8 +453,8 @@ function ErrorGuard:Enable()
         if Loaded(name) then conflicts[#conflicts + 1] = name end
     end
     if #conflicts > 0 then
-        JP:Print("Перехват ошибок делит место с: " .. table.concat(conflicts, ", ") ..
-            ". Отключи их, иначе кто последним загрузился — тот и ловит.")
+        JP:Print(L("Перехват ошибок делит место с: ") .. table.concat(conflicts, ", ") ..
+            L(". Отключи их, иначе кто последним загрузился — тот и ловит."))
     end
 end
 

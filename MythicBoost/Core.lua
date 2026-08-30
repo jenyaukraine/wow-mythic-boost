@@ -1,5 +1,6 @@
 local addonName, JP = ...
 
+local L = JP.L
 JP.name = addonName
 JP.modules, JP.pendingReloads = {}, {}
 JP.positivePlayers = {}
@@ -95,7 +96,7 @@ local function DropStaleSeason()
     if MythicBoostDB.localBestsSeason ~= season then
         if MythicBoostDB.localBestsSeason ~= nil then
             wipe(MythicBoostDB.localBests)
-            JP:Print("Начался новый сезон — личные рекорды подземелий сброшены.")
+            JP:Print(L("Начался новый сезон — личные рекорды подземелий сброшены."))
         end
         MythicBoostDB.localBestsSeason = season
     end
@@ -189,7 +190,7 @@ local function SafeCall(module, methodName)
     local method = module[methodName]
     if type(method) ~= "function" then return true end
     local function ErrorHandler(err)
-        local message = tostring(err or "неизвестная ошибка")
+        local message = tostring(err or L("неизвестная ошибка"))
         local handler = type(CallErrorHandler) == "function" and CallErrorHandler
             or (type(geterrorhandler) == "function" and geterrorhandler())
         if type(handler) == "function" then pcall(handler, message) end
@@ -198,7 +199,7 @@ local function SafeCall(module, methodName)
         return message
     end
     local ok, err = xpcall(method, ErrorHandler, module)
-    if not ok then JP:Print(("|cffff6b6bОшибка|r %s в модуле %s: %s"):format(methodName, module.name, tostring(err))) end
+    if not ok then JP:Print((L("|cffff6b6bОшибка|r %s в модуле %s: %s")):format(methodName, module.name, tostring(err))) end
     return ok
 end
 
@@ -220,10 +221,10 @@ end
 
 function JP:EnableModule(name)
     local module = self.modules[name]
-    if not module then return false, "модуль не найден" end
+    if not module then return false, L("модуль не найден") end
     if module.enabled then return true end
-    if not SafeCall(module, "Create") then return false, "ошибка Create" end
-    if not SafeCall(module, "Enable") then return false, "ошибка Enable" end
+    if not SafeCall(module, "Create") then return false, L("ошибка Create") end
+    if not SafeCall(module, "Enable") then return false, L("ошибка Enable") end
     module.enabled = true
     return true
 end
@@ -231,17 +232,17 @@ end
 function JP:ReloadModule(inputName)
     local module, name = self:FindModule(inputName)
     if not module then
-        self:Print(("Модуль «%s» не найден. Список: /mb modules"):format(tostring(inputName)))
+        self:Print((L("Модуль «%s» не найден. Список: /mb modules")):format(tostring(inputName)))
         return
     end
     if InCombatLockdown() then
         self.pendingReloads[name] = true
-        self:Print(name .. " будет пересобран после боя.")
+        self:Print(name .. L(" будет пересобран после боя."))
         return
     end
     SafeCall(module, "Disable"); SafeCall(module, "Destroy"); module.enabled = false
     local ok, reason = self:EnableModule(name)
-    self:Print(ok and (name .. " пересобран.") or ("Не удалось пересобрать " .. name .. ": " .. reason))
+    self:Print(ok and (name .. L(" пересобран.")) or (L("Не удалось пересобрать ") .. name .. ": " .. reason))
 end
 
 function JP:ListModules()
@@ -250,7 +251,7 @@ function JP:ListModules()
         names[#names + 1] = (module.enabled and "|cff43d17a" or "|cff8a8f98") .. name .. "|r"
     end
     table.sort(names)
-    self:Print("Модули: " .. table.concat(names, ", "))
+    self:Print(L("Модули: ") .. table.concat(names, ", "))
 end
 
 -- Общая точка обновления окна. События LFG приходят пачками, а перерисовка
@@ -368,7 +369,7 @@ local function DescribeValue(value)
     ok, result = pcall(issecretvalue, value)
     record.secret = ok and result or "?"
     ok, result = pcall(tostring, value)
-    record.text = ok and tostring(result):sub(1, 200) or "<нечитаемо>"
+    record.text = ok and tostring(result):sub(1, 200) or L("<нечитаемо>")
     return record
 end
 
@@ -385,14 +386,14 @@ local function DescribeTable(source, depth)
             end
         end
     end)
-    if not ok then out.__error = "pairs() упал на защищённом значении" end
+    if not ok then out.__error = L("pairs() упал на защищённом значении") end
     return out
 end
 
 local function DumpSearchResults()
     local _, resultIDs = C_LFGList.GetSearchResults()
     if type(resultIDs) ~= "table" or #resultIDs == 0 then
-        JP:Print("Результатов поиска нет — сначала нажми «Обновить» в окне.")
+        JP:Print(L("Результатов поиска нет — сначала нажми «Обновить» в окне."))
         return
     end
 
@@ -419,13 +420,13 @@ local function DumpSearchResults()
         end
         if C_LFGList.GetSearchResultMemberCounts then
             local ok, counts = pcall(C_LFGList.GetSearchResultMemberCounts, resultID)
-            entry.memberCounts = ok and DescribeTable(counts) or { __error = "недоступно" }
+            entry.memberCounts = ok and DescribeTable(counts) or { __error = L("недоступно") }
         end
         snapshot.results[index] = entry
     end
 
     MythicBoostDB.diagnostics = snapshot
-    JP:Print(("Снимок %d результатов сохранён. Выполни |cff28b8f5/reload|r — после него структуру видно в SavedVariables."):format(#snapshot.results))
+    JP:Print((L("Снимок %d результатов сохранён. Выполни |cff28b8f5/reload|r — после него структуру видно в SavedVariables.")):format(#snapshot.results))
 
     -- Заодно сразу показываем главное в чат, чтобы не ждать перезагрузки.
     local first = snapshot.results[1] and snapshot.results[1].searchResultInfo
@@ -442,21 +443,21 @@ local function DumpSearchResults()
 end
 
 local function ShowHelp()
-    JP:Print("версия " .. JP:GetVersion())
-    JP:Print("|cff28b8f5/mb|r — открыть или закрыть окно")
-    JP:Print("|cff28b8f5/mb filter|r — открыть безопасные фильтры MythicBoost")
-    JP:Print("|cff28b8f5/mb players|r — сколько перспективных игроков сохранено")
-    JP:Print("|cff28b8f5/mb clear|r — очистить базу игроков")
-    JP:Print("|cff28b8f5/mb modules|r — список модулей")
-    JP:Print("|cff28b8f5/mb reload|r [модуль] — перезагрузить интерфейс или один модуль")
-    JP:Print("|cff28b8f5/mb smartclick|r — разбор умного клика: заклинания, кнопки, атрибуты")
-    JP:Print("|cff28b8f5/mb errors|r — журнал перехваченных ошибок (clear — очистить)")
-    JP:Print("|cff28b8f5/mb debug|r — снимок структуры от API поиска групп")
-    JP:Print("|cff28b8f5/mb log|r [on|off|clear] — журнал последних событий")
-    JP:Print("|cff28b8f5/mb restorefilter|r — вернуть фильтр стандартного окна групп")
-    JP:Print("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп")
-    JP:Print("|cff28b8f5/mb frames|r [reset] — свои фреймы игрока и цели, reset — сбросить позиции")
-    JP:Print("|cff28b8f5/mb bags|r — открыть или закрыть единый инвентарь")
+    JP:Print(L("версия ") .. JP:GetVersion())
+    JP:Print(L("|cff28b8f5/mb|r — открыть или закрыть окно"))
+    JP:Print(L("|cff28b8f5/mb filter|r — открыть безопасные фильтры MythicBoost"))
+    JP:Print(L("|cff28b8f5/mb players|r — сколько перспективных игроков сохранено"))
+    JP:Print(L("|cff28b8f5/mb clear|r — очистить базу игроков"))
+    JP:Print(L("|cff28b8f5/mb modules|r — список модулей"))
+    JP:Print(L("|cff28b8f5/mb reload|r [модуль] — перезагрузить интерфейс или один модуль"))
+    JP:Print(L("|cff28b8f5/mb smartclick|r — разбор умного клика: заклинания, кнопки, атрибуты"))
+    JP:Print(L("|cff28b8f5/mb errors|r — журнал перехваченных ошибок (clear — очистить)"))
+    JP:Print(L("|cff28b8f5/mb debug|r — снимок структуры от API поиска групп"))
+    JP:Print(L("|cff28b8f5/mb log|r [on|off|clear] — журнал последних событий"))
+    JP:Print(L("|cff28b8f5/mb restorefilter|r — вернуть фильтр стандартного окна групп"))
+    JP:Print(L("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп"))
+    JP:Print(L("|cff28b8f5/mb frames|r [reset] — свои фреймы игрока и цели, reset — сбросить позиции"))
+    JP:Print(L("|cff28b8f5/mb bags|r — открыть или закрыть единый инвентарь"))
 end
 
 SLASH_MYTHICBOOST1 = "/mythicboost"
@@ -472,28 +473,28 @@ SlashCmdList.MYTHICBOOST = function(input)
         JP:ListModules()
     elseif command == "filter" then
         MythicBoostDB.filterGroupFinder = false
-        JP:Print("Фильтры работают в окне MythicBoost. Штатный список Blizzard не изменяется: в Midnight это вызывает secret-taint.")
+        JP:Print(L("Фильтры работают в окне MythicBoost. Штатный список Blizzard не изменяется: в Midnight это вызывает secret-taint."))
         ToggleWindow()
     elseif command == "smartclick" or command == "click" then
-        if JP.SmartClick then JP.SmartClick:Diagnose() else JP:Print("Модуль SmartClick не загружен.") end
+        if JP.SmartClick then JP.SmartClick:Diagnose() else JP:Print(L("Модуль SmartClick не загружен.")) end
     elseif command == "errors" or command == "error" then
         if JP.ErrorGuard then
             if argument == "clear" then
                 JP.ErrorGuard:Clear()
             else
                 local unique, total = JP.ErrorGuard:Count()
-                JP:Print(("Ошибок в журнале: %d (срабатываний %d)"):format(unique, total))
+                JP:Print((L("Ошибок в журнале: %d (срабатываний %d)")):format(unique, total))
                 JP.ErrorGuard:Toggle()
             end
         end
     elseif command == "players" then
-        JP:Print(("Сохранено перспективных игроков: %d"):format(PruneScannedPlayers()))
+        JP:Print((L("Сохранено перспективных игроков: %d")):format(PruneScannedPlayers()))
     elseif command == "clear" then
         wipe(MythicBoostDB.scannedPlayers)
         wipe(JP.positivePlayers)
         local marker = JP.modules.NameplateMarker
         if marker and marker.RefreshAll then marker:RefreshAll() end
-        JP:Print("База перспективных игроков очищена.")
+        JP:Print(L("База перспективных игроков очищена."))
     elseif command == "replace" then
         if JP.FrameSwitch then
             JP.FrameSwitch:SetReplacing(false)
@@ -502,10 +503,10 @@ SlashCmdList.MYTHICBOOST = function(input)
         local backup = MythicBoostDB.blizzardFilterBackup
         if type(backup) == "table" and type(C_LFGList.SaveAdvancedFilter) == "function" then
             local ok = pcall(C_LFGList.SaveAdvancedFilter, backup)
-            JP:Print(ok and "Фильтр стандартного окна групп возвращён к исходному."
-                or "Не удалось вернуть фильтр — попробуй вне боя.")
+            JP:Print(ok and L("Фильтр стандартного окна групп возвращён к исходному.")
+                or L("Не удалось вернуть фильтр — попробуй вне боя."))
         else
-            JP:Print("Сохранённого фильтра нет: MythicBoost его ещё не менял.")
+            JP:Print(L("Сохранённого фильтра нет: MythicBoost его ещё не менял."))
         end
     elseif command == "debug" or command == "dump" then
         DumpSearchResults()
@@ -513,14 +514,14 @@ SlashCmdList.MYTHICBOOST = function(input)
         local mode = argument:lower()
         if mode == "on" or mode == "off" then
             MythicBoostDB.logging = mode == "on"
-            JP:Print("Журнал " .. (MythicBoostDB.logging and "|cff43d17aвключён|r" or "|cffff9966выключен|r") .. ".")
+            JP:Print(L("Журнал ") .. (MythicBoostDB.logging and L("|cff43d17aвключён|r") or L("|cffff9966выключен|r")) .. ".")
         elseif mode == "clear" then
             wipe(JP.log)
-            JP:Print("Журнал очищен.")
+            JP:Print(L("Журнал очищен."))
         elseif #JP.log == 0 then
-            JP:Print(JP:IsLogging() and "Журнал пуст." or "Журнал выключен. Включить: /mb log on")
+            JP:Print(JP:IsLogging() and L("Журнал пуст.") or L("Журнал выключен. Включить: /mb log on"))
         else
-            JP:Print(("Последние записи (%d):"):format(#JP.log))
+            JP:Print((L("Последние записи (%d):")):format(#JP.log))
             for index = math.max(1, #JP.log - 19), #JP.log do JP:Print("  " .. JP.log[index]) end
         end
     elseif command == "frames" then
@@ -528,14 +529,14 @@ SlashCmdList.MYTHICBOOST = function(input)
         if argument:lower() == "reset" then
             settings.player, settings.target = nil, nil
             if JP.UnitFrames and JP.UnitFrames.ResetPositions then JP.UnitFrames:ResetPositions() end
-            JP:Print("Позиции фреймов игрока и цели сброшены.")
+            JP:Print(L("Позиции фреймов игрока и цели сброшены."))
         else
             settings.enabled = not settings.enabled
-            JP:Print("Свои фреймы: " .. (settings.enabled and "|cff43d17aвключены|r" or "|cffff9966выключены|r"))
+            JP:Print(L("Свои фреймы: ") .. (settings.enabled and L("|cff43d17aвключены|r") or L("|cffff9966выключены|r")))
         end
         JP:ReloadModule("UnitFrames")
     elseif command == "bags" or command == "bag" then
-        if JP.BagUI then JP.BagUI:Toggle() else JP:Print("Модуль сумок не загружен.") end
+        if JP.BagUI then JP.BagUI:Toggle() else JP:Print(L("Модуль сумок не загружен.")) end
     else
         ShowHelp()
     end

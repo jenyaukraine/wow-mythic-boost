@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local SmartClick = {}
 local UI, C = JP.UI, JP.UI.colors
 
@@ -216,7 +217,7 @@ function SmartClick:Apply()
     -- CreateMacro не проходил — кончились слоты, не понравилась иконка — то
     -- не происходило ровным счётом ничего и никто об этом не сообщал.
     if not ok then
-        JP:Print("|cffff6b6bНе удалось создать макрос " .. MACRO_NAME .. "|r: " .. tostring(err))
+        JP:Print(L("|cffff6b6bНе удалось создать макрос ") .. MACRO_NAME .. "|r: " .. tostring(err))
         self.macroBody = nil
         return
     end
@@ -224,7 +225,7 @@ function SmartClick:Apply()
     -- Проверяем ФАКТ, а не возврат: CreateMacro может отработать без ошибки и
     -- всё равно не создать запись, если общий список макросов переполнен.
     if (GetMacroIndexByName(MACRO_NAME) or 0) <= 0 then
-        JP:Print("|cffff6b6bМакрос " .. MACRO_NAME .. " не появился|r — вероятно, кончились слоты макросов.")
+        JP:Print(L("|cffff6b6bМакрос ") .. MACRO_NAME .. L(" не появился|r — вероятно, кончились слоты макросов."))
         self.macroBody = nil
         return
     end
@@ -239,7 +240,7 @@ function SmartClick:SetOption(key, value)
     self:Apply()
     self:RefreshBuffButton()
     if InCombatLockdown() then
-        JP:Print("Настройка применится после боя: менять клик защищённой кнопки в бою нельзя.")
+        JP:Print(L("Настройка применится после боя: менять клик защищённой кнопки в бою нельзя."))
         return
     end
     -- Говорим вслух, что получилось. Молчаливая галочка неотличима от
@@ -247,18 +248,18 @@ function SmartClick:SetOption(key, value)
     -- выучил, клауза в макрос не попадает — и без этой строки человек видит
     -- только то, что клик ничего не делает.
     if not settings.buff and not settings.res then
-        JP:Print("Умный клик выключен, макрос MBSmartClick удалён.")
+        JP:Print(L("Умный клик выключен, макрос MBSmartClick удалён."))
         return
     end
     local sample = self:BuildMacro("mouseover")
     if sample then
-        JP:Print("Макрос MBSmartClick готов: " .. sample:gsub("^/cast ", ""))
+        JP:Print(L("Макрос MBSmartClick готов: ") .. sample:gsub("^/cast ", ""))
         -- Без этой строки человек включает галочку и ждёт, что заработает
         -- само. Оно не заработает: макрос создан, но никуда не привязан.
-        JP:Print("|cffffb93dОсталось привязать его|r — перетащи макрос " ..
-            "|cff28b8f5MBSmartClick|r на панель способностей, либо укажи его в клик-касте DandersFrames.")
+        JP:Print(L("|cffffb93dОсталось привязать его|r — перетащи макрос ") ..
+            L("|cff28b8f5MBSmartClick|r на панель способностей, либо укажи его в клик-касте DandersFrames."))
     else
-        JP:Print("Умный клик включён, но подходящих заклинаний не найдено — " .. self:Describe())
+        JP:Print(L("Умный клик включён, но подходящих заклинаний не найдено — ") .. self:Describe())
     end
 end
 
@@ -266,12 +267,12 @@ end
 -- попадут в макрос у этого персонажа.
 function SmartClick:Describe()
     local _, class = UnitClass("player")
-    if type(class) ~= "string" then return "класс не определён" end
+    if type(class) ~= "string" then return L("класс не определён") end
     local parts = {}
     local battle, normal, buff = SpellName(BATTLE_RES[class]), SpellName(NORMAL_RES[class]), SpellName(BUFF[class])
-    parts[#parts + 1] = "в бою: " .. (battle or "нет боевого воскрешения")
-    parts[#parts + 1] = "вне боя: " .. (normal or battle or "нет воскрешения")
-    parts[#parts + 1] = "бафф: " .. (buff or "нет группового баффа")
+    parts[#parts + 1] = L("в бою: ") .. (battle or L("нет боевого воскрешения"))
+    parts[#parts + 1] = L("вне боя: ") .. (normal or battle or L("нет воскрешения"))
+    parts[#parts + 1] = L("бафф: ") .. (buff or L("нет группового баффа"))
     return table.concat(parts, "    ")
 end
 
@@ -281,22 +282,22 @@ end
 function SmartClick:Diagnose()
     local settings = self:GetSettings()
     local _, class = UnitClass("player")
-    JP:Print("--- Умный клик ---")
-    JP:Print("класс: " .. tostring(class) .. "    бафф: " ..
-        tostring(settings and settings.buff) .. "    воскрешение: " .. tostring(settings and settings.res))
+    JP:Print(L("--- Умный клик ---"))
+    JP:Print(L("класс: ") .. tostring(class) .. L("    бафф: ") ..
+        tostring(settings and settings.buff) .. L("    воскрешение: ") .. tostring(settings and settings.res))
 
     for label, id in pairs({
-        ["боевое воскрешение"] = BATTLE_RES[class],
-        ["обычное воскрешение"] = NORMAL_RES[class],
-        ["групповой бафф"] = BUFF[class],
+        [L("боевое воскрешение")] = BATTLE_RES[class],
+        [L("обычное воскрешение")] = NORMAL_RES[class],
+        [L("групповой бафф")] = BUFF[class],
     }) do
         if not id then
-            JP:Print(("  %s: у класса нет"):format(label))
+            JP:Print((L("  %s: у класса нет")):format(label))
         else
             local known = type(IsPlayerSpell) == "function" and IsTrue(select(2, pcall(IsPlayerSpell, id)))
             local name = SpellName(id)
-            JP:Print(("  %s: id %d, изучено: %s, имя: %s"):format(
-                label, id, tostring(known), tostring(name or "не получено")))
+            JP:Print((L("  %s: id %d, изучено: %s, имя: %s")):format(
+                label, id, tostring(known), tostring(name or L("не получено"))))
         end
     end
 
@@ -306,19 +307,19 @@ function SmartClick:Diagnose()
     local buffID = BUFF[class]
     if buffID and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
         local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, buffID)
-        JP:Print("  бафф на тебе сейчас: " ..
-            ((ok and aura) and "|cffff6b6bДА — повторный каст ничего не покажет|r" or "нет"))
+        JP:Print(L("  бафф на тебе сейчас: ") ..
+            ((ok and aura) and L("|cffff6b6bДА — повторный каст ничего не покажет|r") or L("нет")))
     end
 
     local index = type(GetMacroIndexByName) == "function" and GetMacroIndexByName(MACRO_NAME) or 0
     if index and index > 0 then
         local _, _, body = GetMacroInfo(index)
-        JP:Print(("  макрос %s: слот %d"):format(MACRO_NAME, index))
+        JP:Print((L("  макрос %s: слот %d")):format(MACRO_NAME, index))
         -- Тело макроса многострочное, а JP:Print печатает одной строкой:
         -- склеиваем переводы строк в разделитель, иначе видно только «#showtooltip».
         JP:Print("     " .. (tostring(body):gsub("\n", " | ")))
     else
-        JP:Print("  |cffff6b6bмакрос не создан|r — включи хотя бы одну галочку")
+        JP:Print(L("  |cffff6b6bмакрос не создан|r — включи хотя бы одну галочку"))
     end
 end
 
@@ -431,8 +432,8 @@ function SmartClick:BuildBuffButton()
     button.label:SetPoint("TOP", button, "BOTTOM", 0, -4)
 
     button:SetScript("OnEnter", function(owner)
-        UI.Tooltip(owner, name, "Бафф нужен: " .. (owner.missingText or "—"),
-            "Заклинание групповое — один каст закрывает всех в радиусе.")
+        UI.Tooltip(owner, name, L("Бафф нужен: ") .. (owner.missingText or "—"),
+            L("Заклинание групповое — один каст закрывает всех в радиусе."))
     end)
     button:SetScript("OnLeave", GameTooltip_Hide)
 
@@ -468,7 +469,7 @@ function SmartClick:RefreshBuffButton()
     if not missing then button:Hide(); return end
 
     button.missingText = table.concat(missing, ", ")
-    button.label:SetText(#missing > 1 and ("без баффа: " .. #missing) or button.missingText)
+    button.label:SetText(#missing > 1 and (L("без баффа: ") .. #missing) or button.missingText)
     button:Show()
 end
 

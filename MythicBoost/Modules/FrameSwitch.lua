@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local FrameSwitch = {}
 local UI = JP.UI
 
@@ -23,7 +24,7 @@ end
 
 local function OpenBlizzard()
     if InCombatLockdown() then
-        JP:Print("В бою переключать окна нельзя.")
+        JP:Print(L("В бою переключать окна нельзя."))
         return
     end
     local welcome = Welcome()
@@ -43,7 +44,7 @@ end
 function FrameSwitch:SetReplacing()
     if MythicBoostDB then MythicBoostDB.replaceGroupFinder = false end
     if self.button then self.button:SetText("MB") end
-    JP:Print("Штатная кнопка «Поиск группы» не подменяется. MythicBoost открывается кнопкой внутри окна Blizzard.")
+    JP:Print(L("Штатная кнопка «Поиск группы» не подменяется. MythicBoost открывается кнопкой внутри окна Blizzard."))
 end
 
 -- Кнопка на окне Blizzard: даже при выключенной замене отсюда можно попасть
@@ -67,8 +68,8 @@ local function EnsureButton(module)
     end)
     button:HookScript("OnEnter", function(self)
         UI.Tooltip(self, "MythicBoost",
-            "Открыть окно подбора групп: фильтры, кандидаты и рейтинг гильдии.",
-            "Штатная кнопка «Поиск группы» всегда продолжает открывать окно Blizzard.")
+            L("Открыть окно подбора групп: фильтры, кандидаты и рейтинг гильдии."),
+            L("Штатная кнопка «Поиск группы» всегда продолжает открывать окно Blizzard."))
     end)
     button:HookScript("OnLeave", GameTooltip_Hide)
     module.button = button

@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local AutoMatch = {}
 
 local BLOODLUST_CLASSES = { HUNTER = true, MAGE = true, SHAMAN = true, EVOKER = true }
@@ -311,23 +312,23 @@ end
 -- Причины отсева. Без них «0 из 100» невозможно объяснить: по экрану не
 -- видно, который из десятка фильтров съел всю выборку.
 local REASON = {
-    delisted = "объявление уже снято",
-    full = "группа уже полная",
-    belowBest = "ключ ниже твоего рекорда",
-    notUpgrade = "ключ не поднимает рейтинг",
-    keyUnknown = "уровень ключа не распознан",
-    recordUnknown = "не найден твой рекорд подземелья",
-    roleFit = "нет места под роли твоей пати",
-    tank = "в группе нет танка",
-    healer = "в группе нет лекаря",
-    bloodlust = "после вступления негде взять Bloodlust",
-    battleRes = "после вступления негде взять боевое воскрешение",
-    declined = "тебе уже отказали",
-    dungeon = "подземелье выключено",
-    keyRange = "ключ вне диапазона",
-    score = "рейтинг лидера вне диапазона",
-    runsUnknown = "нет данных Raider.IO о лидере",
-    runs = "мало ключей +10 у лидера",
+    delisted = L("объявление уже снято"),
+    full = L("группа уже полная"),
+    belowBest = L("ключ ниже твоего рекорда"),
+    notUpgrade = L("ключ не поднимает рейтинг"),
+    keyUnknown = L("уровень ключа не распознан"),
+    recordUnknown = L("не найден твой рекорд подземелья"),
+    roleFit = L("нет места под роли твоей пати"),
+    tank = L("в группе нет танка"),
+    healer = L("в группе нет лекаря"),
+    bloodlust = L("после вступления негде взять Bloodlust"),
+    battleRes = L("после вступления негде взять боевое воскрешение"),
+    declined = L("тебе уже отказали"),
+    dungeon = L("подземелье выключено"),
+    keyRange = L("ключ вне диапазона"),
+    score = L("рейтинг лидера вне диапазона"),
+    runsUnknown = L("нет данных Raider.IO о лидере"),
+    runs = L("мало ключей +10 у лидера"),
 }
 
 local function BuildMatch(searchResultID, filters, runtime, party)
@@ -412,7 +413,7 @@ local function BuildMatch(searchResultID, filters, runtime, party)
         mapID = mapID,
         dungeon = (activity and SafeString(activity.fullName or activity.shortName))
             or (mapID and C_ChallengeMode.GetMapUIInfo(mapID))
-            or "Подземелье",
+            or L("Подземелье"),
         title = title,
         comment = comment,
         leaderName = SafeString(info.leaderName),
@@ -436,10 +437,10 @@ end
 
 function AutoMatch:Scan(filters, runtime)
     local matches = {}
-    if not C_LFGList or not C_LFGList.GetSearchResults then return matches, "Поиск групп недоступен." end
+    if not C_LFGList or not C_LFGList.GetSearchResults then return matches, L("Поиск групп недоступен.") end
     local _, resultIDs = C_LFGList.GetSearchResults()
     if type(resultIDs) ~= "table" or #resultIDs == 0 then
-        return matches, "Нажми «Обновить» — MythicBoost сам запросит группы у Blizzard."
+        return matches, L("Нажми «Обновить» — MythicBoost сам запросит группы у Blizzard.")
     end
 
     ResetCache()
@@ -452,7 +453,7 @@ function AutoMatch:Scan(filters, runtime)
         for index = 1, math.min(3, total) do
             local info = C_LFGList.GetSearchResultInfo(resultIDs[index])
             local title = info and info.name
-            JP:Log("скан #%d: тип=%s secret=%s имя=%s ключ=%s", index,
+            JP:Log(L("скан #%d: тип=%s secret=%s имя=%s ключ=%s"), index,
                 type(title), tostring(issecretvalue(title)), SafeString(title) or "<secret>",
                 tostring(ParseKeyLevel(SafeString(title))))
         end
@@ -468,9 +469,9 @@ function AutoMatch:Scan(filters, runtime)
     end
     ResetCache()
 
-    JP:Log("скан: подошло %d из %d", #matches, total)
+    JP:Log(L("скан: подошло %d из %d"), #matches, total)
     if JP:IsLogging() then
-        for reason, count in pairs(rejected) do JP:Log("  отсеяно (%s): %d", reason, count) end
+        for reason, count in pairs(rejected) do JP:Log(L("  отсеяно (%s): %d"), reason, count) end
     end
 
     table.sort(matches, function(a, b)
@@ -491,7 +492,7 @@ function AutoMatch:Apply(match, editBeforeApply)
     local searchResultID = type(match) == "table" and match.searchResultID or match
     local info = searchResultID and C_LFGList.GetSearchResultInfo(searchResultID)
     if not info or SafeBoolean(info.isDelisted) then
-        JP:Print("Эта группа уже исчезла. Обнови список.")
+        JP:Print(L("Эта группа уже исчезла. Обнови список."))
         return false
     end
     -- Both branches begin with Blizzard's own protected dialog. Because this
@@ -538,32 +539,32 @@ function AutoMatch:Apply(match, editBeforeApply)
                 local clicked = pcall(signUp.Click, signUp)
                 if clicked then return true end
             end
-            JP:Print("Не удалось отправить заявку одним кликом — проверь выбранную роль в открытом окне.")
+            JP:Print(L("Не удалось отправить заявку одним кликом — проверь выбранную роль в открытом окне."))
             return true
         end
     end
 
-    JP:Print("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз.")
+    JP:Print(L("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз."))
     return false
 end
 
 function AutoMatch:Cancel(match)
     local searchResultID = type(match) == "table" and match.searchResultID or match
     if not searchResultID or type(C_LFGList.CancelApplication) ~= "function" then
-        JP:Print("Отмена заявки сейчас недоступна.")
+        JP:Print(L("Отмена заявки сейчас недоступна."))
         return false
     end
     local okInfo, _, status, pendingStatus = pcall(C_LFGList.GetApplicationInfo, searchResultID)
     if not okInfo or issecretvalue(status) or issecretvalue(pendingStatus) then
-        JP:Print("Blizzard пока не отдал состояние заявки.")
+        JP:Print(L("Blizzard пока не отдал состояние заявки."))
         return false
     end
     if pendingStatus then
-        JP:Print("Заявка ещё обрабатывается. Повтори отмену через секунду.")
+        JP:Print(L("Заявка ещё обрабатывается. Повтори отмену через секунду."))
         return false
     end
     if status ~= "applied" then
-        JP:Print(status == "invited" and "На эту группу уже пришло приглашение." or "Активной заявки уже нет.")
+        JP:Print(status == "invited" and L("На эту группу уже пришло приглашение.") or L("Активной заявки уже нет."))
         return false
     end
 
@@ -571,7 +572,7 @@ function AutoMatch:Cancel(match)
     -- непосредственно внутри клика пользователя по кнопке.
     local ok = pcall(C_LFGList.CancelApplication, searchResultID)
     if not ok then
-        JP:Print("Blizzard не разрешил отменить заявку сейчас.")
+        JP:Print(L("Blizzard не разрешил отменить заявку сейчас."))
         return false
     end
     return true

@@ -1,7 +1,9 @@
 local _, JP = ...
+local L = JP.L
 local LootAdvisor = { cache = {} }
 
 local PREVIEW_KEY_LEVEL = 10
+local MYTHIC_PLUS_DIFFICULTY_ID = 8
 -- Encounter Journal возвращает для preview Mythic+ ссылку на базовый шаблон
 -- предмета. В Midnight её GetDetailedItemLevelInfo может быть равен 63, хотя
 -- награда за окончание +10 имеет 311-й уровень. Поэтому ссылку используем для
@@ -82,7 +84,9 @@ local function ConfigureJournal()
     local specIndex = GetSpecialization and GetSpecialization()
     local specID = specIndex and GetSpecializationInfo(specIndex)
     if EJ_SetLootFilter and classID and specID then EJ_SetLootFilter(classID, specID) end
-    if EJ_SetDifficulty then EJ_SetDifficulty(23) end
+    -- 23 — обычная эпохальная сложность. Для масштабированной ссылки
+    -- предмета из ключа Encounter Journal должен быть в режиме Mythic+ (8).
+    if EJ_SetDifficulty then EJ_SetDifficulty(MYTHIC_PLUS_DIFFICULTY_ID) end
     if C_EncounterJournal.ResetSlotFilter then C_EncounterJournal.ResetSlotFilter() end
     if C_EncounterJournal.SetPreviewMythicPlusLevel then C_EncounterJournal.SetPreviewMythicPlusLevel(PREVIEW_KEY_LEVEL) end
     return state
@@ -149,8 +153,8 @@ local function AnalyzeDungeon(dungeon, specID)
                 if recommendation and recommendation.kind == "top" then topCount = topCount + 1 end
                 upgradeSlots[filterType] = true
                 upgrades[#upgrades + 1] = {
-                    itemID=item.itemID, name=itemName or "Предмет",
-                    icon=item.icon, link=item.link, slot=item.slot or "Слот", equipped=equipped,
+                    itemID=item.itemID, name=itemName or L("Предмет"),
+                    icon=item.icon, link=item.link, slot=item.slot or L("Слот"), equipped=equipped,
                     level=dropLevel, gain=gain, isUpgrade=isUpgrade,
                     recommendation=recommendation,
                 }

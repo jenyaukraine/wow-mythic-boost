@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local UI, C = JP.UI, JP.UI.colors
 local KeystoneTimer = { bosses = {}, bossRows = {}, pending = {} }
 
@@ -117,10 +118,10 @@ function KeystoneTimer:ImportMPlusTimerHistory()
     end
     settings.mptHistoryImported = true
     if imported > 0 then
-        JP:Print(("Импортирована история MPlusTimer: %d лучших забегов."):format(imported))
+        JP:Print((L("Импортирована история MPlusTimer: %d лучших забегов.")):format(imported))
         -- Импорт разовый, и после него MPlusTimer нужен только как источник
         -- данных, которого больше нет. Пока он загружен, таймера на экране два.
-        JP:Print("|cffffb93dТеперь MPlusTimer можно отключить|r — рекорды уже у нас, а два таймера рисуются одновременно.")
+        JP:Print(L("|cffffb93dТеперь MPlusTimer можно отключить|r — рекорды уже у нас, а два таймера рисуются одновременно."))
     end
 end
 
@@ -226,7 +227,7 @@ function KeystoneTimer:ReadScenario()
                 end
             else
                 local boss = {
-                    name = UsableString(data.description) and data.description or ("Босс " .. index),
+                    name = UsableString(data.description) and data.description or (L("Босс ") .. index),
                     completed = data.completed and not issecretvalue(data.completed) or false,
                 }
                 if boss.completed then
@@ -289,7 +290,7 @@ function KeystoneTimer:UpdateDisplay()
         deaths, lost = C_ChallengeMode.GetDeathCount()
     elseif self.preview then deaths, lost = 2, 10 end
     frame.deaths:SetText(settings.showDeaths and deaths and deaths > 0
-        and (("x%d  -%sс"):format(deaths, tostring(math.floor((tonumber(lost) or 0) + .5)))) or "")
+        and ((L("x%d  -%sс")):format(deaths, tostring(math.floor((tonumber(lost) or 0) + .5)))) or "")
 
     local pb = self:GetPB()
     for index, boss in ipairs(self.bosses) do
@@ -312,10 +313,10 @@ function KeystoneTimer:UpdateDisplay()
     local percent = total > 0 and current / total * 100 or 0
     frame.forces:SetMinMaxValues(0, math.max(total, 1)); frame.forces:SetValue(current)
     frame.forces:SetStatusBarColor(percent >= 100 and C.green[1] or C.accent[1], percent >= 100 and C.green[2] or C.accent[2], percent >= 100 and C.green[3] or C.accent[3])
-    frame.forcesLabel:SetText(("Враги  %.1f%%"):format(percent))
+    frame.forcesLabel:SetText((L("Враги  %.1f%%")):format(percent))
     frame.forcesCount:SetText(("%d / %d"):format(current, total))
     local pbFinish = pb and tonumber(pb.finish)
-    frame.hint:SetText(pbFinish and (("Лучший забег: %s   •   текущий прогноз: %s"):format(FormatTime(pbFinish), FormatDelta(elapsed - pbFinish))) or "")
+    frame.hint:SetText(pbFinish and ((L("Лучший забег: %s   •   текущий прогноз: %s")):format(FormatTime(pbFinish), FormatDelta(elapsed - pbFinish))) or "")
     frame:Show()
 end
 
@@ -343,11 +344,11 @@ function KeystoneTimer:Start(preview)
     self:BuildFrame()
     self.bossTimes, self.forcesCompletedAt, self.lastForces = {}, nil, nil
     if self.preview then
-        self.mapID, self.level, self.timeLimit, self.dungeonName = 586, 11, 1800, "Закоулок душегубов"
+        self.mapID, self.level, self.timeLimit, self.dungeonName = 586, 11, 1800, L("Закоулок душегубов")
         self.bosses = {
-            { name = "Первый босс", completed = true, time = 410 },
-            { name = "Второй босс", completed = false },
-            { name = "Финальный босс", completed = false },
+            { name = L("Первый босс"), completed = true, time = 410 },
+            { name = L("Второй босс"), completed = false },
+            { name = L("Финальный босс"), completed = false },
         }
     else
         self.mapID = SafeCall(C_ChallengeMode and C_ChallengeMode.GetActiveChallengeMapID)

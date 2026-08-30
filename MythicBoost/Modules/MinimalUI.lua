@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local MinimalUI = {}
 local UI = JP.UI
 local C = UI.colors
@@ -451,8 +452,8 @@ local function StyleMinimapAddonButtons(self, enabled)
         launcher:SetScript("OnEnter", function(owner)
             owner.count:SetTextColor(.35, .86, 1, 1)
             GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
-            GameTooltip:SetText("Меню аддонов")
-            GameTooltip:AddLine("Нажмите, чтобы показать иконки", .72, .78, .84)
+            GameTooltip:SetText(L("Меню аддонов"))
+            GameTooltip:AddLine(L("Нажмите, чтобы показать иконки"), .72, .78, .84)
             GameTooltip:Show()
         end)
         launcher:SetScript("OnLeave", function(owner)

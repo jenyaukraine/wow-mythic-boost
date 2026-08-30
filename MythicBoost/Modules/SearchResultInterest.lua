@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local SafeSearchThreshold = {}
 
 local function GetMinimumRuns()
@@ -23,7 +24,7 @@ local function CountCompletedKey()
     if MythicBoostDB.lastCountedCompletion == signature and now - (MythicBoostDB.lastCountedAt or 0) < 300 then return end
     MythicBoostDB.lastCountedCompletion, MythicBoostDB.lastCountedAt = signature, now
     MythicBoostDB.minimumKeystoneRuns = GetMinimumRuns() + 1
-    JP:Print(("Порог ключей +10 в фильтрах MythicBoost повышен до %d."):format(MythicBoostDB.minimumKeystoneRuns))
+    JP:Print((L("Порог ключей +10 в фильтрах MythicBoost повышен до %d.")):format(MythicBoostDB.minimumKeystoneRuns))
 end
 
 function SafeSearchThreshold:Create()

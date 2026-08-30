@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local LootUI = {}
 local UI, C = JP.UI, JP.UI.colors
 
@@ -6,8 +7,8 @@ local MAX_ROWS = 10
 -- XLoot держит строку высотой ровно в иконку плюс пара пикселей воздуха, а
 -- окно — узким: список добычи читают боковым зрением, и лишняя ширина только
 -- отнимает место у игрового экрана.
-local ROW_HEIGHT = 38
-local FRAME_WIDTH = 286
+local ROW_HEIGHT = 42
+local FRAME_WIDTH = 320
 local MAX_ROLL_ROWS = 4
 local ROLL_ROW_HEIGHT = 64
 local ROLL_FRAME_WIDTH = 460
@@ -52,32 +53,36 @@ local function QualityColor(quality, quest)
     return .78, .84, .92
 end
 
-local function ItemMeta(link, currencyID, quest)
-    if currencyID then return "Валюта", "" end
+local function ItemMeta(link, currencyID, quest, slotType)
+    local moneyType = Enum and Enum.LootSlotType and Enum.LootSlotType.Money
+    if slotType ~= nil and (slotType == moneyType or slotType == _G.LOOT_SLOT_MONEY) then
+        return "", ""
+    end
+    if currencyID then return L("Валюта"), "" end
     if not link or type(GetItemInfo) ~= "function" then
-        return quest and "Задание" or "Предмет", ""
+        return quest and L("Задание") or L("Предмет"), ""
     end
 
     local ok, _, _, _, itemLevel, _, itemType, itemSubType, _, equipLoc,
         _, _, _, _, bindType = pcall(GetItemInfo, link)
-    if not ok then return quest and "Задание" or "Предмет", "" end
+    if not ok then return quest and L("Задание") or L("Предмет"), "" end
 
     itemType, itemSubType = SafeValue(itemType), SafeValue(itemSubType)
     equipLoc, itemLevel, bindType = SafeValue(equipLoc), SafeValue(itemLevel), SafeValue(bindType)
     local equipText = type(equipLoc) == "string" and equipLoc ~= "" and _G[equipLoc] or nil
     local detail
     if quest then
-        detail = "Задание"
+        detail = L("Задание")
     elseif equipText and itemSubType then
         detail = equipText .. ", " .. itemSubType
     else
-        detail = itemSubType or itemType or "Предмет"
+        detail = itemSubType or itemType or L("Предмет")
     end
     if equipText and type(itemLevel) == "number" and itemLevel > 1 then
         detail = detail .. "  •  " .. itemLevel
     end
 
-    local bindLabel = bindType == (LE_ITEM_BIND_ON_ACQUIRE or 1) and "БоП" or ""
+    local bindLabel = bindType == (LE_ITEM_BIND_ON_ACQUIRE or 1) and L("БоП") or ""
     return detail, bindLabel
 end
 
@@ -88,6 +93,11 @@ function LootUI:GetSlots()
     for slot = 1, count do
         local ok, icon, name, quantity, currencyID, quality, locked, isQuestItem = pcall(GetLootSlotInfo, slot)
         if ok and (SafeValue(icon) or SafeValue(name)) then
+            local slotType
+            if type(GetLootSlotType) == "function" then
+                local typeOK, result = pcall(GetLootSlotType, slot)
+                if typeOK then slotType = SafeValue(result) end
+            end
             local link
             if type(GetLootSlotLink) == "function" then
                 local linkOK, result = pcall(GetLootSlotLink, slot)
@@ -96,16 +106,17 @@ function LootUI:GetSlots()
             slots[#slots + 1] = {
                 slot = slot,
                 icon = SafeValue(icon, 134400),
-                name = tostring(SafeValue(name, "Добыча")),
+                name = tostring(SafeValue(name, L("Добыча"))),
                 quantity = tonumber(SafeValue(quantity, 1)) or 1,
                 currencyID = SafeValue(currencyID),
                 quality = SafeValue(quality, 1),
                 locked = SafeValue(locked, false) == true,
                 quest = SafeValue(isQuestItem, false) == true,
                 link = link,
+                slotType = slotType,
             }
             local data = slots[#slots]
-            data.detail, data.bind = ItemMeta(link, data.currencyID, data.quest)
+            data.detail, data.bind = ItemMeta(link, data.currencyID, data.quest, data.slotType)
         end
     end
     return slots
@@ -162,14 +173,21 @@ function LootUI:Refresh()
             row.bind:SetText(data.bind or "")
             row.count:SetText(data.quantity > 1 and ("×" .. data.quantity) or "")
             local r, g, b = QualityColor(data.quality, data.quest)
-            row:SetBackdropBorderColor(r * .82, g * .82, b * .82, .82)
+            local quality = tonumber(SafeValue(data.quality, 1)) or 1
+            local glowAlpha = quality >= 2 and .82 or .30
+            row:SetBackdropBorderColor(r, g, b, quality >= 2 and 1 or .70)
             row.name:SetTextColor(r, g, b, 1)
             -- Тот же цвет на контуре иконки, но приглушённее рамки строки:
             -- два одинаково ярких контура рядом читаются как один толстый.
             row.iconEdge:SetBackdropBorderColor(r * .90, g * .90, b * .90, .96)
             -- Заливка гаснет к правому краю: под названием фон обязан остаться
             -- тёмным, иначе светлый текст по светлому цвету качества пропадает.
-            row.tint:SetGradient("HORIZONTAL", CreateColor(r, g, b, .15), CreateColor(r, g, b, 0))
+            row.tint:SetGradient("HORIZONTAL",
+                CreateColor(r, g, b, quality >= 2 and .34 or .07),
+                CreateColor(r, g, b, quality >= 2 and .12 or 0))
+            for _, glow in ipairs(row.glows) do
+                glow:SetColorTexture(r, g, b, glowAlpha)
+            end
             row:SetAlpha(data.locked and .48 or 1)
             row:Show()
         else
@@ -179,13 +197,13 @@ function LootUI:Refresh()
     end
     self.frame.counter:SetFormattedText("%d", #slots)
     if #slots > MAX_ROWS then
-        self.frame.page:SetFormattedText("%d–%d / %d  •  колесо мыши",
+        self.frame.page:SetFormattedText(L("%d–%d / %d  •  колесо мыши"),
             self.scrollOffset + 1, math.min(#slots, self.scrollOffset + MAX_ROWS), #slots)
         self.frame.page:Show()
     else
         self.frame.page:Hide()
     end
-    self.frame:SetHeight(26 + shown * ROW_HEIGHT + (#slots > MAX_ROWS and 18 or 0))
+    self.frame:SetHeight(8 + shown * ROW_HEIGHT + (#slots > MAX_ROWS and 18 or 0))
 end
 
 function LootUI:ShowLoot()
@@ -194,7 +212,7 @@ function LootUI:ShowLoot()
         self.externalConflict = true
         if not self.conflictReported then
             self.conflictReported = true
-            JP:Print("Встроенное окно добычи не запущено: отключи XLoot_Frame и сделай /reload.")
+            JP:Print(L("Встроенное окно добычи не запущено: отключи XLoot_Frame и сделай /reload."))
         end
         return
     end
@@ -299,17 +317,34 @@ end
 
 function LootUI:BuildRow(index)
     local row = CreateFrame("Button", nil, self.frame, "BackdropTemplate")
-    row:SetHeight(36)
+    row:SetHeight(40)
     row:SetPoint("TOPLEFT", 4, -4 - (index - 1) * ROW_HEIGHT)
-    row:SetPoint("TOPRIGHT", -4, -4 - (index - 1) * ROW_HEIGHT)
+    row:SetPoint("TOPRIGHT", index == 1 and -30 or -4, -4 - (index - 1) * ROW_HEIGHT)
     row:RegisterForClicks("AnyUp")
     row:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
+        edgeSize = 2,
     })
-    row.baseAlpha = .96
+    row.baseAlpha = .98
     row:SetBackdropColor(.008, .011, .016, row.baseAlpha)
+
+    -- Четыре ADD-полосы дают тот самый XLoot glow: он остаётся прямоугольным,
+    -- повторяет цвет качества и не размывает иконку/текст поверх строки.
+    row.glows = {}
+    local function Glow(pointA, pointB, xA, yA, xB, yB)
+        local glow = row:CreateTexture(nil, "BACKGROUND", nil, -1)
+        glow:SetTexture("Interface\\Buttons\\WHITE8X8")
+        glow:SetBlendMode("ADD")
+        glow:SetPoint(pointA, row, pointA, xA, yA)
+        glow:SetPoint(pointB, row, pointB, xB, yB)
+        row.glows[#row.glows + 1] = glow
+        return glow
+    end
+    local top = Glow("TOPLEFT", "TOPRIGHT", -3, 3, 3, 3); top:SetHeight(4)
+    local bottom = Glow("BOTTOMLEFT", "BOTTOMRIGHT", -3, -3, 3, -3); bottom:SetHeight(4)
+    local left = Glow("TOPLEFT", "BOTTOMLEFT", -3, 3, -3, -3); left:SetWidth(4)
+    local right = Glow("TOPRIGHT", "BOTTOMRIGHT", 3, 3, 3, -3); right:SetWidth(4)
 
     -- XLoot's row is a black glass capsule, not a light card. A very quiet
     -- vertical sheen separates neighboring entries without heavy white bars.
@@ -318,8 +353,8 @@ function LootUI:BuildRow(index)
     row.glass:SetPoint("BOTTOMRIGHT", -1, 1)
     row.glass:SetColorTexture(1, 1, 1, 1)
     row.glass:SetGradient("VERTICAL",
-        CreateColor(.02, .025, .032, .96),
-        CreateColor(.15, .16, .17, .72))
+        CreateColor(.005, .008, .012, 1),
+        CreateColor(.25, .25, .25, .88))
 
     -- Главная примета XLoot: цвет качества не только на рамке, но и заливкой,
     -- утекающей от левого края в темноту. Именно она позволяет опознать
@@ -333,7 +368,7 @@ function LootUI:BuildRow(index)
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetPoint("TOPLEFT", 2, -2)
     row.icon:SetPoint("BOTTOMLEFT", 2, 2)
-    row.icon:SetWidth(32)
+    row.icon:SetWidth(36)
     row.icon:SetTexCoord(.07, .93, .07, .93)
 
     -- Подпись XLoot: цвет качества стоит не только на рамке строки, но и
@@ -345,14 +380,14 @@ function LootUI:BuildRow(index)
     row.iconEdge:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
 
     row.name = UI.Text(row, "GameFontNormal", "")
-    row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, -3)
-    row.name:SetPoint("TOPRIGHT", -6, -3)
+    row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -3)
+    row.name:SetPoint("TOPRIGHT", -7, -3)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
 
-    row.detail = UI.Text(row, "GameFontHighlightSmall", "", C.muted)
-    row.detail:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, -18)
-    row.detail:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -18)
+    row.detail = UI.Text(row, "GameFontNormalSmall", "", { 1, .84, 0, 1 })
+    row.detail:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -20)
+    row.detail:SetPoint("TOPRIGHT", row, "TOPRIGHT", -7, -20)
     row.detail:SetJustifyH("LEFT")
     row.detail:SetWordWrap(false)
 
@@ -372,7 +407,7 @@ function LootUI:BuildRow(index)
     row:SetScript("OnEnter", function(owner)
         -- Подсветку даём всегда, даже когда слот пуст: строка кликабельна, и
         -- она обязана отзываться на курсор, иначе список кажется неживым.
-        owner:SetBackdropColor(.035, .075, .095, 1)
+        owner:SetBackdropColor(.08, .08, .08, 1)
         if not owner.slot then return end
         GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
         local ok = type(GameTooltip.SetLootItem) == "function"
@@ -482,11 +517,11 @@ function LootUI:BuildRollRow(index)
     row.result:SetPoint("BOTTOMRIGHT", -8, 7)
     row.result:Hide()
     row.choices = {}
-    BuildRollChoice(row, "НУЖНО", 1)
-    BuildRollChoice(row, "ХОЧУ", 2)
-    BuildRollChoice(row, "РАСПЫЛ.", 3)
-    BuildRollChoice(row, "ОБЛИК", 4)
-    BuildRollChoice(row, "ПАС", 0)
+    BuildRollChoice(row, L("НУЖНО"), 1)
+    BuildRollChoice(row, L("ХОЧУ"), 2)
+    BuildRollChoice(row, L("РАСПЫЛ."), 3)
+    BuildRollChoice(row, L("ОБЛИК"), 4)
+    BuildRollChoice(row, L("ПАС"), 0)
     row:SetScript("OnEnter", function(owner)
         if owner.link then
             GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
@@ -580,7 +615,7 @@ function LootUI:StartRoll(rollID, rollTime)
     self.rolls[rollID] = {
         rollID = rollID,
         icon = SafeValue(result[2], 134400),
-        name = tostring(SafeValue(result[3], link or "Предмет")),
+        name = tostring(SafeValue(result[3], link or L("Предмет"))),
         count = tonumber(SafeValue(result[4], 1)) or 1,
         quality = SafeValue(result[5], 1),
         canNeed = SafeValue(result[7], false) == true,
@@ -727,7 +762,7 @@ function LootUI:BuildAuxiliaryFrames()
     rollFrame:SetClampedToScreen(true)
     rollFrame:SetMovable(true)
     UI.Backdrop(rollFrame, { .006, .010, .018, .96 }, { .08, .34, .42, .98 })
-    BuildAuxiliaryHeader(rollFrame, "ГОЛОСОВАНИЕ ЗА ДОБЫЧУ", "rollPosition")
+    BuildAuxiliaryHeader(rollFrame, L("ГОЛОСОВАНИЕ ЗА ДОБЫЧУ"), "rollPosition")
     PlaceAuxiliaryFrame(rollFrame, "rollPosition", "BOTTOM", 0, 260)
     self.rollFrame, self.rollRows, self.rolls = rollFrame, {}, {}
     for index = 1, MAX_ROLL_ROWS do self:BuildRollRow(index) end
@@ -740,7 +775,7 @@ function LootUI:BuildAuxiliaryFrames()
     historyFrame:SetClampedToScreen(true)
     historyFrame:SetMovable(true)
     UI.Backdrop(historyFrame, { .006, .010, .018, .94 }, { .08, .34, .42, .94 })
-    BuildAuxiliaryHeader(historyFrame, "БРОСКИ ГРУППЫ", "historyPosition")
+    BuildAuxiliaryHeader(historyFrame, L("БРОСКИ ГРУППЫ"), "historyPosition")
     PlaceAuxiliaryFrame(historyFrame, "historyPosition", "TOPLEFT", 24, -250)
     self.historyFrame, self.historyRows, self.history = historyFrame, {}, {}
     for index = 1, MAX_HISTORY_ROWS do
@@ -794,11 +829,10 @@ function LootUI:Create()
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:EnableMouseWheel(true)
-    UI.Backdrop(frame, C.window, { .12, .30, .38, 1 })
+    UI.Backdrop(frame, { .025, .025, .030, .98 }, { .30, .30, .32, 1 })
 
-    -- XLoot has no title bar: entries begin at the top edge and a tiny footer
-    -- carries only the close action. The footer remains a drag handle while
-    -- the shared interface-move mode is active.
+    -- XLoot has no title bar: entries begin at the top edge. The invisible
+    -- footer remains only as a drag handle while interface moving is enabled.
     frame.header = CreateFrame("Button", nil, frame)
     frame.header:SetPoint("BOTTOMLEFT", 1, 1)
     frame.header:SetPoint("BOTTOMRIGHT", -1, 1)
@@ -817,13 +851,34 @@ function LootUI:Create()
     frame.title:Hide()
     frame.counter = UI.Text(frame.header, "GameFontHighlight", "", C.muted)
     frame.counter:Hide()
-    local close = UI.Button(frame, "Закрыть", 78, 18)
-    close:SetPoint("BOTTOM", 0, 3)
+    local close = CreateFrame("Button", nil, frame, "BackdropTemplate")
+    close:SetSize(22, 22)
+    close:SetPoint("TOPRIGHT", -4, -4)
+    close:SetFrameLevel(frame:GetFrameLevel() + 20)
+    close:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 2,
+    })
+    close:SetBackdropColor(.28, .015, .015, 1)
+    close:SetBackdropBorderColor(.72, .48, .02, 1)
+    close.glyph = UI.Text(close, "GameFontNormalLarge", "×", { 1, .82, 0, 1 })
+    close.glyph:SetAllPoints(close)
+    close.glyph:SetJustifyH("CENTER")
+    close.glyph:SetJustifyV("MIDDLE")
+    close:SetScript("OnEnter", function(owner)
+        owner:SetBackdropColor(.56, .025, .025, 1)
+        owner:SetBackdropBorderColor(1, .78, .05, 1)
+    end)
+    close:SetScript("OnLeave", function(owner)
+        owner:SetBackdropColor(.28, .015, .015, 1)
+        owner:SetBackdropBorderColor(.72, .48, .02, 1)
+    end)
     close:SetScript("OnClick", function()
         if type(CloseLoot) == "function" then CloseLoot() else frame:Hide() end
     end)
     frame.page = UI.Text(frame, "GameFontHighlightSmall", "", C.muted)
-    frame.page:SetPoint("BOTTOM", 0, 25)
+    frame.page:SetPoint("BOTTOM", 0, 3)
 
     self.frame, self.rows = frame, {}
     for index = 1, MAX_ROWS do self:BuildRow(index) end
@@ -891,7 +946,7 @@ function LootUI:Enable()
     if (IsExternalFrameLoaded() or IsExternalRollLoaded() or IsExternalMonitorLoaded())
         and not self.externalSuiteReported then
         self.externalSuiteReported = true
-        JP:Print("Модуль добычи: отключи XLoot_Frame, XLoot_Group и XLoot_Monitor, чтобы окна не дублировались.")
+        JP:Print(L("Модуль добычи: отключи XLoot_Frame, XLoot_Group и XLoot_Monitor, чтобы окна не дублировались."))
     end
     if not IsExternalFrameLoaded() then self:ParkBlizzard() end
     self:SuppressBlizzardRolls()

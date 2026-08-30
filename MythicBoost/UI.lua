@@ -1,5 +1,6 @@
 local _, JP = ...
 
+local L = JP.L
 -- Единый визуальный язык аддона. Все панели, кнопки, поля и списки
 -- создаются только через эти конструкторы, поэтому окно выглядит цельно
 -- и не зависит от стандартных шаблонов Blizzard.
@@ -147,7 +148,7 @@ function UI.ClassIcon(classFilename, size)
         math.floor(coords[3] * 256 + .5), math.floor(coords[4] * 256 + .5))
 end
 
-local ROLE_LETTER = { TANK = "Т", HEALER = "Х", DAMAGER = "Б" }
+local ROLE_LETTER = { TANK = L("Т"), HEALER = L("Х"), DAMAGER = L("Б") }
 
 function UI.RoleIcon(role, size)
     local markup = AtlasMarkup(ROLE_ATLAS[role], size or 16)
@@ -237,7 +238,9 @@ function UI.CloseButton(parent)
     button:SetSize(24, 24)
     UI.Backdrop(button, { .10, .12, .15, 0 }, { .10, .12, .15, 0 })
     local glyph = UI.Text(button, "GameFontNormalLarge", "×", C.muted)
-    glyph:SetPoint("CENTER", 0, 1)
+    glyph:SetAllPoints(button)
+    glyph:SetJustifyH("CENTER")
+    glyph:SetJustifyV("MIDDLE")
     button:SetScript("OnEnter", function(self)
         self:SetBackdropColor(.42, .14, .16, .9); self:SetBackdropBorderColor(.72, .24, .26, 1)
         glyph:SetTextColor(1, .88, .88, 1)

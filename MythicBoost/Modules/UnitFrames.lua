@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local UI, C = JP.UI, JP.UI.colors
 local UnitFrames = { displays = {}, parked = {}, pending = {} }
 
@@ -594,8 +595,8 @@ function UnitFrames:RefreshDispelSet()
 end
 
 local function TimeText(remaining)
-    if remaining >= 3600 then return ("%dч"):format(math.floor(remaining / 3600)) end
-    if remaining >= 60 then return ("%dм"):format(math.floor(remaining / 60)) end
+    if remaining >= 3600 then return (L("%dч")):format(math.floor(remaining / 3600)) end
+    if remaining >= 60 then return (L("%dм")):format(math.floor(remaining / 60)) end
     -- Только целые секунды. Дробь вида «6.2» на иконке в 22 пикселя нечитаема
     -- и вдобавок меняется каждый кадр: глаз цепляется за мельтешение вместо
     -- того, чтобы считывать порядок величины. Округляем ВВЕРХ — остаток в .4 с
@@ -633,7 +634,7 @@ local function AuraTooltip(icon)
     end
     if shown then
         if icon.display.unit == "player" and not icon.harmful then
-            GameTooltip:AddLine("Правый клик — снять эффект", C.muted[1], C.muted[2], C.muted[3])
+            GameTooltip:AddLine(L("Правый клик — снять эффект"), C.muted[1], C.muted[2], C.muted[3])
         end
         GameTooltip:Show()
     else GameTooltip:Hide() end
@@ -982,7 +983,7 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly)
     moveOverlay:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
     moveOverlay:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
     local moveText = UI.Text(moveOverlay, "GameFontNormalSmall",
-        unit == "player" and "ПЕРЕТАЩИ: ИГРОК" or "ПЕРЕТАЩИ: ЦЕЛЬ", C.accent)
+        unit == "player" and L("ПЕРЕТАЩИ: ИГРОК") or L("ПЕРЕТАЩИ: ЦЕЛЬ"), C.accent)
     moveText:SetPoint("TOP", moveOverlay, "BOTTOM", 0, -4)
     moveOverlay:Hide()
     display.moveOverlay = moveOverlay
@@ -1091,7 +1092,7 @@ local function ShowMovePlaceholder(display)
     display.holder:Show()
     display.portrait:SetUnit(nil)
     display.portrait:SetStateAlpha(.82)
-    display.name:SetText("ЦЕЛЬ")
+    display.name:SetText(L("ЦЕЛЬ"))
     display.group:SetText("")
     display.level:SetText("")
     if display.classIcon then display.classIcon:SetText("") end

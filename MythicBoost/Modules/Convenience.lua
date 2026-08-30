@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local Convenience = {}
 
 local function Settings()
@@ -93,7 +94,7 @@ function Convenience:SellJunk()
             end
         end
     end
-    if Settings().merchantSummary then PrintMoney("Продано хлама", total) end
+    if Settings().merchantSummary then PrintMoney(L("Продано хлама"), total) end
 end
 
 function Convenience:Repair()
@@ -102,7 +103,7 @@ function Convenience:Repair()
     if not needed or not cost or cost <= 0 then return end
     local useGuild = Enabled("guildRepair") and IsInGuild() and CanGuildBankRepair and CanGuildBankRepair()
     pcall(RepairAllItems, useGuild and true or false)
-    if Settings().merchantSummary then PrintMoney("Ремонт", cost) end
+    if Settings().merchantSummary then PrintMoney(L("Ремонт"), cost) end
 end
 
 function Convenience:AutomateQuest(event)

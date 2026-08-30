@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local UpgradeCalculator = {}
 local UI, C = JP.UI, JP.UI.colors
 
@@ -32,30 +33,31 @@ local MAX_TRACKS = #TRACK_COLORS
 
 -- Рубаха и гербовая накидка улучшению не подлежат и в таблице только мешают.
 local SLOTS = {
-    { id = 1,  label = "Голова" },      { id = 2,  label = "Шея" },
-    { id = 3,  label = "Плечи" },       { id = 15, label = "Спина" },
-    { id = 5,  label = "Грудь" },       { id = 9,  label = "Запястья" },
-    { id = 10, label = "Кисти" },       { id = 6,  label = "Пояс" },
-    { id = 7,  label = "Ноги" },        { id = 8,  label = "Ступни" },
-    { id = 11, label = "Кольцо 1" },    { id = 12, label = "Кольцо 2" },
-    { id = 13, label = "Аксессуар 1" }, { id = 14, label = "Аксессуар 2" },
-    { id = 16, label = "Правая рука" }, { id = 17, label = "Левая рука" },
+    { id = 1,  label = L("Голова") },      { id = 2,  label = L("Шея") },
+    { id = 3,  label = L("Плечи") },       { id = 15, label = L("Спина") },
+    { id = 5,  label = L("Грудь") },       { id = 9,  label = L("Запястья") },
+    { id = 10, label = L("Кисти") },       { id = 6,  label = L("Пояс") },
+    { id = 7,  label = L("Ноги") },        { id = 8,  label = L("Ступни") },
+    { id = 11, label = L("Кольцо 1") },    { id = 12, label = L("Кольцо 2") },
+    { id = 13, label = L("Аксессуар 1") }, { id = 14, label = L("Аксессуар 2") },
+    { id = 16, label = L("Правая рука") }, { id = 17, label = L("Левая рука") },
 }
 
 local COLUMNS = {
-    { key = "slot",   text = "СЛОТ",    x = 14,  width = 150, justify = "LEFT" },
-    { key = "ilvl",   text = "УР.",     x = 172, width = 54,  justify = "CENTER" },
-    { key = "max",    text = "МАКС",    x = 232, width = 54,  justify = "CENTER" },
-    { key = "steps",  text = "СТУПЕНИ", x = 294, width = 80,  justify = "CENTER" },
-    { key = "track",  text = "ТРЕК",    x = 384, width = 180, justify = "LEFT" },
-    { key = "crests", text = "ГЕРБЫ",   x = 572, width = 150, justify = "LEFT" },
-    { key = "gold",   text = "ЗОЛОТО",  x = 730, width = 130, justify = "RIGHT" },
+    { key = "slot",   text = L("СЛОТ"),    x = 14,  width = 150, justify = "LEFT" },
+    { key = "ilvl",   text = L("УР."),     x = 172, width = 54,  justify = "CENTER" },
+    { key = "max",    text = L("МАКС"),    x = 232, width = 54,  justify = "CENTER" },
+    { key = "steps",  text = L("СТУПЕНИ"), x = 294, width = 80,  justify = "CENTER" },
+    { key = "track",  text = L("ТРЕК"),    x = 384, width = 180, justify = "LEFT" },
+    { key = "crests", text = L("ГЕРБЫ"),   x = 572, width = 150, justify = "LEFT" },
+    { key = "gold",   text = L("ЗОЛОТО"),  x = 730, width = 130, justify = "RIGHT" },
 }
 
 local ROW_HEIGHT, ROW_STEP = 20, 22
 -- Заголовок, подпись о режиме, шапка колонок, разделитель, строки. Подпись
 -- раньше налезала на шапку: обе стояли в одном интервале.
 local HEADER_TOP, ROWS_TOP = -12, -68
+local TOTALS_TOP = ROWS_TOP - #SLOTS * ROW_STEP - 18
 
 ---------------------------------------------------------------------------
 -- Чтение данных игры
@@ -132,7 +134,8 @@ local function CurrencyName(currencyID)
     if not C_CurrencyInfo or type(C_CurrencyInfo.GetCurrencyInfo) ~= "function" then return nil end
     local ok, info = pcall(C_CurrencyInfo.GetCurrencyInfo, currencyID)
     if not ok or type(info) ~= "table" then return nil end
-    return PlainString(info.name), PlainNumber(info.quantity) or 0
+    return PlainString(info.name), PlainNumber(info.quantity) or 0,
+        PlainNumber(info.quality), PlainNumber(info.iconFileID)
 end
 
 local function CurrencyLink(currencyID)
@@ -361,7 +364,7 @@ function UpgradeCalculator:Scan()
     -- Какие гербы вообще в ходу — узнаём по стоимостям, которые называет игра.
     local seen = {}
 
-    local function Note(currencyID, peak)
+    local function Note(currencyID, peak, quality, distance)
         if not currencyID then return end
         local entry = seen[currencyID]
         if not entry then
@@ -369,6 +372,8 @@ function UpgradeCalculator:Scan()
             seen[currencyID] = entry
         end
         if peak and peak > entry.peak then entry.peak = peak end
+        if quality then entry.quality = quality end
+        if distance and (not entry.distance or distance < entry.distance) then entry.distance = distance end
     end
 
     for _, slot in ipairs(SLOTS) do
@@ -407,12 +412,48 @@ function UpgradeCalculator:Scan()
         end
     end
 
+    -- Стоимость текущей экипировки обычно содержит только один тип герба.
+    -- Остальные гербы того же сезона лежат рядом в таблице валют Blizzard.
+    -- Находим соседние валюты с «герб»/"crest" в локализованном названии,
+    -- чтобы итог показывал весь сезонный набор, в том числе нужные сейчас в 0.
+    local anchors = {}
+    for currencyID in pairs(seen) do anchors[#anchors + 1] = currencyID end
+    for _, anchorID in ipairs(anchors) do
+        for currencyID = math.max(1, anchorID - 4), anchorID + 4 do
+            local name, _, quality = CurrencyName(currencyID)
+            local lower = name and name:lower() or ""
+            if lower:find(L("герб"), 1, true) or lower:find("crest", 1, true) then
+                Note(currencyID, nil, quality, math.abs(currencyID - anchorID))
+            end
+        end
+    end
+
+    for _, entry in pairs(seen) do
+        local _, _, quality = CurrencyName(entry.currencyID)
+        entry.quality = entry.quality or quality or 0
+    end
+
     -- Порядок треков — по уровню предмета, до которого герб докачивает. Это
     -- единственный признак старшинства, который не зависит от сезона.
+    local unique = {}
+    for _, entry in pairs(seen) do
+        local name, quantity = CurrencyName(entry.currencyID)
+        local key = name and name:lower() or tostring(entry.currencyID)
+        local previous = unique[key]
+        local prefer = not previous
+            or (entry.peak > 0 and previous.peak <= 0)
+            or (entry.peak == previous.peak and (entry.distance or 99) < (previous.distance or 99))
+            or (entry.peak == previous.peak and (entry.distance or 99) == (previous.distance or 99)
+                and quantity > (previous.quantity or 0))
+        entry.quantity = quantity
+        if prefer then unique[key] = entry end
+    end
+
     local tracks = {}
-    for _, entry in pairs(seen) do tracks[#tracks + 1] = entry end
+    for _, entry in pairs(unique) do tracks[#tracks + 1] = entry end
     table.sort(tracks, function(a, b)
-        if a.peak ~= b.peak then return a.peak < b.peak end
+        if a.quality ~= b.quality then return a.quality < b.quality end
+        if a.peak ~= b.peak and a.peak > 0 and b.peak > 0 then return a.peak < b.peak end
         return a.currencyID < b.currencyID
     end)
 
@@ -421,7 +462,7 @@ function UpgradeCalculator:Scan()
         track.order = index
         track.link = CurrencyLink(track.currencyID)
         track.color = LinkColor(track.link) or TRACK_COLORS[math.min(index, MAX_TRACKS)]
-        track.label = CurrencyName(track.currencyID) or ("Герб #" .. track.currencyID)
+        track.label = CurrencyName(track.currencyID) or (L("Герб #") .. track.currencyID)
         byCurrency[track.currencyID] = track
     end
 
@@ -438,6 +479,15 @@ end
 ---------------------------------------------------------------------------
 -- Интерфейс
 ---------------------------------------------------------------------------
+
+local function HideComparisonTooltips()
+    for index = 1, 3 do
+        local shopping = _G["ShoppingTooltip" .. index]
+        if shopping then shopping:Hide() end
+        local itemRef = _G["ItemRefShoppingTooltip" .. index]
+        if itemRef then itemRef:Hide() end
+    end
+end
 
 local function BuildRow(page, index)
     local row = CreateFrame("Frame", nil, page, "BackdropTemplate")
@@ -459,10 +509,15 @@ local function BuildRow(page, index)
             return
         end
         GameTooltip:Show()
+        -- Для колец и аксессуаров Blizzard при включённом автосравнении
+        -- открывает ещё два окна. Здесь строка уже показывает надетую вещь,
+        -- поэтому эти дубликаты только закрывают таблицу.
+        HideComparisonTooltips()
     end)
     row:SetScript("OnLeave", function(self)
         self:SetBackdropColor(unpack(self.baseColor))
         GameTooltip_Hide()
+        HideComparisonTooltips()
     end)
 
     row.icon = row:CreateTexture(nil, "ARTWORK")
@@ -485,35 +540,67 @@ end
 
 local function BuildTrackTotals(page)
     page.totals = {}
-    local width = 176
-    for index = 1, MAX_TRACKS do
-        local block = UI.Panel(page, C.field, C.lineSoft)
-        block:SetPoint("BOTTOMLEFT", 8 + (index - 1) * (width + 8), 8)
-        block:SetSize(width, 62)
+    page.totalsArea = UI.Panel(page, { .045, .055, .070, .72 }, C.lineSoft)
+    page.totalsArea:SetHeight(92)
 
-        block.name = UI.Text(block, "GameFontNormalSmall", "", C.text)
-        block.name:SetPoint("TOPLEFT", 8, -6)
-        block.name:SetPoint("TOPRIGHT", -8, -6)
+    for index = 1, MAX_TRACKS do
+        local block = UI.Panel(page.totalsArea, { .052, .064, .080, .96 }, C.lineSoft)
+        block:SetHeight(78)
+
+        block.accent = block:CreateTexture(nil, "OVERLAY")
+        block.accent:SetPoint("TOPLEFT", 1, -1)
+        block.accent:SetPoint("TOPRIGHT", -1, -1)
+        block.accent:SetHeight(2)
+
+        block.iconBorder = CreateFrame("Frame", nil, block, "BackdropTemplate")
+        block.iconBorder:SetPoint("LEFT", 8, 0)
+        block.iconBorder:SetSize(44, 44)
+        block.iconBorder:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 1,
+        })
+        block.iconBorder:SetBackdropColor(.03, .04, .055, 1)
+
+        block.icon = block.iconBorder:CreateTexture(nil, "ARTWORK")
+        block.icon:SetPoint("TOPLEFT", block.iconBorder, "TOPLEFT", 3, -3)
+        block.icon:SetPoint("BOTTOMRIGHT", block.iconBorder, "BOTTOMRIGHT", -3, 3)
+        block.icon:SetTexCoord(.07, .93, .07, .93)
+
+        block.name = UI.Text(block, "GameFontNormal", "", C.text)
+        block.name:SetPoint("TOPLEFT", 60, -7)
+        block.name:SetPoint("TOPRIGHT", -8, -7)
         block.name:SetJustifyH("LEFT")
         block.name:SetWordWrap(false)
 
         block.need = UI.Text(block, "GameFontHighlightSmall", "", C.text)
-        block.need:SetPoint("TOPLEFT", 8, -24)
+        block.need:SetPoint("TOPLEFT", 60, -27)
         block.need:SetJustifyH("LEFT")
 
         block.have = UI.Text(block, "GameFontHighlightSmall", "", C.muted)
-        block.have:SetPoint("TOPLEFT", 8, -38)
+        block.have:SetPoint("TOPLEFT", 60, -43)
         block.have:SetJustifyH("LEFT")
+        block.have:SetWordWrap(false)
+
+        block.shortage = UI.Text(block, "GameFontHighlightSmall", "", C.muted)
+        block.shortage:SetPoint("TOPLEFT", 60, -59)
+        block.shortage:SetJustifyH("LEFT")
+        block.shortage:SetWordWrap(false)
 
         block:EnableMouse(true)
         if type(block.SetHyperlinksEnabled) == "function" then block:SetHyperlinksEnabled(true) end
         block:SetScript("OnEnter", function(self)
             if not self.currencyID then return end
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetCurrencyByID(self.currencyID)
-            GameTooltip:Show()
+            self:SetBackdropColor(.075, .090, .110, 1)
+            UI.Tooltip(self, self.label or L("Герб"),
+                (L("Нужно: %d")):format(self.needed or 0),
+                (L("Есть: %d")):format(self.owned or 0),
+                (L("Не хватает: %d")):format(self.missing or 0))
         end)
-        block:SetScript("OnLeave", GameTooltip_Hide)
+        block:SetScript("OnLeave", function(self)
+            self:SetBackdropColor(.052, .064, .080, .96)
+            GameTooltip_Hide()
+        end)
         block:SetScript("OnHyperlinkClick", function(self, link, text, button)
             if SetItemRef then SetItemRef(link, text, button, self) end
         end)
@@ -523,10 +610,58 @@ local function BuildTrackTotals(page)
     end
 end
 
+local function LayoutTrackTotals(page, count)
+    count = math.max(1, math.min(count or 1, MAX_TRACKS))
+    local pageWidth = math.max(760, page:GetWidth() or 760)
+    local gap = 8
+    local width = math.floor(math.min(228, (pageWidth - 32 - (count - 1) * gap) / count))
+    local totalWidth = count * width + (count - 1) * gap
+    local startX = math.floor((pageWidth - totalWidth) / 2)
+
+    page.summary:ClearAllPoints()
+    page.totalsArea:ClearAllPoints()
+    if (page:GetHeight() or 0) >= 590 then
+        page.summary:SetPoint("TOPLEFT", 14, TOTALS_TOP)
+        page.totalsArea:SetPoint("TOPLEFT", 8, TOTALS_TOP - 26)
+        page.totalsArea:SetPoint("TOPRIGHT", -8, TOTALS_TOP - 26)
+    else
+        -- В минимальном размере оставляем старую безопасную привязку снизу,
+        -- чтобы блок не вышел за границу окна.
+        page.summary:SetPoint("BOTTOMLEFT", 14, 107)
+        page.totalsArea:SetPoint("BOTTOMLEFT", 8, 8)
+        page.totalsArea:SetPoint("BOTTOMRIGHT", -8, 8)
+    end
+
+    for index, block in ipairs(page.totals) do
+        block:ClearAllPoints()
+        block:SetPoint("TOPLEFT", page.totalsArea, "TOPLEFT",
+            startX - 8 + (index - 1) * (width + gap), -7)
+        block:SetWidth(width)
+    end
+end
+
+local function ShortCrestName(name)
+    if not name then return L("Герб") end
+    local short = name:gsub(L("^Маревый герб%s+"), "")
+    short = short:gsub("%s+[Mm]istcrest$", "")
+    local lower = short:lower()
+    if lower:find(L("искател"), 1, true) then return L("Искатель") end
+    if lower:find(L("ветеран"), 1, true) then return L("Ветеран") end
+    if lower:find(L("защитник"), 1, true) then return L("Защитник") end
+    if lower:find(L("геро"), 1, true) then return L("Герой") end
+    if lower:find(L("эпох"), 1, true) then return L("Эпоха") end
+    return short ~= "" and short or name
+end
+
+local function LinkWithText(link, text)
+    if not link or not text then return link end
+    return (link:gsub("(|h)%b[](|h)", "%1[" .. text .. "]%2", 1))
+end
+
 function UpgradeCalculator:Build(welcome, page)
     self.page, self.welcome = page, welcome
 
-    page.title = UI.Text(page, "GameFontNormal", "До потолка улучшений", C.text)
+    page.title = UI.Text(page, "GameFontNormal", L("До потолка улучшений"), C.text)
     page.title:SetPoint("TOPLEFT", 14, HEADER_TOP + 2)
 
     page.mode = UI.Text(page, "GameFontHighlightSmall", "", C.muted)
@@ -535,7 +670,7 @@ function UpgradeCalculator:Build(welcome, page)
     page.mode:SetJustifyH("LEFT")
     page.mode:SetWordWrap(false)
 
-    page.refresh = UI.Button(page, "Сканировать", 120, 20, true)
+    page.refresh = UI.Button(page, L("Сканировать"), 120, 20, true)
     page.refresh:SetPoint("TOPRIGHT", -14, HEADER_TOP + 4)
     page.refresh:SetScript("OnClick", function()
         if UpgradeCalculator.scanning then return end
@@ -565,10 +700,13 @@ function UpgradeCalculator:Build(welcome, page)
     for index = 1, #SLOTS do page.rows[index] = BuildRow(page, index) end
 
     page.summary = UI.Text(page, "GameFontNormal", "", C.text)
-    page.summary:SetPoint("BOTTOMLEFT", 10, 78)
     page.summary:SetJustifyH("LEFT")
 
     BuildTrackTotals(page)
+    LayoutTrackTotals(page, 1)
+    page:SetScript("OnSizeChanged", function()
+        LayoutTrackTotals(page, #(UpgradeCalculator.tracks or {}))
+    end)
     self.built = true
 end
 
@@ -594,12 +732,12 @@ local function FormatGold(copper)
         local ok, text = pcall(GetCoinTextureString, copper)
         if ok and text then return text end
     end
-    return ("%d з"):format(math.floor(copper / 10000))
+    return (L("%d з")):format(math.floor(copper / 10000))
 end
 
 function UpgradeCalculator:RenderProgress(done, total)
     if not self.page then return end
-    self.page.mode:SetFormattedText("Замеряю у мастера: %d из %d…", done, total)
+    self.page.mode:SetFormattedText(L("Замеряю у мастера: %d из %d…"), done, total)
 end
 
 function UpgradeCalculator:Refresh()
@@ -623,7 +761,7 @@ function UpgradeCalculator:Refresh()
 
             if entry.unknown then
                 row.cells.max:SetText("—")
-                row.cells.steps:SetText("нет данных")
+                row.cells.steps:SetText(L("нет данных"))
                 row.cells.steps:SetTextColor(C.amber[1], C.amber[2], C.amber[3], 1)
                 row.cells.track:SetText("")
                 row.cells.crests:SetText("")
@@ -633,7 +771,7 @@ function UpgradeCalculator:Refresh()
                 -- Замер был, улучшений у вещи нет вовсе. Это не «готово»:
                 -- готово значит докачано до потолка, а тут потолка не бывает.
                 row.cells.max:SetText(entry.ilvl and tostring(entry.ilvl) or "—")
-                row.cells.steps:SetText("не улучшается")
+                row.cells.steps:SetText(L("не улучшается"))
                 row.cells.steps:SetTextColor(C.faint[1], C.faint[2], C.faint[3], 1)
                 row.cells.track:SetText("—")
                 row.cells.track:SetTextColor(C.faint[1], C.faint[2], C.faint[3], 1)
@@ -646,7 +784,7 @@ function UpgradeCalculator:Refresh()
                     row.cells.steps:SetFormattedText("%d/%d", entry.current, entry.maximum)
                     row.cells.steps:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
                 else
-                    row.cells.steps:SetText("готово")
+                    row.cells.steps:SetText(L("готово"))
                     row.cells.steps:SetTextColor(C.green[1], C.green[2], C.green[3], 1)
                 end
                 local track = entry.track
@@ -670,35 +808,47 @@ function UpgradeCalculator:Refresh()
             local missing = math.max(0, need - have)
             missingTotal = missingTotal + missing
             local link = track.link or CurrencyLink(track.currencyID)
-            block.name:SetText(link or track.label)
+            block.name:SetText(link and LinkWithText(link, ShortCrestName(track.label)) or track.label)
             if link then block.name:SetTextColor(1, 1, 1, 1)
             else block.name:SetTextColor(unpack(track.color)) end
             block.currencyID = track.currencyID
-            block.need:SetFormattedText("нужно %d", need)
-            block.have:SetFormattedText("есть %d  •  не хватает %d", have, missing)
+            block.label = track.label
+            block.needed, block.owned, block.missing = need, have, missing
+            local _, _, _, icon = CurrencyName(track.currencyID)
+            block.icon:SetTexture(icon)
+            block.icon:SetShown(icon ~= nil)
+            block.need:SetFormattedText(L("Нужно: |cffffffff%d|r"), need)
+            block.have:SetFormattedText(L("Есть: %d"), have)
+            block.shortage:SetFormattedText(L("Не хватает: %d"), missing)
+            block:SetBackdropBorderColor(track.color[1], track.color[2], track.color[3], .70)
+            block.iconBorder:SetBackdropBorderColor(track.color[1], track.color[2], track.color[3], 1)
+            block.accent:SetColorTexture(track.color[1], track.color[2], track.color[3], .92)
             if missing > 0 then
                 block.have:SetTextColor(C.amber[1], C.amber[2], C.amber[3], 1)
+                block.shortage:SetTextColor(C.amber[1], C.amber[2], C.amber[3], 1)
             else
                 block.have:SetTextColor(C.green[1], C.green[2], C.green[3], 1)
+                block.shortage:SetTextColor(C.green[1], C.green[2], C.green[3], 1)
             end
             block:Show()
         end
     end
 
-    page.summary:SetFormattedText("Не хватает гербов: %d      Золото: %s",
+    page.summary:SetFormattedText(L("Не хватает гербов: %d      Золото: %s"),
         missingTotal, FormatGold(self.gold))
+    LayoutTrackTotals(page, #self.tracks)
 
     if self.scanning then
         -- Подпись ведёт RenderProgress, не затираем её.
     elseif self.unknown > 0 then
         page.mode:SetFormattedText(
-            "|cffffbb33Неполный расчёт:|r по %d предметам замеров нет. "
-            .. "Данные об улучшении игра отдаёт только у мастера — подойди к нему, "
-            .. "остальное аддон снимет сам и запомнит.", self.unknown)
+            L("|cffffbb33Неполный расчёт:|r по %d предметам замеров нет. ")
+            .. L("Данные об улучшении игра отдаёт только у мастера — подойди к нему, ")
+            .. L("остальное аддон снимет сам и запомнит."), self.unknown)
     elseif #self.tracks == 0 then
-        page.mode:SetText("Улучшать нечего: игра не назвала ни одного герба для надетых вещей.")
+        page.mode:SetText(L("Улучшать нечего: игра не назвала ни одного герба для надетых вещей."))
     else
-        page.mode:SetText("Расчёт по сохранённым замерам. Сменишь вещь — этот слот замерится заново у мастера.")
+        page.mode:SetText(L("Расчёт по сохранённым замерам. Сменишь вещь — этот слот замерится заново у мастера."))
     end
 end
 

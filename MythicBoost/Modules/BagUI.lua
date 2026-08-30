@@ -1,5 +1,6 @@
 local _, JP = ...
 
+local L = JP.L
 -- Небольшое единое окно сумок: только то, ради чего обычно ставят Bagnon.
 -- Никакой базы других персонажей, банка и категорий — предметы читаются
 -- напрямую из C_Container и не создают тяжёлых SavedVariables.
@@ -41,12 +42,12 @@ local function BagIDs()
 end
 
 local function BagName(bag)
-    if bag == 0 then return BACKPACK_TOOLTIP or "Рюкзак" end
+    if bag == 0 then return BACKPACK_TOOLTIP or L("Рюкзак") end
     if C_Container and type(C_Container.GetBagName) == "function" then
         local ok, name = pcall(C_Container.GetBagName, bag)
         if ok and type(name) == "string" and name ~= "" then return name end
     end
-    return bag == 5 and "Сумка реагентов" or ("Сумка %d"):format(bag)
+    return bag == 5 and L("Сумка реагентов") or (L("Сумка %d")):format(bag)
 end
 
 local function BagInventorySlot(bag)
@@ -370,6 +371,15 @@ function BagUI:BuildBagButton(parent, bag, x)
     button.icon:SetPoint("BOTTOMRIGHT", -3, 3)
     button.icon:SetTexCoord(.07, .93, .07, .93)
     button.icon:SetTexture(BagIcon(bag))
+    local function PickupEquippedBag()
+        if not button.inventorySlot or (CursorHasItem and CursorHasItem()) then return end
+        if type(PickupBagFromSlot) == "function" then
+            PickupBagFromSlot(button.inventorySlot)
+        elseif type(PickupInventoryItem) == "function" then
+            PickupInventoryItem(button.inventorySlot)
+        end
+        BagUI:RequestRefresh(.12)
+    end
     local function PlaceCursorBag()
         if not CursorHasItem or not CursorHasItem() then return end
         if button.inventorySlot and type(PutItemInBag) == "function" then
@@ -380,16 +390,12 @@ function BagUI:BuildBagButton(parent, bag, x)
         BagUI:RequestRefresh(.12)
     end
     button:SetScript("OnClick", function(_, mouseButton)
-        if mouseButton == "LeftButton" then PlaceCursorBag() end
+        if mouseButton ~= "LeftButton" then return end
+        if CursorHasItem and CursorHasItem() then PlaceCursorBag()
+        else PickupEquippedBag() end
     end)
     button:SetScript("OnReceiveDrag", PlaceCursorBag)
-    button:SetScript("OnDragStart", function()
-        if button.inventorySlot and type(PickupBagFromSlot) == "function"
-            and (not CursorHasItem or not CursorHasItem()) then
-            PickupBagFromSlot(button.inventorySlot)
-            BagUI:RequestRefresh(.12)
-        end
-    end)
+    button:SetScript("OnDragStart", PickupEquippedBag)
     button:SetScript("OnEnter", function(owner)
         GameTooltip:SetOwner(owner, "ANCHOR_TOP")
         local shown
@@ -427,7 +433,7 @@ function BagUI:Create()
     local headerLine = UI.Line(frame, C.accent)
     headerLine:SetPoint("TOPLEFT", frame.header, "BOTTOMLEFT", 0, 0)
     headerLine:SetPoint("TOPRIGHT", frame.header, "BOTTOMRIGHT", 0, 0)
-    frame.title = UI.Text(frame.header, "GameFontNormal", "Инвентарь", C.amber)
+    frame.title = UI.Text(frame.header, "GameFontNormal", L("Инвентарь"), C.amber)
     frame.title:SetPoint("LEFT", 12, 0)
     frame.title:SetText("")
     frame.title:Hide()
@@ -436,7 +442,7 @@ function BagUI:Create()
     close:SetPoint("RIGHT", -3, 0)
     close:SetScript("OnClick", function() BagUI:Hide() end)
 
-    local sort = UI.Button(frame.header, "СОРТ", 54, 24)
+    local sort = UI.Button(frame.header, L("СОРТ"), 54, 24)
     self.sortButton = sort
     sort:SetPoint("RIGHT", close, "LEFT", -5, 0)
     sort:SetScript("OnClick", function()
@@ -459,7 +465,7 @@ function BagUI:Create()
     end)
     sort:SetScript("OnEnter", function(owner)
         GameTooltip:SetOwner(owner, "ANCHOR_TOP")
-        GameTooltip:SetText("Сортировать сумки")
+        GameTooltip:SetText(L("Сортировать сумки"))
         GameTooltip:Show()
     end)
     sort:SetScript("OnLeave", GameTooltip_Hide)
@@ -524,7 +530,7 @@ function BagUI:Enable()
         or IsAddonLoadedSafe("AdiBags") or IsAddonLoadedSafe("BetterBags")
     if self.externalConflict and Settings().enabled and not self.conflictReported then
         self.conflictReported = true
-        JP:Print("Единый инвентарь готов. Отключи Bagnon/AdiBags/BetterBags и сделай /reload, чтобы окна не дублировались.")
+        JP:Print(L("Единый инвентарь готов. Отключи Bagnon/AdiBags/BetterBags и сделай /reload, чтобы окна не дублировались."))
     end
 end
 

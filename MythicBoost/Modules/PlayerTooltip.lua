@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local PlayerTooltip = {}
 local C = JP.UI.colors
 
@@ -143,17 +144,17 @@ local function AddPotential(tooltip, runs, itemLevel, fullName, saveRecent)
     if gear then
         tooltip:AddDoubleLine("Item level", string.format("%.1f", itemLevel), .75, .78, .82, 1, 1, 1)
         if isStrongCandidate then
-            tooltip:AddDoubleLine("РЕАЛЬНО ПЕРСПЕКТИВНЫЙ", "+" .. potential, .72, .30, 1, 1, .58, .10)
+            tooltip:AddDoubleLine(L("РЕАЛЬНО ПЕРСПЕКТИВНЫЙ"), "+" .. potential, .72, .30, 1, 1, .58, .10)
         else
-            tooltip:AddDoubleLine("Прогноз по гиру и опыту", "+" .. potential, .20, .80, 1, .25, 1, .55)
+            tooltip:AddDoubleLine(L("Прогноз по гиру и опыту"), "+" .. potential, .20, .80, 1, .25, 1, .55)
         end
-        tooltip:AddDoubleLine("Экипировка / опыт", ("+%d / +%d"):format(gear, experience), .60, .64, .70, .75, .80, .86)
+        tooltip:AddDoubleLine(L("Экипировка / опыт"), ("+%d / +%d"):format(gear, experience), .60, .64, .70, .75, .80, .86)
     else
-        tooltip:AddDoubleLine("Прогноз по опыту", "+" .. potential, .20, .80, 1, .25, 1, .55)
-        tooltip:AddLine("Item level скрыт в этом окне", .48, .55, .63)
+        tooltip:AddDoubleLine(L("Прогноз по опыту"), "+" .. potential, .20, .80, 1, .25, 1, .55)
+        tooltip:AddLine(L("Item level скрыт в этом окне"), .48, .55, .63)
     end
     if isStrongCandidate then
-        tooltip:AddLine("RIO может занижать возможности игрока", .30, 1, .55)
+        tooltip:AddLine(L("RIO может занижать возможности игрока"), .30, 1, .55)
         JP:MarkPositivePlayer(fullName, {
             potential = potential,
             itemLevel = itemLevel,
@@ -172,7 +173,7 @@ local function AddRunCount(tooltip, runs)
     for _, run in ipairs(type(runs) == "table" and runs or {}) do
         if IsUsableNumber(run.level) and run.level >= 10 then total = total + 1 end
     end
-    tooltip:AddDoubleLine("Подземелий с рекордом +10 и выше", tostring(total), .75, .78, .82, 1, .82, .25)
+    tooltip:AddDoubleLine(L("Подземелий с рекордом +10 и выше"), tostring(total), .75, .78, .82, 1, .82, .25)
 end
 
 local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, saveRecent)
@@ -186,11 +187,11 @@ local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, s
     tooltip.__jpDungeonKey = uniqueKey
 
     tooltip:AddLine(" ")
-    tooltip:AddLine("MythicBoost • Лучшие ключи", .15, .75, 1)
+    tooltip:AddLine(L("MythicBoost • Лучшие ключи"), .15, .75, 1)
     for index = 1, math.min(8, #runs) do
         local run = runs[index]
         local dungeon = run.dungeon
-        local dungeonName = dungeon and (dungeon.shortNameLocale or dungeon.shortName or dungeon.name) or ("Подземелье " .. index)
+        local dungeonName = dungeon and (dungeon.shortNameLocale or dungeon.shortName or dungeon.name) or (L("Подземелье ") .. index)
         local level = IsUsableNumber(run.level) and run.level or 0
         local chests = IsUsableNumber(run.chests) and run.chests or 0
         tooltip:AddDoubleLine(dungeonName, FormatRun(level, chests), .86, .89, .93, 1, 1, 1)

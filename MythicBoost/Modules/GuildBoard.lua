@@ -1,10 +1,11 @@
 local _, JP = ...
+local L = JP.L
 local GuildBoard = {}
 local UI = JP.UI
 local C = UI.colors
 
 local PODIUM_COUNT = 3      -- тройка лидеров крупно
-local LIST_COUNT = 10       -- и десятка основного состава под ней
+local LIST_ROW_POOL = 60    -- виртуальные строки; данные листаются независимо от высоты окна
 local CACHE_SECONDS = 60
 local MEDAL_COLORS = {
     { 1, .82, .28, 1 },
@@ -54,10 +55,10 @@ end
 
 function GuildBoard:Collect(force)
     if not IsInGuild or not IsInGuild() then
-        return nil, "Ты не состоишь в гильдии."
+        return nil, L("Ты не состоишь в гильдии.")
     end
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then
-        return nil, "Нужен аддон Raider.IO — рейтинг гильдейцев берётся из его базы."
+        return nil, L("Нужен аддон Raider.IO — рейтинг гильдейцев берётся из его базы.")
     end
     if not force and self.cache and (GetTime() - self.cacheTime) < CACHE_SECONDS then
         return self.cache
@@ -65,7 +66,7 @@ function GuildBoard:Collect(force)
 
     local total = GetNumGuildMembers()
     if not total or total == 0 then
-        return nil, "Список гильдии ещё не загружен. Нажми «Обновить»."
+        return nil, L("Список гильдии ещё не загружен. Нажми «Обновить».")
     end
 
     local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 0
@@ -75,7 +76,9 @@ function GuildBoard:Collect(force)
     for index = 1, total do
         local name, _, _, level, _, _, _, _, online, _, classFile = GetGuildRosterInfo(index)
         name = SafeString(name)
-        if name and (maxLevel == 0 or (UsableNumber(level) and level >= maxLevel)) then
+        if name
+            and (not self.onlyOnline or online)
+            and (maxLevel == 0 or (UsableNumber(level) and level >= maxLevel)) then
             scanned = scanned + 1
             -- Имена гильдейцев однозначны: свой реалм либо явный суффикс.
             local fullName = name:find("-", 1, true) and name or (realm and (name .. "-" .. realm)) or name
@@ -101,7 +104,7 @@ function GuildBoard:Collect(force)
     end)
 
     self.cache, self.cacheTime, self.scanned = entries, GetTime(), scanned
-    JP:Log("гильдия: %d из %d персонажей с рейтингом", #entries, scanned)
+    JP:Log(L("гильдия: %d из %d персонажей с рейтингом"), #entries, scanned)
     return entries
 end
 
@@ -175,33 +178,30 @@ local function CreateListRow(parent, index)
 end
 
 function GuildBoard:Build(welcome, page)
-    local title = UI.Text(page, "GameFontNormalSmall", "РЕЙТИНГ ГИЛЬДИИ", C.muted)
+    local title = UI.Text(page, "GameFontNormalSmall", L("РЕЙТИНГ ГИЛЬДИИ"), C.muted)
     title:SetPoint("TOPLEFT", 16, -14)
 
     self.guildName = UI.Text(page, "GameFontHighlightSmall", "", C.accent)
     self.guildName:SetPoint("LEFT", title, "RIGHT", 12, 0)
 
-    self.refresh = UI.Button(page, "Обновить", 118, 24, true)
-    self.refresh:SetPoint("TOPRIGHT", -14, -10)
-    self.refresh:SetScript("OnClick", function()
-        if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
-        elseif GuildRoster then GuildRoster() end
-        self.cache = nil
-        C_Timer.After(.4, function() self:Refresh() end)
-    end)
-    self.refresh:HookScript("OnEnter", function(button)
-        UI.Tooltip(button, "Обновить", "Запросить у сервера свежий список гильдии и пересчитать рейтинги по базе Raider.IO.")
-    end)
-    self.refresh:HookScript("OnLeave", GameTooltip_Hide)
-
-    self.offline = UI.CheckBox(page, "Учитывать офлайн", GetGuildRosterShowOffline and GetGuildRosterShowOffline() or false,
+    -- Для мгновенной фильтрации загружаем полный ростер, но сам фильтр
+    -- «Только онлайн» при каждом запуске выключен.
+    self.onlyOnline = false
+    self.cache = nil
+    if SetGuildRosterShowOffline then
+        SetGuildRosterShowOffline(true)
+        self.awaitingFullRoster = true
+    end
+    if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
+    elseif GuildRoster then GuildRoster() end
+    self.onlineOnly = UI.CheckBox(page, L("Только онлайн"), false,
         function(checked)
-            if SetGuildRosterShowOffline then SetGuildRosterShowOffline(checked) end
+            self.onlyOnline = checked and true or false
             self.cache = nil
-            C_Timer.After(.4, function() self:Refresh() end)
-        end)
-    self.offline:SetSize(170, 22)
-    self.offline:SetPoint("RIGHT", self.refresh, "LEFT", -16, 0)
+            self:Refresh()
+    end)
+    self.onlineOnly:SetSize(150, 22)
+    self.onlineOnly:SetPoint("TOPRIGHT", -14, -11)
 
     self.podium = {}
     for place = 1, PODIUM_COUNT do
@@ -209,23 +209,46 @@ function GuildBoard:Build(welcome, page)
         self.podium[place] = card
     end
 
-    local listHeader = UI.Text(page, "GameFontNormalSmall", "ОСНОВНОЙ СОСТАВ", C.faint)
-    listHeader:SetPoint("TOPLEFT", 16, -142)
-    local scoreHeader = UI.Text(page, "GameFontNormalSmall", "РЕЙТИНГ", C.faint)
+    self.listHeader = UI.Text(page, "GameFontNormalSmall", L("ОСНОВНОЙ СОСТАВ"), C.faint)
+    self.listHeader:SetPoint("TOPLEFT", 16, -142)
+    local scoreHeader = UI.Text(page, "GameFontNormalSmall", L("РЕЙТИНГ"), C.faint)
     scoreHeader:SetPoint("TOPRIGHT", -14, -142)
     scoreHeader:SetWidth(64)
     scoreHeader:SetJustifyH("RIGHT")
-    local bestHeader = UI.Text(page, "GameFontNormalSmall", "ЛУЧШИЙ КЛЮЧ", C.faint)
+    local bestHeader = UI.Text(page, "GameFontNormalSmall", L("ЛУЧШИЙ КЛЮЧ"), C.faint)
     bestHeader:SetPoint("TOPRIGHT", -130, -142)
     bestHeader:SetWidth(80)
     bestHeader:SetJustifyH("CENTER")
 
     self.rows = {}
-    for index = 1, LIST_COUNT do
+    for index = 1, LIST_ROW_POOL do
         local row = CreateListRow(page, index)
         row:SetPoint("TOPLEFT", 14, -162 - (index - 1) * 28)
-        row:SetPoint("TOPRIGHT", -14, -162 - (index - 1) * 28)
+        row:SetPoint("TOPRIGHT", -18, -162 - (index - 1) * 28)
         self.rows[index] = row
+    end
+
+    self.scrollBar = UI.ScrollBar(page)
+    self.scrollBar:SetPoint("TOPRIGHT", -6, -162)
+    self.scrollBar:SetPoint("BOTTOMRIGHT", -6, 34)
+    self.scrollBar:SetScript("OnValueChanged", function(_, value)
+        local offset = math.floor(value + .5)
+        if offset ~= self.offset then
+            self.offset = offset
+            self:RenderRows()
+        end
+    end)
+    self.scrollBar:Hide()
+
+    local function OnMouseWheel(_, delta)
+        local _, maximum = self.scrollBar:GetMinMaxValues()
+        self.scrollBar:SetValue(math.max(0, math.min(maximum, (self.offset or 0) - delta)))
+    end
+    page:EnableMouseWheel(true)
+    page:SetScript("OnMouseWheel", OnMouseWheel)
+    for _, row in ipairs(self.rows) do
+        row:EnableMouseWheel(true)
+        row:SetScript("OnMouseWheel", OnMouseWheel)
     end
 
     self.message = UI.Text(page, "GameFontHighlight", "", C.muted)
@@ -255,6 +278,40 @@ function GuildBoard:Layout()
         card:SetSize(cardWidth, 84)
         card:SetPoint("TOPLEFT", 14 + (place - 1) * (cardWidth + gap), -44)
     end
+    local visible = math.max(3, math.min(LIST_ROW_POOL, math.floor((self.page:GetHeight() - 200) / 28)))
+    self.visibleRows = visible
+    for index, row in ipairs(self.rows or {}) do
+        row.layoutVisible = index <= visible
+        if not row.layoutVisible then row:Hide() end
+    end
+    if self.entries then
+        local maximum = math.max(0, #self.entries - PODIUM_COUNT - visible)
+        self.scrollBar:SetMinMaxValues(0, maximum)
+        self.offset = math.min(self.offset or 0, maximum)
+        self.scrollBar:SetValue(self.offset)
+        self.scrollBar:SetShown(maximum > 0)
+        self:RenderRows()
+    end
+end
+
+function GuildBoard:RenderRows()
+    local entries = self.entries or {}
+    local offset = self.offset or 0
+    for index, row in ipairs(self.rows or {}) do
+        local entryIndex = PODIUM_COUNT + offset + index
+        local entry = row.layoutVisible ~= false and entries[entryIndex]
+        if entry then
+            row.rank:SetText(tostring(entryIndex))
+            row.name:SetText(UI.ClassIcon(entry.classFile, 16) .. "  " .. entry.name)
+            row.name:SetTextColor(UI.ClassColor(entry.classFile))
+            row.best:SetText(entry.bestKey > 0 and ("+" .. entry.bestKey) or "—")
+            row.status:SetText(entry.online and L("|cff43d17aонлайн|r") or "")
+            row.score:SetText(math.floor(entry.score))
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
 end
 
 function GuildBoard:Refresh()
@@ -266,6 +323,7 @@ function GuildBoard:Refresh()
 
     local entries, message = self:Collect()
     local count = entries and #entries or 0
+    self.entries = entries or {}
 
     for place, card in ipairs(self.podium) do
         local entry = entries and entries[place]
@@ -273,37 +331,31 @@ function GuildBoard:Refresh()
             card.name:SetText(UI.ClassIcon(entry.classFile, 20) .. "  " .. entry.name)
             card.name:SetTextColor(UI.ClassColor(entry.classFile))
             card.score:SetText(math.floor(entry.score))
-            card.detail:SetText(("|cff8a939fлучший ключ|r  |cff43d17a+%d|r"):format(entry.bestKey))
+            card.detail:SetText((L("|cff8a939fлучший ключ|r  |cff43d17a+%d|r")):format(entry.bestKey))
             card:Show()
         else
             card:Hide()
         end
     end
 
-    for index, row in ipairs(self.rows) do
-        local entry = entries and entries[PODIUM_COUNT + index]
-        if entry then
-            row.rank:SetText(tostring(PODIUM_COUNT + index))
-            row.name:SetText(UI.ClassIcon(entry.classFile, 16) .. "  " .. entry.name)
-            row.name:SetTextColor(UI.ClassColor(entry.classFile))
-            row.best:SetText(entry.bestKey > 0 and ("+" .. entry.bestKey) or "—")
-            row.status:SetText(entry.online and "|cff43d17aонлайн|r" or "")
-            row.score:SetText(math.floor(entry.score))
-            row:Show()
-        else
-            row:Hide()
-        end
-    end
+    local visible = self.visibleRows or 3
+    local maximum = math.max(0, count - PODIUM_COUNT - visible)
+    self.scrollBar:SetMinMaxValues(0, maximum)
+    self.offset = math.min(self.offset or 0, maximum)
+    self.scrollBar:SetValue(self.offset)
+    self.scrollBar:SetShown(maximum > 0)
+    self.listHeader:SetText((L("ОСНОВНОЙ СОСТАВ  |cff28c8f5%d|r")):format(math.max(0, count - PODIUM_COUNT)))
+    self:RenderRows()
 
     if count == 0 then
-        self.message:SetText(message or "В базе Raider.IO пока нет рейтингов для твоей гильдии.")
+        self.message:SetText(message or L("В базе Raider.IO пока нет рейтингов для твоей гильдии."))
         self.message:Show()
     else
         self.message:Hide()
     end
 
     if count > 0 then
-        self.footer:SetText(("|cff687584Данные Raider.IO — персонажей с рейтингом: %d из %d просмотренных|r")
+        self.footer:SetText((L("|cff687584Данные Raider.IO — персонажей с рейтингом: %d из %d просмотренных|r"))
             :format(count, self.scanned or count))
     else
         self.footer:SetText("")
@@ -319,7 +371,10 @@ function GuildBoard:Create()
     -- сводя на нет минутную выдержку: пересчёт рейтингов по всей гильдии
     -- запускался заново. Склеиваем события в одно обновление.
     self.events:SetScript("OnEvent", function(_, event)
-        if event == "PLAYER_GUILD_UPDATE" then self.cache = nil end
+        if event == "PLAYER_GUILD_UPDATE" or self.awaitingFullRoster then
+            self.cache = nil
+            self.awaitingFullRoster = nil
+        end
         if self.updateQueued then return end
         self.updateQueued = true
         C_Timer.After(1, function()

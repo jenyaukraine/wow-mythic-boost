@@ -2,12 +2,16 @@
 ## Title: MythicBoost
 ## Notes: Подбор групп Mythic+, анализ игроков и прогресс сезона для Midnight
 ## Notes-enUS: Mythic+ group finder, player analysis and progression dashboard for Midnight
+## Notes-enGB: Mythic+ group finder, player analysis and progression dashboard for Midnight
+## Notes-deDE: Mythic+-Gruppensuche, Spieleranalyse und Saisonfortschritt für Midnight
 ## Author: Jenya
 ## Version: 1.9.0
 ## SavedVariables: MythicBoostDB
 ## OptionalDeps: RaiderIO, RaiderIO_DB_EU_M
 ## Category-ru: Подземелья
 ## Category-enUS: Dungeons
+## Category-enGB: Dungeons
+## Category-deDE: Dungeons
 ## IconTexture: Interface\Icons\INV_Relics_Hourglass
 ## AddonCompartmentFunc: MythicBoost_OnAddonCompartmentClick
 
@@ -17,6 +21,7 @@ Libs/AceComm-3.0/ChatThrottleLib.lua
 Libs/AceComm-3.0/AceComm-3.0.lua
 Libs/AceSerializer-3.0/AceSerializer-3.0.lua
 Libs/LibDeflate/LibDeflate.lua
+Localization.lua
 Core.lua
 UI.lua
 Modules/ErrorGuard.lua

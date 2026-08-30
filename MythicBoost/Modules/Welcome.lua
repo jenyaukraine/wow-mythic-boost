@@ -1,4 +1,5 @@
 local _, JP = ...
+local L = JP.L
 local Welcome = { rows = {} }
 local UI = JP.UI
 local C = UI.colors
@@ -51,7 +52,7 @@ local function BuildHeader(self, frame)
     -- Вместо повторения названия аддона показываем полезное состояние пати.
     -- Каждый слот — настоящий Frame/Texture, поэтому пустые места больше не
     -- превращаются в квадраты из-за отсутствующего символа в шрифте клиента.
-    local partyLabel = UI.Text(header, "GameFontNormalSmall", "ТВОЯ ГРУППА", C.faint)
+    local partyLabel = UI.Text(header, "GameFontNormalSmall", L("ТВОЯ ГРУППА"), C.faint)
     partyLabel:SetPoint("TOPLEFT", badge, "TOPRIGHT", 14, -1)
     self.partySlots = {}
     for index = 1, 5 do
@@ -71,20 +72,20 @@ local function BuildHeader(self, frame)
     close:SetPoint("TOPRIGHT", -10, -10)
     close:SetScript("OnClick", function() frame:Hide() end)
 
-    local maximize = UI.Button(header, "На весь экран", 128, 24)
+    local maximize = UI.Button(header, L("На весь экран"), 128, 24)
     maximize:SetPoint("RIGHT", close, "LEFT", -8, 0)
     self.maximizeButton = maximize
 
     -- Обратный переход: создать объявление и управлять им по-прежнему можно
     -- только в штатном окне, поэтому дорога туда всегда под рукой.
-    local blizzard = UI.Button(header, "Окно Blizzard", 128, 24)
+    local blizzard = UI.Button(header, L("Окно Blizzard"), 128, 24)
     blizzard:SetPoint("RIGHT", maximize, "LEFT", -8, 0)
     blizzard:SetScript("OnClick", function()
         if JP.FrameSwitch then JP.FrameSwitch.OpenBlizzard() end
     end)
     blizzard:HookScript("OnEnter", function(self)
-        UI.Tooltip(self, "Штатное окно",
-            "Открыть «Подземелья и рейды» — там создаётся и меняется само объявление.")
+        UI.Tooltip(self, L("Штатное окно"),
+            L("Открыть «Подземелья и рейды» — там создаётся и меняется само объявление."))
     end)
     blizzard:HookScript("OnLeave", GameTooltip_Hide)
 
@@ -99,7 +100,7 @@ end
 -- не даёт понять, ослаблять фильтр по лидеру или по подземельям. Поэтому
 -- называем три главные причины отсева с числами.
 local function EmptyStateText(rejected, scanned)
-    local fallback = "Среди текущих результатов подходящих групп нет.\nОслабь фильтры или нажми «Обновить»."
+    local fallback = L("Среди текущих результатов подходящих групп нет.\nОслабь фильтры или нажми «Обновить».")
     if not rejected or not scanned or scanned == 0 then return fallback end
     local ordered = {}
     for reason, count in pairs(rejected) do ordered[#ordered + 1] = { reason = reason, count = count } end
@@ -108,7 +109,7 @@ local function EmptyStateText(rejected, scanned)
         if a.count ~= b.count then return a.count > b.count end
         return a.reason < b.reason
     end)
-    local text = { ("Ни одна из %d групп не прошла фильтры. Что отсеяло:"):format(scanned) }
+    local text = { (L("Ни одна из %d групп не прошла фильтры. Что отсеяло:")):format(scanned) }
     for index = 1, math.min(3, #ordered) do
         text[#text + 1] = ("|cffa9b4c2%s|r   |cffffb93d%d|r"):format(ordered[index].reason, ordered[index].count)
     end
@@ -142,11 +143,11 @@ function Welcome:Create()
     local tabTop = -(HEADER_HEIGHT + 8)
     self.tabs = {}
     local order = {
-        { key = "groups", label = "ПОДБОР ГРУПП" },
-        { key = "applicants", label = "ПАТИ / КАНДИДАТЫ" },
-        { key = "guild", label = "РЕЙТИНГ ГИЛЬДИИ" },
-        { key = "upgrades", label = "УЛУЧШЕНИЯ" },
-        { key = "settings", label = "НАСТРОЙКИ" },
+        { key = "groups", label = L("ПОДБОР ГРУПП") },
+        { key = "applicants", label = L("ПАТИ / КАНДИДАТЫ") },
+        { key = "guild", label = L("РЕЙТИНГ ГИЛЬДИИ") },
+        { key = "upgrades", label = L("УЛУЧШЕНИЯ") },
+        { key = "settings", label = L("НАСТРОЙКИ") },
     }
     for index, item in ipairs(order) do
         local tab = UI.Tab(frame, item.label, 140)
@@ -202,8 +203,31 @@ function Welcome:Create()
     grip:SetVertexColor(.34, .42, .52, .9)
     resize:SetScript("OnEnter", function() grip:SetVertexColor(UI.Unpack(C.accent)) end)
     resize:SetScript("OnLeave", function() grip:SetVertexColor(.34, .42, .52, .9) end)
-    resize:SetScript("OnMouseDown", function(_, button) if button == "LeftButton" then frame:StartSizing("BOTTOMRIGHT") end end)
-    resize:SetScript("OnMouseUp", function() frame:StopMovingOrSizing(); SaveWindow(frame) end)
+    local function StopResize()
+        if not resize.sizing then return end
+        resize.sizing = nil
+        resize:SetScript("OnUpdate", nil)
+        SaveWindow(frame)
+    end
+    resize:SetScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" or frame.maximized then return end
+        local cursorX, cursorY = GetCursorPosition()
+        local scale = frame:GetEffectiveScale()
+        self.sizing = true
+        self.startCursorX, self.startCursorY = cursorX / scale, cursorY / scale
+        self.startWidth, self.startHeight = frame:GetWidth(), frame:GetHeight()
+        self:SetScript("OnUpdate", function(owner)
+            if not IsMouseButtonDown("LeftButton") then StopResize(); return end
+            local currentX, currentY = GetCursorPosition()
+            currentX, currentY = currentX / scale, currentY / scale
+            local width = math.max(MIN_WIDTH, math.min(2400,
+                owner.startWidth + currentX - owner.startCursorX))
+            local height = math.max(MIN_HEIGHT, math.min(1400,
+                owner.startHeight + owner.startCursorY - currentY))
+            frame:SetSize(width, height)
+        end)
+    end)
+    resize:SetScript("OnMouseUp", StopResize)
     self.resizeGrip = resize
 
     local function SetMaximized(enabled, initial)
@@ -213,7 +237,7 @@ function Welcome:Create()
             frame.maximized, window.maximized = true, true
             frame:SetResizable(false)
             resize:Hide()
-            self.maximizeButton:SetText("Свернуть окно")
+            self.maximizeButton:SetText(L("Свернуть окно"))
             frame:ClearAllPoints()
             frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 14, -14)
             frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -14, 14)
@@ -223,7 +247,7 @@ function Welcome:Create()
             RestorePosition(frame)
             frame:SetResizable(true)
             resize:Show()
-            self.maximizeButton:SetText("На весь экран")
+            self.maximizeButton:SetText(L("На весь экран"))
         end
     end
     self.maximizeButton:SetScript("OnClick", function() SetMaximized(not frame.maximized, false) end)
@@ -327,11 +351,11 @@ function Welcome:Refresh()
     -- слишком строгие или Blizzard прислал мало групп.
     local scope = JP.GroupSearchUI:GetScopeText(self)
     if scanned and scanned > 0 then
-        self.resultsCount:SetText(("%d из %d  •  %s"):format(#matches, scanned, scope))
+        self.resultsCount:SetText((L("%d из %d  •  %s")):format(#matches, scanned, scope))
     else
         self.resultsCount:SetText(scope or "")
     end
-    self.status:SetText(#matches > 0 and ("найдено групп: " .. #matches) or "")
+    self.status:SetText(#matches > 0 and (L("найдено групп: ") .. #matches) or "")
 end
 
 function Welcome:Toggle()
