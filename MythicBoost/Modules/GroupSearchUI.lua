@@ -1801,6 +1801,8 @@ local function CreateResultRow(parent, index)
     row.keyIcon:SetAlpha(.22)
     row.key = UI.Text(row.keyBox, "GameFontNormalLarge", "", C.green)
     row.key:SetPoint("CENTER", 0, 0)
+    local keyFont = row.key:GetFont()
+    if keyFont then row.key:SetFont(keyFont, 22, "THICKOUTLINE") end
     row.key:SetShadowColor(0, 0, 0, 1)
     row.key:SetShadowOffset(2, -2)
 
