@@ -298,6 +298,8 @@ local function InitializeDatabase()
     if db.lootUI.atCursor == nil then db.lootUI.atCursor = true end
     if db.lootUI.showRolls == nil then db.lootUI.showRolls = true end
     if db.lootUI.showHistory == nil then db.lootUI.showHistory = true end
+    db.bagUI = type(db.bagUI) == "table" and db.bagUI or {}
+    if db.bagUI.enabled == nil then db.bagUI.enabled = true end
     -- Начиная с версии БД 3 все перемещаемые элементы используют один режим.
     -- При первом запуске после обновления сохраняем прежнее разблокированное
     -- состояние, но больше не держим три независимых переключателя.
@@ -454,6 +456,7 @@ local function ShowHelp()
     JP:Print("|cff28b8f5/mb restorefilter|r — вернуть фильтр стандартного окна групп")
     JP:Print("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп")
     JP:Print("|cff28b8f5/mb frames|r [reset] — свои фреймы игрока и цели, reset — сбросить позиции")
+    JP:Print("|cff28b8f5/mb bags|r — открыть или закрыть единый инвентарь")
 end
 
 SLASH_MYTHICBOOST1 = "/mythicboost"
@@ -531,6 +534,8 @@ SlashCmdList.MYTHICBOOST = function(input)
             JP:Print("Свои фреймы: " .. (settings.enabled and "|cff43d17aвключены|r" or "|cffff9966выключены|r"))
         end
         JP:ReloadModule("UnitFrames")
+    elseif command == "bags" or command == "bag" then
+        if JP.BagUI then JP.BagUI:Toggle() else JP:Print("Модуль сумок не загружен.") end
     else
         ShowHelp()
     end

@@ -154,7 +154,7 @@ function SettingsHub:Build(_, parent)
     self:AddCheck(automationPage, "merchantSummary", "Показывать итог в чате", 52, -406)
 
     Heading(groupPage, "ПОИСК ГРУППЫ", 28, -84, 764)
-    self:AddCheck(groupPage, "whisperInvite", "Приглашать по шёпоту «inv»", 28, -118)
+    self:AddCheck(groupPage, "whisperInvite", "Приглашать по шёпоту «inv», «123» или «+»", 28, -118)
     self:AddCheck(groupPage, "autoKeystone", "Автоматически вставлять эпохальный ключ", 28, -152)
 
     Heading(interfacePage, "ВНЕШНИЙ ВИД", 28, -84, 764)
@@ -166,12 +166,27 @@ function SettingsHub:Build(_, parent)
     self:AddCheck(interfacePage, "hideBags", "Скрывать панель сумок", 28, -152, function(value)
         if JP.MinimalUI then JP.MinimalUI:StyleBags(value) end
     end)
+    local bagUI = UI.CheckBox(interfacePage, "Единое окно сумок MythicBoost",
+        MythicBoostDB.bagUI and MythicBoostDB.bagUI.enabled ~= false, function(value)
+            MythicBoostDB.bagUI = type(MythicBoostDB.bagUI) == "table" and MythicBoostDB.bagUI or {}
+            MythicBoostDB.bagUI.enabled = value
+            JP:ReloadModule("BagUI")
+        end)
+    bagUI:SetPoint("TOPLEFT", 28, -186)
+    bagUI:SetWidth(740)
+    bagUI:HookScript("OnEnter", function(self)
+        UI.Tooltip(self, "Единый инвентарь",
+            "Все надетые сумки в одной сетке: фильтр по сумке, сортировка, занято/всего и деньги.",
+            "Перед включением отключи Bagnon, AdiBags или BetterBags.")
+    end)
+    bagUI:HookScript("OnLeave", GameTooltip_Hide)
+    self.checks.bagUI = bagUI
     local frames = UI.CheckBox(interfacePage, "Компактные фреймы игрока и цели",
         MythicBoostDB.unitFrames and MythicBoostDB.unitFrames.enabled ~= false, function(value)
             MythicBoostDB.unitFrames.enabled = value
             JP:ReloadModule("UnitFrames")
         end)
-    frames:SetPoint("TOPLEFT", 28, -186)
+    frames:SetPoint("TOPLEFT", 28, -220)
     frames:SetWidth(740)
     self.checks.unitFrames = frames
 
@@ -180,7 +195,7 @@ function SettingsHub:Build(_, parent)
             MythicBoostDB.castBar.enabled = value
             JP:ReloadModule("CastBar")
         end)
-    castBar:SetPoint("TOPLEFT", 28, -220)
+    castBar:SetPoint("TOPLEFT", 28, -254)
     castBar:SetWidth(740)
     self.checks.castBar = castBar
 
@@ -237,12 +252,12 @@ function SettingsHub:Build(_, parent)
     lootHistory:SetWidth(716)
     self.checks.lootHistory = lootHistory
 
-    Heading(interfacePage, "РАСПОЛОЖЕНИЕ", 28, -270, 764)
+    Heading(interfacePage, "РАСПОЛОЖЕНИЕ", 28, -304, 764)
     local interfaceMove = UI.CheckBox(interfacePage, "Режим перемещения интерфейса",
         MythicBoostDB.interfaceUnlocked == true, function(value)
             SettingsHub:SetInterfaceUnlocked(value)
         end)
-    interfaceMove:SetPoint("TOPLEFT", 28, -304)
+    interfaceMove:SetPoint("TOPLEFT", 28, -338)
     interfaceMove:SetWidth(740)
     interfaceMove:HookScript("OnEnter", function(self)
         UI.Tooltip(self, "Единый режим перемещения",
@@ -366,6 +381,7 @@ function SettingsHub:Refresh()
         elseif key == "lootAtCursor" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.atCursor ~= false
         elseif key == "lootRolls" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showRolls ~= false
         elseif key == "lootHistory" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showHistory ~= false
+        elseif key == "bagUI" then value = MythicBoostDB.bagUI and MythicBoostDB.bagUI.enabled ~= false
         elseif key == "interfaceUnlocked" then value = MythicBoostDB.interfaceUnlocked == true
         elseif key == "smartBuff" then
             value = MythicBoostDB.smartClick and MythicBoostDB.smartClick.buff == true

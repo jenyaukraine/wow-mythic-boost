@@ -147,7 +147,7 @@ function Convenience:InviteFromWhisper(message, sender)
     if not Enabled("whisperInvite") or type(message) ~= "string" or type(sender) ~= "string" then return end
     local keyword = tostring(Settings().inviteKeyword or "inv"):lower()
     local clean = message:lower():match("^%s*(.-)%s*$")
-    if clean ~= keyword then return end
+    if clean ~= "inv" and clean ~= "123" and clean ~= "+" and clean ~= keyword then return end
     if IsInGroup() and not UnitIsGroupLeader("player") and not UnitIsGroupAssistant("player") then return end
     if C_PartyInfo and C_PartyInfo.InviteUnit then pcall(C_PartyInfo.InviteUnit, sender) end
 end
