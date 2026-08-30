@@ -685,15 +685,15 @@ function MinimalUI:StyleMinimap(enabled)
         end
         self.minimapBorder:Show()
         StyleMinimapZoneLabel(self, true)
-        StyleMinimapAddonButtons(self, false)
+        -- Remove loose LibDBIcon buttons from the minimap edge. Their addons
+        -- remain available through Blizzard's native addon compartment below.
+        StyleMinimapAddonButtons(self, true)
+        if self.minimapButtonLauncher then self.minimapButtonLauncher:Hide() end
         StyleAddonCompartment(self, true)
         -- The minimap already has its own one-pixel border. A second enclosing
         -- panel only creates a pointless rectangle around it.
         local panel = self.unifiedPanels and self.unifiedPanels[Minimap] and self.unifiedPanels[Minimap].minimap
         if panel then panel:Hide() end
-
-        -- Keep LibDBIcon buttons visible. SexyMap already knows how to dock
-        -- them; hiding them here removed the user's addon shortcuts entirely.
 
         if not self.mouseWheelHooked then
             self.mouseWheelHooked = true
