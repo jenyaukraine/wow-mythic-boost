@@ -477,7 +477,6 @@ local function ShowHelp()
     JP:Print(L("|cff28b8f5/mb restorefilter|r — вернуть фильтр стандартного окна групп"))
     JP:Print(L("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп"))
     JP:Print(L("|cff28b8f5/mb frames|r [reset] — свои фреймы игрока и цели, reset — сбросить позиции"))
-    JP:Print(L("|cff28b8f5/mb bags|r — открыть или закрыть единый инвентарь"))
 end
 
 SLASH_MYTHICBOOST1 = "/mythicboost"
@@ -555,8 +554,6 @@ SlashCmdList.MYTHICBOOST = function(input)
             JP:Print(L("Свои фреймы: ") .. (settings.enabled and L("|cff43d17aвключены|r") or L("|cffff9966выключены|r")))
         end
         JP:ReloadModule("UnitFrames")
-    elseif command == "bags" or command == "bag" then
-        if JP.BagUI then JP.BagUI:Toggle() else JP:Print(L("Модуль сумок не загружен.")) end
     else
         ShowHelp()
     end

@@ -171,18 +171,14 @@ function SettingsHub:Build(_, parent)
     self:AddCheck(interfacePage, "hideBags", L("Скрывать панель сумок"), 28, -152, function(value)
         if JP.MinimalUI then JP.MinimalUI:StyleBags(value) end
     end)
-    local bagUI = UI.CheckBox(interfacePage, L("Единое окно сумок MythicBoost"),
-        MythicBoostDB.bagUI and MythicBoostDB.bagUI.enabled == true, function(value)
-            MythicBoostDB.bagUI = type(MythicBoostDB.bagUI) == "table" and MythicBoostDB.bagUI or {}
-            MythicBoostDB.bagUI.enabled = value
-            JP:ReloadModule("BagUI")
-        end)
+    local bagUI = UI.CheckBox(interfacePage, L("Единое окно сумок MythicBoost"), false)
     bagUI:SetPoint("TOPLEFT", 28, -186)
     bagUI:SetWidth(740)
+    bagUI:Disable()
+    bagUI:SetChecked(false)
     bagUI:HookScript("OnEnter", function(self)
         UI.Tooltip(self, L("Единый инвентарь"),
-            L("Все надетые сумки в одной сетке: фильтр по сумке, сортировка, занято/всего и деньги."),
-            L("Перед включением отключи Bagnon, AdiBags или BetterBags."))
+            L("Функция отключена. Используются стандартные сумки Blizzard."))
     end)
     bagUI:HookScript("OnLeave", GameTooltip_Hide)
     self.checks.bagUI = bagUI

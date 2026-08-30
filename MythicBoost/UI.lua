@@ -271,6 +271,12 @@ local function CheckVisual(check)
     local checked = check:GetChecked() and true or false
     check.markA:SetShown(checked)
     check.markB:SetShown(checked)
+    if not check:IsEnabled() then
+        check.box:SetBackdropColor(.045, .052, .062, 1)
+        check.box:SetBackdropBorderColor(.18, .22, .27, 1)
+        check.label:SetTextColor(.38, .42, .48, 1)
+        return
+    end
     check.box:SetBackdropColor(
         checked and .035 or (hovered and .10 or .055),
         checked and .17 or (hovered and .14 or .075),

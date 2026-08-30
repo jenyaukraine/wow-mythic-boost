@@ -40,7 +40,6 @@ Modules/SmartClick.lua
 Modules/CastBar.lua
 Modules/KeystoneTimer.lua
 Modules/LootUI.lua
-Modules/BagUI.lua
 Modules/MinimalUI.lua
 Modules/Convenience.lua
 Modules/SettingsHub.lua
