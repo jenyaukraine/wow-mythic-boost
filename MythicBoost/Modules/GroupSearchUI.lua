@@ -22,6 +22,25 @@ local ACTIVITY_GROUP_BY_MAP = {
 local MAX_RESULT_ROWS = 12
 local ROW_HEIGHT, ROW_STEP = 62, 68
 local CARD_HEIGHT, CARD_GAP = 84, 8
+-- Одна сетка на всю карточку, вместо трёх наборов случайных отступов.
+-- Левая колонка — значок и процент под ним; правая начинается с CARD_COLUMN
+-- и держит три строки на общем левом крае: название, рекорд, предметы.
+-- Раньше каждая строка ставилась своим числом, и края не совпадали: значок
+-- отступал на 10, рекорд на 62, процент на 10, а высота названия (32 от -8)
+-- заезжала на ряд предметов, начинавшийся с -34.
+--
+-- Вертикаль сошлась так (высота карточки 84):
+--   12  поле сверху
+--   значок   -12 … -56      название  -12 … -28
+--   процент  -60 … -72      рекорд    -30 … -44
+--                             предметы  -48 … -72
+--   12  поле снизу
+-- Обе колонки кончаются на -72, поля сверху и снизу одинаковые.
+local CARD_PAD = 12
+local CARD_ICON = 44
+local CARD_COLUMN = CARD_PAD + CARD_ICON + 8
+local CARD_ROW_TITLE, CARD_ROW_BEST, CARD_ROW_ITEMS = -12, -30, -48
+local CARD_ITEM_SIZE, CARD_ITEM_STEP = 24, 28
 local CARDS_HEIGHT = 30 + CARD_HEIGHT * 2 + CARD_GAP + 10
 local FILTERS_WIDTH = 238
 -- Эти функции используются серверным фильтром, который объявлен раньше
@@ -1148,12 +1167,16 @@ end
 local function SetCardSelected(card, selected)
     card.selected = selected and true or false
     card:SetBackdropColor(selected and .085 or .050, selected and .105 or .062, selected and .135 or .080, .96)
+    -- Один акцентный цвет, а не три. Оранжевый, фиолетовый и голубой края на
+    -- соседних карточках читались как три разных состояния одной важности, и
+    -- ряд рассыпался. Выделяем цветом ровно одно — лучший шанс на дроп;
+    -- «есть полезное» и так сказано цветом процента ниже.
     if selected and card.isLootBest then
-        card:SetBackdropBorderColor(1, .58, .12, 1)
-    elseif selected and card.hasUsefulLoot then
-        card:SetBackdropBorderColor(.58, .25, .92, 1)
+        card:SetBackdropBorderColor(UI.Unpack(C.amber))
+    elseif selected then
+        card:SetBackdropBorderColor(UI.Unpack(C.accent))
     else
-        card:SetBackdropBorderColor(selected and .18 or .12, selected and .58 or .16, selected and .78 or .21, 1)
+        card:SetBackdropBorderColor(UI.Unpack(C.line))
     end
     card.accent:SetShown(card.selected)
     card.art:SetAlpha(selected and .32 or .10)
@@ -1285,7 +1308,8 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
             else card.loot:SetTextColor(UI.Unpack(C.faint)) end
 
             local upgrades = card.lootData and card.lootData.upgrades or {}
-            local visibleItems = math.max(1, math.min(#card.lootItems, math.floor((card:GetWidth() - 72) / 28)))
+            local visibleItems = math.max(1, math.min(#card.lootItems,
+                math.floor((card:GetWidth() - CARD_COLUMN - CARD_PAD) / CARD_ITEM_STEP)))
             for itemIndex, itemButton in ipairs(card.lootItems) do
                 SetLootItem(itemButton, itemIndex <= visibleItems and upgrades[itemIndex] or nil)
             end
@@ -1365,8 +1389,8 @@ local function CreateDungeonCard(parent, welcome)
     scrim:SetPoint("BOTTOMRIGHT", -1, 1)
 
     card.iconBorder = CreateFrame("Frame", nil, card, "BackdropTemplate")
-    card.iconBorder:SetSize(42, 42)
-    card.iconBorder:SetPoint("TOPLEFT", 10, -19)
+    card.iconBorder:SetSize(CARD_ICON, CARD_ICON)
+    card.iconBorder:SetPoint("TOPLEFT", CARD_PAD, CARD_ROW_TITLE)
     UI.Backdrop(card.iconBorder, { .02, .03, .04, 1 }, C.line)
 
     card.icon = card.iconBorder:CreateTexture(nil, "ARTWORK")
@@ -1376,23 +1400,28 @@ local function CreateDungeonCard(parent, welcome)
     card.iconLabel = UI.Text(card.iconBorder, "GameFontNormal", "", C.accentDim)
     card.iconLabel:SetPoint("CENTER", 0, 0)
 
+    -- Процент — подпись под значком, поэтому он и стоит под значком, по его
+    -- ширине и по центру, а не в углу карточки в шести пикселях от края.
     card.loot = UI.Text(card, "GameFontNormalSmall", "", C.faint)
-    card.loot:SetPoint("BOTTOMLEFT", 10, 6)
-    card.loot:SetWidth(42)
+    card.loot:SetPoint("TOPLEFT", card.iconBorder, "BOTTOMLEFT", 0, -4)
+    card.loot:SetWidth(CARD_ICON)
+    card.loot:SetHeight(12)
     card.loot:SetJustifyH("CENTER")
 
     card.title = UI.Text(card, "GameFontNormal", "", C.text)
-    card.title:SetPoint("TOPLEFT", 62, -8)
-    card.title:SetPoint("RIGHT", card, "RIGHT", -8, 0)
+    card.title:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_TITLE)
+    card.title:SetPoint("RIGHT", card, "RIGHT", -CARD_PAD, 0)
     card.title:SetJustifyH("LEFT")
     card.title:SetJustifyV("TOP")
-    card.title:SetHeight(32)
+    card.title:SetHeight(16)
+    card.title:SetWordWrap(false)
     card.title:SetShadowColor(0, 0, 0, 1)
     card.title:SetShadowOffset(1, -1)
 
     card.best = UI.Text(card, "GameFontHighlightSmall", "")
-    card.best:SetPoint("BOTTOMLEFT", 62, 7)
-    card.best:SetPoint("RIGHT", card, "RIGHT", -10, 0)
+    card.best:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_BEST)
+    card.best:SetPoint("RIGHT", card, "RIGHT", -CARD_PAD, 0)
+    card.best:SetHeight(14)
     card.best:SetJustifyH("LEFT")
     card.best:SetWordWrap(false)
     card.best:SetShadowColor(0, 0, 0, 1)
@@ -1403,18 +1432,21 @@ local function CreateDungeonCard(parent, welcome)
     card.lootItems = {}
     for index = 1, 5 do
         local itemButton = CreateFrame("Button", nil, card, "BackdropTemplate")
-        itemButton:SetSize(24, 24)
-        itemButton:SetPoint("TOPLEFT", 62 + (index - 1) * 28, -34)
+        itemButton:SetSize(CARD_ITEM_SIZE, CARD_ITEM_SIZE)
+        itemButton:SetPoint("TOPLEFT", CARD_COLUMN + (index - 1) * CARD_ITEM_STEP, CARD_ROW_ITEMS)
         UI.Backdrop(itemButton, { .025, .033, .044, .98 }, { .25, .32, .40, 1 })
         itemButton.icon = itemButton:CreateTexture(nil, "ARTWORK")
         itemButton.icon:SetPoint("TOPLEFT", 2, -2)
         itemButton.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        -- Подписи держим ВНУТРИ кнопки. Прежние +3/-2 выносили их за край, а
+        -- при шаге 28 на кнопке 24 между значками всего четыре пикселя: прирост
+        -- одного предмета садился поверх значка следующего.
         itemButton.gain = UI.Text(itemButton, "GameFontNormalSmall", "", C.green)
-        itemButton.gain:SetPoint("BOTTOMRIGHT", 3, -2)
+        itemButton.gain:SetPoint("BOTTOMRIGHT", -1, 1)
         itemButton.gain:SetShadowColor(0, 0, 0, 1)
         itemButton.gain:SetShadowOffset(1, -1)
         itemButton.badge = UI.Text(itemButton, "GameFontNormalSmall", "")
-        itemButton.badge:SetPoint("TOPLEFT", 1, 1)
+        itemButton.badge:SetPoint("TOPLEFT", 1, -1)
         itemButton.badge:SetShadowColor(0, 0, 0, 1)
         itemButton.badge:SetShadowOffset(1, -1)
         itemButton:SetScript("OnEnter", function(self)
