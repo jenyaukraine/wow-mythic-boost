@@ -23,29 +23,6 @@ local ACTIVITY_GROUP_BY_MAP = {
 local MAX_RESULT_ROWS = 12
 local ROW_HEIGHT, ROW_STEP = 62, 68
 local CARD_HEIGHT, CARD_GAP = 116, 8
--- Одна сетка на всю карточку. Раньше в ней жило три выравнивания сразу:
--- название по центру, группа «значок и предметы» центровалась отдельно,
--- процент в левом углу, значок ключа по центру низа. На одном предмете
--- центрованная группа выходила шириной 76 пикселей на карточку в 270 —
--- по сотне пустоты с боков. Теперь всё висит на одном левом крае.
-local CARD_PAD = 12
--- Значок во всю высоту содержимого: он единственная картинка в карточке,
--- ему и держать левый край.
-local CARD_ICON = 92
-local CARD_COLUMN = CARD_PAD + CARD_ICON + 12
-local CARD_ITEM_SIZE, CARD_ITEM_STEP = 24, 28
--- Шанс на дроп и свой ключ — два числа, ради которых карточку и читают.
--- Мелкий шрифт делал из них подпись, а не заголовок.
-local CARD_BADGE_W, CARD_BADGE_H = 64, 24
---
--- Вертикаль (высота карточки 116):
---   12 поле сверху
---   значок     -12 .. -104
---   название   -14 ..  -38   процент и ключ — на этой же строке, справа
---   предметы   -48 ..  -72   и второй ряд -76 .. -100
---   12 поле снизу
-local CARD_ROW_TITLE = -14
-local CARD_ROW_ITEMS, CARD_ITEM_ROW_STEP = -48, 28
 local CARDS_HEIGHT = 30 + CARD_HEIGHT * 2 + CARD_GAP + 10
 local FILTERS_WIDTH = 238
 -- Эти функции используются серверным фильтром, который объявлен раньше
@@ -91,10 +68,10 @@ local function OwnedKeystoneListingInfo()
     end
 end
 
--- CreateListing — защищённая операция: клиент блокирует её из addon-кода
--- даже после аппаратного клика. Безопасный путь: открыть штатную форму,
--- выбрать собственный камень и «Серьёзный». Финальную кнопку Blizzard жмёт игрок.
-local function OpenOwnKeystoneListingForm()
+-- Один аппаратный клик создаёт штатное объявление Blizzard. Заголовок
+-- формируется их API для собственного камня (включая +уровень), а стиль
+-- FunSerious в русской локализации отображается как «Серьёзный».
+local function CreateOwnKeystoneListing(button)
     if InCombatLockdown and InCombatLockdown() then
         JP:Print(L("Создание группы недоступно в бою."))
         return
@@ -116,49 +93,38 @@ local function OpenOwnKeystoneListingForm()
     end
 
     local serious = Enum and Enum.LFGEntryGeneralPlaystyle and Enum.LFGEntryGeneralPlaystyle.FunSerious
-    local activityInfo = C_LFGList.GetActivityInfoTable and C_LFGList.GetActivityInfoTable(activityID)
-    if not serious or type(activityInfo) ~= "table" then
+    local legacyNone = Enum and Enum.LFGEntryPlaystyle and Enum.LFGEntryPlaystyle.None or 0
+    if not serious or type(C_LFGList.CreateListing) ~= "function" then
         JP:Print(L("Blizzard API создания группы пока не загружен."))
         return
     end
 
-    if C_AddOns and C_AddOns.LoadAddOn then
-        pcall(C_AddOns.LoadAddOn, "Blizzard_PVEFrame")
-        pcall(C_AddOns.LoadAddOn, "Blizzard_GroupFinder")
+    if C_LFGList.ClearCreationTextFields then C_LFGList.ClearCreationTextFields() end
+    if C_LFGList.SetEntryTitle then
+        pcall(C_LFGList.SetEntryTitle, activityID, groupID, legacyNone, serious)
     end
-    local ready = _G.PVEFrame_ShowFrame and _G.LFGListPVEStub and _G.LFGListFrame
-        and _G.LFGListEntryCreation_Show and _G.LFGListEntryCreation_Select
-        and _G.LFGListEntryCreation_OnPlayStyleSelectedInternal
-    if not ready then
-        JP:Print(L("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз."))
-        return
-    end
-
-    local welcome = JP.modules and JP.modules.Welcome
-    if welcome and welcome.frame then welcome.frame:Hide() end
-    local filters = UsableNumber(activityInfo.filters) and activityInfo.filters or 0
-    local categoryID = activityInfo.categoryID
-    local ok = pcall(function()
-        PVEFrame_ShowFrame("GroupFinderFrame", LFGListPVEStub)
-        local panel = LFGListFrame.EntryCreation
-        LFGListEntryCreation_Show(panel, Enum.LFGListFilter.PvE, categoryID, filters)
-        LFGListEntryCreation_Select(panel, filters, categoryID, groupID, activityID)
-        LFGListEntryCreation_OnPlayStyleSelectedInternal(panel, serious)
-    end)
-    if not ok then
-        JP:Print(L("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз."))
+    local createData = {
+        activityIDs = { activityID },
+        questID = 0,
+        isAutoAccept = false,
+        isCrossFactionListing = true,
+        isPrivateGroup = false,
+        playstyle = legacyNone,
+        generalPlaystyle = serious,
+        requiredDungeonScore = 0,
+        requiredItemLevel = 0,
+        requiredPvpRating = 0,
+    }
+    local ok, created = pcall(C_LFGList.CreateListing, createData)
+    -- В разных сборках CreateListing либо возвращает true, либо ничего.
+    -- Явный false считаем отказом, nil при успешном вызове -- нормой.
+    if ok and created ~= false then
+        if button then button:SetText(L("Группа создана")) end
+        JP:Print((L("Зарегистрирован свой ключ +%d, режим «Серьёзный».")):format(level))
+    else
+        JP:Print(L("Blizzard не создал объявление. Проверь ограничения поиска групп."))
     end
 end
-
--- Видимый кусок фона. Challenge Mode вшивает справа чёрный градиент под
--- свой текст, поэтому кадрируем. Числа по ширине и высоте разные: одни и те
--- же десять пикселей карточки — разная доля кадра, карточка шире, чем выше.
--- Края исходников грязные: у одних впечатана рамка, у других светлая
--- полоса по краю картинки. Окно сдвинуто вправо и вниз, чтобы в кадр
--- попадала середина иллюстрации, а не её обводка. Нужно ещё — добавлять
--- одинаково к обоим числам пары, иначе кадр не сдвигается, а сжимается.
-local ART_LEFT, ART_RIGHT = .095, .775
-local ART_TOP, ART_BOTTOM = .237, .897
 
 -- fileID = 0 приходит от API как «текстуры нет». Без этой проверки
 -- SetTexture(0) рисует чёрный прямоугольник вместо карточки.
@@ -170,20 +136,6 @@ end
 ---------------------------------------------------------------------------
 -- Данные Raider.IO
 ---------------------------------------------------------------------------
-
--- Часть подземелий Challenge Mode отдаёт без фоновой картинки, и карточка
--- оставалась чёрной: запасным вариантом шла квадратная иконка, растянутая на
--- широкую карточку, — тёмное пятно, а не иллюстрация. У журнала подземелий
--- широкий баннер есть почти всегда, берём его.
-local function DungeonBanner(instanceMapID)
-    if not UsableNumber(instanceMapID) then return end
-    if not C_EncounterJournal or type(C_EncounterJournal.GetInstanceForGameMap) ~= "function" then return end
-    local ok, journalID = pcall(C_EncounterJournal.GetInstanceForGameMap, instanceMapID)
-    if not ok or not UsableNumber(journalID) or type(EJ_GetInstanceInfo) ~= "function" then return end
-    local infoOK, _, _, bgImage, buttonImage = pcall(EJ_GetInstanceInfo, journalID)
-    if not infoOK then return end
-    return ValidTexture(bgImage) or ValidTexture(buttonImage)
-end
 
 local function PlayerRuns()
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return {} end
@@ -662,82 +614,68 @@ end
 -- Всплывающая таблица «участники × подземелья»
 ---------------------------------------------------------------------------
 
--- Ширина колонки имени считается по её содержимому, а не на глаз: две иконки
--- (роль 14 + класс 16) плюс двенадцать символов имени — предел, который вообще
--- может прийти от игры. 164 пикселя оставляли треть колонки пустой, и таблица
--- уезжала за край экрана шире, чем несёт данных.
-local TIP_NAME_WIDTH, TIP_CELL_WIDTH = 116, 44
--- Ниже этого колонка уже заголовка «ИГРОК» и двух иконок в строке.
-local TIP_NAME_MIN = 62
--- Значок подземелья в шапке колонки — понятнее буквенной подписи.
-local TIP_HEADER_ICON = 22
-local TIP_ROW_STEP, TIP_ROW_HEIGHT = 21, 19
-local TIP_ROW_INSET, TIP_TEXT_INSET = 8, 12
-local TIP_ROWS_TOP = 72
+local TIP_NAME_WIDTH, TIP_CELL_WIDTH = 164, 56
 
 local function GetGroupTooltip()
     if GroupSearchUI.groupTooltip then return GroupSearchUI.groupTooltip end
     local frame = CreateFrame("Frame", "MythicBoostGroupTooltip", UIParent, "BackdropTemplate")
-    frame:SetSize(TIP_TEXT_INSET * 2 + TIP_NAME_WIDTH + TIP_CELL_WIDTH * 8, 190)
+    frame:SetSize(28 + TIP_NAME_WIDTH + TIP_CELL_WIDTH * 8, 190)
     frame:SetFrameStrata("TOOLTIP")
     frame:SetClampedToScreen(true)
     frame:EnableMouse(false)
     UI.Backdrop(frame, { .035, .045, .062, .98 }, { .22, .34, .46, 1 })
 
     frame.title = UI.Text(frame, "GameFontNormal", "", C.text)
-    frame.title:SetPoint("TOPLEFT", TIP_TEXT_INSET, -10)
-    frame.title:SetPoint("TOPRIGHT", -TIP_TEXT_INSET, -10)
+    frame.title:SetPoint("TOPLEFT", 14, -12)
+    frame.title:SetPoint("TOPRIGHT", -14, -12)
     frame.title:SetJustifyH("LEFT")
     frame.title:SetWordWrap(false)
 
     frame.meta = UI.Text(frame, "GameFontHighlightSmall", "", C.muted)
-    frame.meta:SetPoint("TOPLEFT", TIP_TEXT_INSET, -28)
-    frame.meta:SetPoint("TOPRIGHT", -TIP_TEXT_INSET, -28)
+    frame.meta:SetPoint("TOPLEFT", 14, -32)
+    frame.meta:SetPoint("TOPRIGHT", -14, -32)
     frame.meta:SetJustifyH("LEFT")
     frame.meta:SetWordWrap(false)
 
     local divider = UI.Line(frame, C.accentDim)
-    divider:SetPoint("TOPLEFT", TIP_ROW_INSET, -46)
-    divider:SetPoint("TOPRIGHT", -TIP_ROW_INSET, -46)
+    divider:SetPoint("TOPLEFT", 12, -54)
+    divider:SetPoint("TOPRIGHT", -12, -54)
 
     frame.playerHeader = UI.Text(frame, "GameFontNormalSmall", L("ИГРОК"), C.faint)
-    frame.playerHeader:SetPoint("TOPLEFT", TIP_TEXT_INSET, -56)    frame.playerHeader:SetWidth(TIP_NAME_WIDTH)
+    frame.playerHeader:SetPoint("TOPLEFT", 14, -66)
+    frame.playerHeader:SetWidth(TIP_NAME_WIDTH)
     frame.playerHeader:SetJustifyH("LEFT")
 
     frame.columnHeaders = {}
     for index = 1, 8 do
         local header = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-        header:SetSize(TIP_HEADER_ICON, TIP_HEADER_ICON)
-        header:SetPoint("TOPLEFT", TIP_TEXT_INSET + TIP_NAME_WIDTH
-            + (index - 1) * TIP_CELL_WIDTH
-            + math.floor((TIP_CELL_WIDTH - TIP_HEADER_ICON) / 2), -60)
+        header:SetSize(22, 22)
+        header:SetPoint("TOPLEFT",
+            14 + TIP_NAME_WIDTH + (index - 1) * TIP_CELL_WIDTH + math.floor((TIP_CELL_WIDTH - 22) / 2), -60)
         UI.Backdrop(header, { .015, .022, .030, 1 }, { .18, .48, .62, .9 })
         header.icon = header:CreateTexture(nil, "ARTWORK")
         header.icon:SetPoint("TOPLEFT", 1, -1)
         header.icon:SetPoint("BOTTOMRIGHT", -1, 1)
-        header.icon:SetTexCoord(.07, .93, .07, .93)        frame.columnHeaders[index] = header
+        header.icon:SetTexCoord(.07, .93, .07, .93)
+        frame.columnHeaders[index] = header
     end
 
     frame.playerRows = {}
     for playerIndex = 1, 5 do
         local line = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-        local top = -TIP_ROWS_TOP - (playerIndex - 1) * TIP_ROW_STEP
-        line:SetPoint("TOPLEFT", TIP_ROW_INSET, top)
-        line:SetPoint("TOPRIGHT", -TIP_ROW_INSET, top)
-        line:SetHeight(TIP_ROW_HEIGHT)
+        line:SetPoint("TOPLEFT", 10, -84 - (playerIndex - 1) * 24)
+        line:SetPoint("TOPRIGHT", -10, -84 - (playerIndex - 1) * 24)
+        line:SetHeight(22)
         UI.Backdrop(line, playerIndex % 2 == 0 and C.rowAlt or C.row, C.lineSoft)
         line.name = UI.Text(line, "GameFontHighlightSmall", "")
-        -- Ровно под заголовком «ИГРОК»: строка вставлена на TIP_ROW_INSET, а
-        -- заголовок на TIP_TEXT_INSET, поэтому смещение — их разница.
-        line.name:SetPoint("LEFT", TIP_TEXT_INSET - TIP_ROW_INSET, 0)
+        line.name:SetPoint("LEFT", 6, 0)
         line.name:SetWidth(TIP_NAME_WIDTH - 4)
         line.name:SetJustifyH("LEFT")
         line.name:SetWordWrap(false)
         line.cells = {}
         for columnIndex = 1, 8 do
             local cell = UI.Text(line, "GameFontHighlightSmall", "")
-            cell:SetPoint("LEFT", TIP_TEXT_INSET - TIP_ROW_INSET + TIP_NAME_WIDTH
-                + (columnIndex - 1) * TIP_CELL_WIDTH, 0)
+            cell:SetPoint("LEFT", 4 + TIP_NAME_WIDTH + (columnIndex - 1) * TIP_CELL_WIDTH, 0)
             cell:SetWidth(TIP_CELL_WIDTH)
             cell:SetJustifyH("CENTER")
             line.cells[columnIndex] = cell
@@ -748,34 +686,6 @@ local function GetGroupTooltip()
     frame:Hide()
     GroupSearchUI.groupTooltip = frame
     return frame
-end
-
--- Ширина колонки имени и число колонок подземелий известны только в момент
--- показа. Раньше и то и другое было прибито под худший случай: колонка имени
--- под ник в двенадцать символов с двумя иконками, окно — под восемь колонок
--- всегда. На коротком «Komit» с одной колонкой между ником и его ключом
--- зияло полсотни пикселей, а справа висели семь пустых колонок.
-local function LayoutGroupTooltip(tooltip, columnCount, nameWidth)
-    columnCount = math.max(1, columnCount)
-    tooltip.playerHeader:SetWidth(nameWidth)
-    for index, header in ipairs(tooltip.columnHeaders) do
-        header:SetShown(index <= columnCount)
-        header:ClearAllPoints()
-        -- Шапка колонки — квадратный значок, а не текст во всю колонку:
-        -- его надо центрировать в колонке руками.
-        header:SetPoint("TOPLEFT", TIP_TEXT_INSET + nameWidth + (index - 1) * TIP_CELL_WIDTH
-            + math.floor((TIP_CELL_WIDTH - TIP_HEADER_ICON) / 2), -60)
-    end
-    for _, line in ipairs(tooltip.playerRows) do
-        line.name:SetWidth(nameWidth - 4)
-        for index, cell in ipairs(line.cells) do
-            cell:SetShown(index <= columnCount)
-            cell:ClearAllPoints()
-            cell:SetPoint("LEFT", TIP_TEXT_INSET - TIP_ROW_INSET + nameWidth
-                + (index - 1) * TIP_CELL_WIDTH, 0)
-        end
-    end
-    tooltip:SetWidth(TIP_TEXT_INSET * 2 + nameWidth + TIP_CELL_WIDTH * columnCount)
 end
 
 local function ShowGroupTooltip(row, externalResultID, externalDungeonName, placement)
@@ -877,16 +787,7 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
         end
     end
 
-    -- Мерить можно только после SetText: GetStringWidth считает и вставленные
-    -- в строку иконки роли с классом, а они и занимают половину колонки.
-    local widest = 0
-    for _, line in ipairs(tooltip.playerRows) do
-        if line:IsShown() then widest = math.max(widest, line.name:GetStringWidth() or 0) end
-    end
-    LayoutGroupTooltip(tooltip, #columns,
-        math.max(TIP_NAME_MIN, math.min(TIP_NAME_WIDTH, math.ceil(widest) + 10)))
-
-    tooltip:SetHeight(TIP_ROWS_TOP + 4 + math.max(1, memberCount) * TIP_ROW_STEP)
+    tooltip:SetHeight(92 + math.max(1, memberCount) * 24)
     tooltip:Show()
 end
 
@@ -1348,7 +1249,7 @@ local function GetDungeonData()
             instanceMapID = instanceMapID,
             name = SafeString(name) or (L("Подземелье ") .. (#result + 1)),
             icon = ValidTexture(icon),
-            background = ValidTexture(background) or DungeonBanner(instanceMapID),
+            background = ValidTexture(background),
             activityIDs = rioDungeon and type(rioDungeon.lfd_activity_ids) == "table"
                 and rioDungeon.lfd_activity_ids or {},
             run = run,
@@ -1396,19 +1297,15 @@ end
 local function SetCardSelected(card, selected)
     card.selected = selected and true or false
     card:SetBackdropColor(selected and .085 or .050, selected and .105 or .062, selected and .135 or .080, .96)
-    -- Один акцентный цвет, а не три. Оранжевый, фиолетовый и голубой края на
-    -- соседних карточках читались как три разных состояния одной важности, и
-    -- ряд рассыпался. Выделяем цветом ровно одно — лучший шанс на дроп;
-    -- «есть полезное» и так сказано цветом процента ниже.
     if selected and card.isLootBest then
-        card:SetBackdropBorderColor(UI.Unpack(C.amber))
-    elseif selected then
-        card:SetBackdropBorderColor(UI.Unpack(C.accent))
+        card:SetBackdropBorderColor(1, .58, .12, 1)
+    elseif selected and card.hasUsefulLoot then
+        card:SetBackdropBorderColor(.58, .25, .92, 1)
     else
-        card:SetBackdropBorderColor(UI.Unpack(C.line))
+        card:SetBackdropBorderColor(selected and .18 or .12, selected and .58 or .16, selected and .78 or .21, 1)
     end
     card.accent:SetShown(card.selected)
-    card.art:SetAlpha(selected and .32 or .16)
+    card.art:SetAlpha(selected and .32 or .10)
     card.art:SetDesaturated(not selected)
     card.icon:SetDesaturated(not selected)
     card.icon:SetAlpha(selected and 1 or .55)
@@ -1446,19 +1343,26 @@ end
 
 local function LayoutCardLoot(card, upgrades)
     upgrades = upgrades or {}
-    -- Строка считается от левого края сетки, а не центруется по карточке.
-    -- Центрование на одном предмете ставило группу шириной в семьдесят
-    -- пикселей посреди карточки в двести семьдесят, и ни один край ни с чем
-    -- не совпадал.
-    local available = card:GetWidth() - CARD_COLUMN - CARD_PAD
-    local perRow = math.max(1, math.min(4, math.floor(available / CARD_ITEM_STEP)))
+    -- В узких карточках предметы больше не продолжают ехать вправо за рамку.
+    -- Максимум три иконки в строке, остаток уходит во второй ряд.
+    local perRow = math.max(1, math.min(3, math.floor((card:GetWidth() - 72) / 28)))
     local capacity = perRow * 2
+    local visibleCount = math.min(#upgrades, capacity, #(card.lootItems or {}))
+    local widestRow = math.min(perRow, visibleCount)
+    local lootWidth = widestRow > 0 and (widestRow * 24 + (widestRow - 1) * 4) or 0
+    local groupWidth = 42 + (visibleCount > 0 and 10 + lootWidth or 0)
+    local groupX = math.max(8, math.floor((card:GetWidth() - groupWidth) / 2))
+
+    card.iconBorder:ClearAllPoints()
+    card.iconBorder:SetPoint("TOPLEFT", groupX, -34)
     for index, button in ipairs(card.lootItems or {}) do
         local column = (index - 1) % perRow
         local row = math.floor((index - 1) / perRow)
+        local rowCount = math.min(perRow, math.max(0, visibleCount - row * perRow))
+        local rowWidth = rowCount > 0 and (rowCount * 24 + (rowCount - 1) * 4) or 0
+        local rowX = groupX + 52 + math.floor((lootWidth - rowWidth) / 2)
         button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", CARD_COLUMN + column * CARD_ITEM_STEP,
-            CARD_ROW_ITEMS - row * CARD_ITEM_ROW_STEP)
+        button:SetPoint("TOPLEFT", rowX + column * 28, -32 - row * 28)
         SetLootItem(button, index <= capacity and upgrades[index] or nil)
     end
 end
@@ -1518,7 +1422,9 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
 
             if dungeon.background then
                 card.art:SetTexture(dungeon.background)
-                card.art:SetTexCoord(ART_LEFT, ART_RIGHT, ART_TOP, ART_BOTTOM)
+                -- Справа в Challenge Mode-фон уже вшит чёрный градиент под текст.
+                -- Обрезаем эту часть и растягиваем чистую иллюстрацию на всю карточку.
+                card.art:SetTexCoord(.02, .70, .12, .78)
                 card.art:Show()
             elseif dungeon.icon then
                 card.art:SetTexture(dungeon.icon)
@@ -1539,9 +1445,8 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
             end
 
             local level = JP:GetBestLevel(dungeon.mapID, dungeon.run and dungeon.run.level or 0)
-            -- В значке одно число, свой рекорд: цель и подробности есть
-            -- в подсказке, а строка на четыре слова в значок не влезает.
             card.best:SetText(level > 0 and ("|cff43d17a+%d|r"):format(level) or "|cff687584—|r")
+
             local percent = card.lootData and card.lootData.percent or 0
             local analyzed = card.lootData and not card.lootData.pending and (card.lootData.total or 0) > 0
             card.isLootBest = bestMapID == dungeon.mapID
@@ -1553,6 +1458,7 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
 
             local upgrades = card.lootData and card.lootData.upgrades or {}
             LayoutCardLoot(card, upgrades)
+
             SetCardSelected(card, IsCardSelected(welcome, dungeon.mapID))
             card:Show()
         else
@@ -1630,8 +1536,8 @@ local function CreateDungeonCard(parent, welcome)
     scrim:SetPoint("BOTTOMRIGHT", -1, 1)
 
     card.iconBorder = CreateFrame("Frame", nil, card, "BackdropTemplate")
-    card.iconBorder:SetSize(CARD_ICON, CARD_ICON)
-    card.iconBorder:SetPoint("TOPLEFT", CARD_PAD, -CARD_PAD)
+    card.iconBorder:SetSize(42, 42)
+    card.iconBorder:SetPoint("TOPLEFT", 10, -19)
     UI.Backdrop(card.iconBorder, { .02, .03, .04, 1 }, C.line)
 
     card.icon = card.iconBorder:CreateTexture(nil, "ARTWORK")
@@ -1641,32 +1547,25 @@ local function CreateDungeonCard(parent, welcome)
     card.iconLabel = UI.Text(card.iconBorder, "GameFontNormal", "", C.accentDim)
     card.iconLabel:SetPoint("CENTER", 0, 0)
 
-    -- Шанс на дроп и свой ключ — два числа, по которым подземелье и выбирают.
-    -- Ставим их рядом на строке названия, справа: раньше процент сидел в углу
-    -- карточки, а значок ключа висел по центру низа, и низ карточки читался
-    -- как два несвязанных обрывка.
-    card.bestBadge = CreateFrame("Frame", nil, card, "BackdropTemplate")
-    card.bestBadge:SetSize(CARD_BADGE_W, CARD_BADGE_H)
-    card.bestBadge:SetPoint("TOPRIGHT", -CARD_PAD, CARD_ROW_TITLE)
-    UI.Backdrop(card.bestBadge, { .025, .055, .045, .88 }, { .16, .48, .34, .82 })
-
-    card.loot = UI.Text(card, "GameFontNormal", "", C.faint)
-    card.loot:SetPoint("RIGHT", card.bestBadge, "LEFT", -10, 0)
-    card.loot:SetHeight(CARD_BADGE_H)
-    card.loot:SetJustifyH("RIGHT")
+    card.loot = UI.Text(card, "GameFontNormalSmall", "", C.faint)
+    card.loot:SetPoint("BOTTOMLEFT", 10, 6)
+    card.loot:SetWidth(42)
+    card.loot:SetJustifyH("CENTER")
 
     card.title = UI.Text(card, "GameFontNormal", "", C.text)
-    card.title:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_TITLE)
-    -- Название упирается в процент, а не в край карточки: длинное имя
-    -- обрежется, но никогда не наедет на числа.
-    card.title:SetPoint("RIGHT", card.loot, "LEFT", -10, 0)
-    card.title:SetJustifyH("LEFT")
-    card.title:SetJustifyV("MIDDLE")
-    card.title:SetHeight(CARD_BADGE_H)
-    card.title:SetWordWrap(false)
+    card.title:SetPoint("TOPLEFT", 10, -7)
+    card.title:SetPoint("TOPRIGHT", card, "TOPRIGHT", -10, -7)
+    card.title:SetJustifyH("CENTER")
+    card.title:SetJustifyV("TOP")
+    card.title:SetHeight(28)
     card.title:SetShadowColor(0, 0, 0, 1)
     card.title:SetShadowOffset(1, -1)
-    card.best = UI.Text(card.bestBadge, "GameFontNormal", "")
+
+    card.bestBadge = CreateFrame("Frame", nil, card, "BackdropTemplate")
+    card.bestBadge:SetSize(58, 20)
+    card.bestBadge:SetPoint("BOTTOM", 0, 5)
+    UI.Backdrop(card.bestBadge, { .025, .055, .045, .88 }, { .16, .48, .34, .82 })
+    card.best = UI.Text(card.bestBadge, "GameFontNormalSmall", "")
     card.best:SetPoint("CENTER", 0, 0)
     card.best:SetWordWrap(false)
 
@@ -1675,20 +1574,18 @@ local function CreateDungeonCard(parent, welcome)
     card.lootItems = {}
     for index = 1, 5 do
         local itemButton = CreateFrame("Button", nil, card, "BackdropTemplate")
-        itemButton:SetSize(CARD_ITEM_SIZE, CARD_ITEM_SIZE)
-        itemButton:SetPoint("TOPLEFT", CARD_COLUMN, CARD_ROW_ITEMS)        UI.Backdrop(itemButton, { .025, .033, .044, .98 }, { .25, .32, .40, 1 })
+        itemButton:SetSize(24, 24)
+        itemButton:SetPoint("TOPLEFT", 62, -38)
+        UI.Backdrop(itemButton, { .025, .033, .044, .98 }, { .25, .32, .40, 1 })
         itemButton.icon = itemButton:CreateTexture(nil, "ARTWORK")
         itemButton.icon:SetPoint("TOPLEFT", 2, -2)
         itemButton.icon:SetPoint("BOTTOMRIGHT", -2, 2)
-        -- Подписи держим ВНУТРИ кнопки. Прежние +3/-2 выносили их за край, а
-        -- при шаге 28 на кнопке 24 между значками всего четыре пикселя: прирост
-        -- одного предмета садился поверх значка следующего.
         itemButton.gain = UI.Text(itemButton, "GameFontNormalSmall", "", C.green)
-        itemButton.gain:SetPoint("BOTTOMRIGHT", -1, 1)
+        itemButton.gain:SetPoint("BOTTOMRIGHT", 3, -2)
         itemButton.gain:SetShadowColor(0, 0, 0, 1)
         itemButton.gain:SetShadowOffset(1, -1)
         itemButton.badge = UI.Text(itemButton, "GameFontNormalSmall", "")
-        itemButton.badge:SetPoint("TOPLEFT", 1, -1)
+        itemButton.badge:SetPoint("TOPLEFT", 1, 1)
         itemButton.badge:SetShadowColor(0, 0, 0, 1)
         itemButton.badge:SetShadowOffset(1, -1)
         itemButton:SetScript("OnEnter", function(self)
@@ -1850,20 +1747,8 @@ local function CreateResultRow(parent, index)
     row.keyBox:SetSize(COL.keyWidth, 30)
     row.keyBox:SetPoint("LEFT", COL.keyLeft, 0)
     UI.Backdrop(row.keyBox, { .035, .050, .065, 1 }, { .16, .30, .24, 1 })
-    -- Сам камень за числом. Пустой квадрат с цифрой ничем не говорил, что это
-    -- ключ; иконка предмета читается мгновенно. Держим её тускло и приглушённо,
-    -- иначе она спорит с числом, ради которого квадрат и существует.
-    row.keyIcon = row.keyBox:CreateTexture(nil, "BACKGROUND", nil, 1)
-    row.keyIcon:SetPoint("TOPLEFT", 1, -1)
-    row.keyIcon:SetPoint("BOTTOMRIGHT", -1, 1)
-    row.keyIcon:SetTexture("Interface\\Icons\\INV_Relics_Hourglass")
-    row.keyIcon:SetTexCoord(.10, .90, .22, .78)
-    row.keyIcon:SetDesaturated(true)
-    row.keyIcon:SetAlpha(.22)
     row.key = UI.Text(row.keyBox, "GameFontNormalLarge", "", C.green)
     row.key:SetPoint("CENTER", 0, 0)
-    row.key:SetShadowColor(0, 0, 0, 1)
-    row.key:SetShadowOffset(1, -1)
 
     row.roles = UI.Text(row, "GameFontHighlight", "")
     row.roles:SetPoint("RIGHT", -COL.rolesRight, 0)
@@ -2236,10 +2121,10 @@ local function BuildFilterPanel(welcome, body)
     welcome.createOwnKey = UI.Button(summary, L("Собрать свой ключ"), 190, 22, true)
     welcome.createOwnKey:SetPoint("BOTTOMLEFT", 10, 7)
     welcome.createOwnKey:SetPoint("BOTTOMRIGHT", -10, 7)
-    welcome.createOwnKey:SetScript("OnClick", OpenOwnKeystoneListingForm)
+    welcome.createOwnKey:SetScript("OnClick", function(self) CreateOwnKeystoneListing(self) end)
     welcome.createOwnKey:HookScript("OnEnter", function(self)
         UI.Tooltip(self, L("Собрать свой ключ"),
-            L("Открыть «Подземелья и рейды» — там создаётся и меняется само объявление."),
+            L("Одним кликом зарегистрировать текущий ключ в поиске групп."),
             L("Подземелье и +уровень берутся из камня, режим — «Серьёзный»."))
     end)
     welcome.createOwnKey:HookScript("OnLeave", GameTooltip_Hide)
