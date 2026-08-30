@@ -286,7 +286,10 @@ local function InitializeDatabase()
     -- Старый режим захвата штатной кнопки удалён: MythicBoost теперь
     -- открывается только своей кнопкой внутри Blizzard Group Finder.
     db.replaceGroupFinder = false
-    if db.minimalUI == nil then db.minimalUI = true end
+    -- Минималистичный интерфейс выключен по умолчанию намеренно: это не
+    -- галочка возможности, а полный рескин чужих панелей, миникарты и
+    -- трекера. Такое включают осознанно, а не получают при обновлении.
+    if db.minimalUI == nil then db.minimalUI = false end
     db.convenience = type(db.convenience) == "table" and db.convenience or {}
     if db.convenience.hideBags == nil then db.convenience.hideBags = true end
     -- Удобства включены сразу. Раньше им вообще не задавался дефолт, а

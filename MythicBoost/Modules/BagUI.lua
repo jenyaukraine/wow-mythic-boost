@@ -240,8 +240,22 @@ function BagUI:CreateItemButton(index)
     return button
 end
 
-function BagUI:UpdateItemButton(button, data)
+function BagUI:UpdateItemButton(button, data, layoutChanged)
     local info = data.info
+    -- При перетаскивании предмета игра шлёт обновление сумок, а менялась в
+    -- них одна ячейка из ста восьмидесяти шести. Перебирались все: каждой
+    -- гасились текстуры шаблона, останавливались анимации, ставился цвет
+    -- качества и счётчик — около десяти вызовов на ячейку, полторы тысячи на
+    -- проход, по несколько проходов в секунду. Отсюда и лаги.
+    local itemID = info and info.itemID or false
+    local iconID = info and info.iconFileID or false
+    local stack = SafeCount(info and info.stackCount)
+    local isLocked = info and info.isLocked == true or false
+    if not layoutChanged and button.bag == data.bag and button.slot == data.slot
+        and button.cachedItemID == itemID and button.cachedIcon == iconID
+        and button.cachedCount == stack and button.cachedLocked == isLocked then
+        return
+    end
     -- Button state can show inherited textures again after clicks/dragging;
     -- keep the Blizzard interaction scripts but never its visual skin.
     local normal = button.GetNormalTexture and button:GetNormalTexture()
@@ -258,8 +272,7 @@ function BagUI:UpdateItemButton(button, data)
     button.readable = info and info.isReadable or false
     button.link = info and info.hyperlink or nil
     if info and info.iconFileID then
-        local stackCount = SafeCount(info.stackCount)
-        local locked = info.isLocked == true
+        local stackCount, locked = stack, isLocked
         local quality = tonumber(info.quality) or 1
         local changed = button.cachedItemID ~= info.itemID or button.cachedIcon ~= info.iconFileID
             or button.cachedCount ~= stackCount or button.cachedLocked ~= locked
@@ -305,8 +318,10 @@ function BagUI:UpdateItemButton(button, data)
             button.locked:Hide()
             button:SetBackdropColor(C.field[1], C.field[2], C.field[3], C.field[4])
             button:SetBackdropBorderColor(C.line[1], C.line[2], C.line[3], C.line[4])
-            button.cachedItemID, button.cachedIcon, button.cachedCount = false, nil, nil
-            button.cachedLocked, button.cachedQuality = nil, nil
+            -- Те же значения, что сверяет ранний выход выше. С nil он не совпадал,
+            -- и сто тридцать пустых ячеек перебирались заново каждый проход.
+            button.cachedItemID, button.cachedIcon = false, false
+            button.cachedCount, button.cachedLocked, button.cachedQuality = 0, false, nil
             button.cooldownBag, button.cooldownSlot = data.bag, data.slot
             CooldownFrame_Set(button.cooldown, 0, 0, 0)
         end
@@ -362,7 +377,7 @@ function BagUI:Refresh()
                 -HEADER_HEIGHT - row * CELL_STEP)
             button.layoutReady = true
         end
-        self:UpdateItemButton(button, slots[index])
+        self:UpdateItemButton(button, slots[index], layoutChanged)
     end
     for index = #slots + 1, #self.itemButtons do
         self.itemButtons[index].bag, self.itemButtons[index].slot = nil, nil
