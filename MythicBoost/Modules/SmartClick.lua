@@ -365,7 +365,16 @@ function SmartClick:BuildBuffButton()
     local button = CreateFrame("Button", "MythicBoostBuffButton", UIParent,
         "SecureActionButtonTemplate, BackdropTemplate")
     button:SetSize(BUFF_BUTTON_SIZE, BUFF_BUTTON_SIZE)
-    button:SetPoint("CENTER", UIParent, "CENTER", 0, -160)
+    -- Прямо под строкой системных сообщений: там же, где игра пишет «Вне зоны
+    -- действия». Привязываемся к самому UIErrorsFrame, а не к координатам —
+    -- его двигают и аддоны, и настройки интерфейса, и кнопка должна ехать за
+    -- ним, а не оставаться там, где он был когда-то.
+    local errors = _G.UIErrorsFrame
+    if errors then
+        button:SetPoint("TOP", errors, "BOTTOM", 0, -10)
+    else
+        button:SetPoint("TOP", UIParent, "TOP", 0, -180)
+    end
     button:SetFrameStrata("HIGH")
     -- И нажатие, и отпускание. У клиента есть настройка «применять способность
     -- по нажатию клавиши», и при ней кнопка, зарегистрированная только на
