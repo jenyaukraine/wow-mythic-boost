@@ -450,6 +450,13 @@ local function DungeonKey(dungeon)
     return dungeon and (dungeon.keystone_instance or dungeon.id or dungeon.shortNameLocale or dungeon.shortName or dungeon.name)
 end
 
+local function DungeonKeyTexture(mapID)
+    mapID = tonumber(mapID)
+    if not mapID or not C_ChallengeMode or type(C_ChallengeMode.GetMapUIInfo) ~= "function" then return end
+    local _, _, _, icon, background = C_ChallengeMode.GetMapUIInfo(mapID)
+    return ValidTexture(icon) or ValidTexture(background)
+end
+
 local function DungeonColumns()
     local columns = {}
     for index, run in ipairs(PlayerRuns()) do
@@ -1782,11 +1789,20 @@ local function CreateResultRow(parent, index)
     UI.Backdrop(row, row.baseColor, C.lineSoft)
 
     row.keyBox = CreateFrame("Frame", nil, row, "BackdropTemplate")
-    row.keyBox:SetSize(COL.keyWidth, 30)
+    row.keyBox:SetSize(COL.keyWidth, COL.keyWidth)
     row.keyBox:SetPoint("LEFT", COL.keyLeft, 0)
     UI.Backdrop(row.keyBox, { .035, .050, .065, 1 }, { .16, .30, .24, 1 })
+    row.keyIcon = row.keyBox:CreateTexture(nil, "BACKGROUND", nil, 1)
+    row.keyIcon:SetPoint("TOPLEFT", 1, -1)
+    row.keyIcon:SetPoint("BOTTOMRIGHT", -1, 1)
+    row.keyIcon:SetTexture("Interface\\Icons\\INV_Relics_Hourglass")
+    row.keyIcon:SetTexCoord(.10, .90, .22, .78)
+    row.keyIcon:SetDesaturated(true)
+    row.keyIcon:SetAlpha(.22)
     row.key = UI.Text(row.keyBox, "GameFontNormalLarge", "", C.green)
     row.key:SetPoint("CENTER", 0, 0)
+    row.key:SetShadowColor(0, 0, 0, 1)
+    row.key:SetShadowOffset(2, -2)
 
     row.roles = UI.Text(row, "GameFontHighlight", "")
     row.roles:SetPoint("RIGHT", -COL.rolesRight, 0)
@@ -1888,6 +1904,12 @@ function GroupSearchUI:RenderRows(welcome)
             -- «~» означает оценку по результату лидера: точный уровень ключа
             -- Blizzard в Midnight аддонам не отдаёт, заголовок приходит токеном.
             row.key:SetText(displayedLevel and (((match.keyApprox and not match.targetLevel) and "~" or "+") .. displayedLevel) or "—")
+            local keyTexture = DungeonKeyTexture(match.mapID)
+            row.keyIcon:SetTexture(keyTexture or "Interface\\Icons\\INV_Relics_Hourglass")
+            row.keyIcon:SetTexCoord(keyTexture and .07 or .10, keyTexture and .93 or .90,
+                keyTexture and .07 or .22, keyTexture and .93 or .78)
+            row.keyIcon:SetDesaturated(not keyTexture)
+            row.keyIcon:SetAlpha(keyTexture and .92 or .22)
             if match.targetLevel and not exactLevelKnown then
                 -- В режиме повышения показываем именно требуемый уровень
                 -- выбранного данжа. Это цель, а не выдуманный уровень группы.
