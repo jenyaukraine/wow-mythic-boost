@@ -136,7 +136,9 @@ function LootUI:PlaceFrame()
         and type(position.x) == "number" and type(position.y) == "number" then
         frame:SetPoint(position.point, UIParent, position.relativePoint or position.point, position.x, position.y)
     else
-        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 80)
+        -- Запасное место, когда «у курсора» выключено и окно ещё не
+        -- перетаскивали: нижняя полоса, а не центр игровой зоны.
+        frame:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 330)
     end
 end
 
@@ -755,7 +757,8 @@ function LootUI:BuildAuxiliaryFrames()
     rollFrame:SetMovable(true)
     UI.Backdrop(rollFrame, { C.surface[1], C.surface[2], C.surface[3], .96 }, { .08, .34, .42, .98 })
     BuildAuxiliaryHeader(rollFrame, L("ГОЛОСОВАНИЕ ЗА ДОБЫЧУ"), "rollPosition")
-    PlaceAuxiliaryFrame(rollFrame, "rollPosition", "BOTTOM", 0, 260)
+    -- Над кастбаром: тот стоит на BOTTOM 250, и на 260 окна перекрывались.
+    PlaceAuxiliaryFrame(rollFrame, "rollPosition", "BOTTOM", 0, 330)
     self.rollFrame, self.rollRows, self.rolls = rollFrame, {}, {}
     for index = 1, MAX_ROLL_ROWS do self:BuildRollRow(index) end
     rollFrame:SetScript("OnUpdate", function(_, elapsed) LootUI:UpdateRollTimers(elapsed) end)
@@ -768,7 +771,10 @@ function LootUI:BuildAuxiliaryFrames()
     historyFrame:SetMovable(true)
     UI.Backdrop(historyFrame, { C.surface[1], C.surface[2], C.surface[3], .94 }, { .08, .34, .42, .94 })
     BuildAuxiliaryHeader(historyFrame, L("БРОСКИ ГРУППЫ"), "historyPosition")
-    PlaceAuxiliaryFrame(historyFrame, "historyPosition", "TOPLEFT", 24, -250)
+    -- Нижняя полоса, над левой (чатовой) частью дока. Раньше окно вставало
+    -- в левый верх экрана — прямо в игровую зону, которую HUD обязан
+    -- оставлять чистой: весь интерфейс живёт снизу и справа.
+    PlaceAuxiliaryFrame(historyFrame, "historyPosition", "BOTTOMLEFT", 24, 196)
     self.historyFrame, self.historyRows, self.history = historyFrame, {}, {}
     for index = 1, MAX_HISTORY_ROWS do
         local row = CreateFrame("Button", nil, historyFrame, "BackdropTemplate")
