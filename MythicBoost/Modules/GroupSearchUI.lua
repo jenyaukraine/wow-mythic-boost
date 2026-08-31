@@ -834,7 +834,7 @@ local function GetGroupTooltip()
         header:SetSize(22, 22)
         header:SetPoint("TOPLEFT",
             14 + TIP_NAME_WIDTH + (index - 1) * TIP_CELL_WIDTH + math.floor((TIP_CELL_WIDTH - 22) / 2), -60)
-        UI.Backdrop(header, { .015, .022, .030, 1 }, { .18, .48, .62, .9 })
+        UI.Backdrop(header, { C.surface[1], C.surface[2], C.surface[3], 1 }, { .18, .48, .62, .9 })
         header.icon = header:CreateTexture(nil, "ARTWORK")
         header.icon:SetPoint("TOPLEFT", 1, -1)
         header.icon:SetPoint("BOTTOMRIGHT", -1, 1)
@@ -1754,7 +1754,7 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
             card.isLootBest = bestMapID == dungeon.mapID
             card.hasUsefulLoot = percent > 0
             card.loot:SetText(analyzed and (percent .. "%") or "...")
-            if percent >= 50 then card.loot:SetTextColor(1, .74, .24, 1)
+            if percent >= 50 then card.loot:SetTextColor(UI.Unpack(C.amber))
             elseif percent > 0 then card.loot:SetTextColor(.73, .48, 1, 1)
             else card.loot:SetTextColor(UI.Unpack(C.faint)) end
 
@@ -1840,7 +1840,7 @@ local function CreateDungeonCard(parent, welcome)
     card.iconBorder = CreateFrame("Frame", nil, card, "BackdropTemplate")
     card.iconBorder:SetSize(CARD_ICON, CARD_ICON)
     card.iconBorder:SetPoint("TOPLEFT", CARD_PAD, -CARD_PAD)
-    UI.Backdrop(card.iconBorder, { .02, .03, .04, 1 }, C.line)
+    UI.Backdrop(card.iconBorder, { C.field[1], C.field[2], C.field[3], 1 }, C.line)
 
     card.icon = card.iconBorder:CreateTexture(nil, "ARTWORK")
     card.icon:SetPoint("TOPLEFT", 1, -1)

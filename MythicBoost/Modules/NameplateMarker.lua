@@ -24,7 +24,7 @@ local function CreateMarker(plate)
         edgeSize = 2,
     })
     marker:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], .92)
-    marker:SetBackdropBorderColor(1, .74, .24, 1)
+    marker:SetBackdropBorderColor(C.amber[1], C.amber[2], C.amber[3], 1)
     marker.text = marker:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     marker.text:SetPoint("CENTER", 0, 1)
     marker.text:SetText("!")

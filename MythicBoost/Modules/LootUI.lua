@@ -319,7 +319,7 @@ function LootUI:BuildRow(index)
         edgeSize = 2,
     })
     row.baseAlpha = .98
-    row:SetBackdropColor(.008, .011, .016, row.baseAlpha)
+    row:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], row.baseAlpha)
 
     -- Четыре ADD-полосы дают тот самый XLoot glow: он остаётся прямоугольным,
     -- повторяет цвет качества и не размывает иконку/текст поверх строки.
@@ -408,7 +408,7 @@ function LootUI:BuildRow(index)
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", function(owner)
-        owner:SetBackdropColor(.008, .011, .016, owner.baseAlpha or .96)
+        owner:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], owner.baseAlpha or .96)
         GameTooltip_Hide()
     end)
     self.rows[index] = row
@@ -753,7 +753,7 @@ function LootUI:BuildAuxiliaryFrames()
     rollFrame:SetFrameStrata("DIALOG")
     rollFrame:SetClampedToScreen(true)
     rollFrame:SetMovable(true)
-    UI.Backdrop(rollFrame, { .006, .010, .018, .96 }, { .08, .34, .42, .98 })
+    UI.Backdrop(rollFrame, { C.surface[1], C.surface[2], C.surface[3], .96 }, { .08, .34, .42, .98 })
     BuildAuxiliaryHeader(rollFrame, L("ГОЛОСОВАНИЕ ЗА ДОБЫЧУ"), "rollPosition")
     PlaceAuxiliaryFrame(rollFrame, "rollPosition", "BOTTOM", 0, 260)
     self.rollFrame, self.rollRows, self.rolls = rollFrame, {}, {}
@@ -766,7 +766,7 @@ function LootUI:BuildAuxiliaryFrames()
     historyFrame:SetFrameStrata("HIGH")
     historyFrame:SetClampedToScreen(true)
     historyFrame:SetMovable(true)
-    UI.Backdrop(historyFrame, { .006, .010, .018, .94 }, { .08, .34, .42, .94 })
+    UI.Backdrop(historyFrame, { C.surface[1], C.surface[2], C.surface[3], .94 }, { .08, .34, .42, .94 })
     BuildAuxiliaryHeader(historyFrame, L("БРОСКИ ГРУППЫ"), "historyPosition")
     PlaceAuxiliaryFrame(historyFrame, "historyPosition", "TOPLEFT", 24, -250)
     self.historyFrame, self.historyRows, self.history = historyFrame, {}, {}

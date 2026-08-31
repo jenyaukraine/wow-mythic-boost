@@ -156,8 +156,8 @@ function UI.Scrim(parent, layer, topAlpha, bottomAlpha)
     local texture = parent:CreateTexture(nil, layer or "ARTWORK")
     texture:SetColorTexture(1, 1, 1, 1)
     texture:SetGradient("VERTICAL",
-        CreateColor(.02, .03, .04, bottomAlpha or .88),
-        CreateColor(.02, .03, .04, topAlpha or 0))
+        CreateColor(C.field[1], C.field[2], C.field[3], bottomAlpha or .88),
+        CreateColor(C.field[1], C.field[2], C.field[3], topAlpha or 0))
     return texture
 end
 
@@ -260,9 +260,9 @@ local function ButtonVisual(button)
     local enabled = button:IsEnabled()
     local hovered = button.hovered and enabled
     if not enabled then
-        button:SetBackdropColor(.055, .066, .080, .95)
-        button:SetBackdropBorderColor(.16, .20, .23, .8)
-        button.label:SetTextColor(.36, .40, .45, 1)
+        button:SetBackdropColor(C.rowAlt[1], C.rowAlt[2], C.rowAlt[3], .95)
+        button:SetBackdropBorderColor(C.line[1], C.line[2], C.line[3], .8)
+        button.label:SetTextColor(C.faint[1], C.faint[2], C.faint[3], 1)
     elseif button.primary then
         button:SetBackdropColor(hovered and .055 or .035, hovered and .135 or .100, hovered and .150 or .115, 1)
         button:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], hovered and 1 or .92)
@@ -298,7 +298,7 @@ end
 local function IconButtonVisual(button)
     local enabled = button:IsEnabled()
     local hovered = button.hovered and enabled
-    button:SetBackdropColor(.018, .030, .044, enabled and (hovered and .96 or .82) or .48)
+    button:SetBackdropColor(C.field[1], C.field[2], C.field[3], enabled and (hovered and .96 or .82) or .48)
     button:SetBackdropBorderColor(
         enabled and (hovered and .24 or .12) or .16,
         enabled and (hovered and .92 or .54) or .20,
@@ -311,7 +311,7 @@ end
 function UI.IconButton(parent, texturePath, size)
     local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
     button:SetSize(size or 28, size or 28)
-    UI.Backdrop(button, { .018, .030, .044, .82 }, { .12, .54, .70, .88 })
+    UI.Backdrop(button, { C.field[1], C.field[2], C.field[3], .82 }, { .12, .54, .70, .88 })
 
     button.glow = button:CreateTexture(nil, "BACKGROUND")
     button.glow:SetPoint("TOPLEFT", 1, -1)
@@ -347,7 +347,7 @@ end
 function UI.CloseButton(parent)
     local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
     button:SetSize(24, 24)
-    UI.Backdrop(button, { .10, .12, .15, 0 }, { .10, .12, .15, 0 })
+    UI.Backdrop(button, { C.raised[1], C.raised[2], C.raised[3], 0 }, { C.raised[1], C.raised[2], C.raised[3], 0 })
     local glyph = UI.Text(button, "GameFontNormalLarge", "×", C.muted)
     glyph:SetAllPoints(button)
     glyph:SetJustifyH("CENTER")
@@ -357,7 +357,7 @@ function UI.CloseButton(parent)
         glyph:SetTextColor(1, .88, .88, 1)
     end)
     button:SetScript("OnLeave", function(self)
-        self:SetBackdropColor(.10, .12, .15, 0); self:SetBackdropBorderColor(.10, .12, .15, 0)
+        self:SetBackdropColor(C.raised[1], C.raised[2], C.raised[3], 0); self:SetBackdropBorderColor(C.raised[1], C.raised[2], C.raised[3], 0)
         glyph:SetTextColor(Unpack(C.muted))
     end)
     return button
@@ -373,9 +373,9 @@ local function CheckVisual(check)
     check.markA:SetShown(checked)
     check.markB:SetShown(checked)
     if not check:IsEnabled() then
-        check.box:SetBackdropColor(.045, .052, .062, 1)
-        check.box:SetBackdropBorderColor(.18, .22, .27, 1)
-        check.label:SetTextColor(.38, .42, .48, 1)
+        check.box:SetBackdropColor(C.window[1], C.window[2], C.window[3], 1)
+        check.box:SetBackdropBorderColor(C.surfaceEdge[1], C.surfaceEdge[2], C.surfaceEdge[3], 1)
+        check.label:SetTextColor(C.faint[1], C.faint[2], C.faint[3], 1)
         return
     end
     check.box:SetBackdropColor(
@@ -494,7 +494,7 @@ function UI.ScrollBar(parent)
     local bar = CreateFrame("Slider", nil, parent, "BackdropTemplate")
     bar:SetOrientation("VERTICAL")
     bar:SetWidth(6)
-    UI.Backdrop(bar, { .03, .04, .05, .8 }, { .10, .13, .17, .8 })
+    UI.Backdrop(bar, { C.field[1], C.field[2], C.field[3], .8 }, { .10, .13, .17, .8 })
     local thumb = bar:CreateTexture(nil, "OVERLAY")
     thumb:SetColorTexture(.22, .40, .52, 1)
     thumb:SetSize(6, 46)
@@ -666,7 +666,7 @@ function UI.Portrait(parent, size, thickness)
 end
 
 function UI.StatusBar(parent, height, color)
-    local holder = UI.Panel(parent, { .02, .03, .04, .72 }, C.line)
+    local holder = UI.Panel(parent, { C.field[1], C.field[2], C.field[3], .72 }, C.line)
     holder:SetHeight(height or 12)
     local bar = CreateFrame("StatusBar", nil, holder)
     bar:SetPoint("TOPLEFT", 1, -1)
@@ -677,7 +677,7 @@ function UI.StatusBar(parent, height, color)
     bar:SetValue(1)
     local void = bar:CreateTexture(nil, "BACKGROUND")
     void:SetAllPoints()
-    void:SetColorTexture(.02, .03, .04, .76)
+    void:SetColorTexture(C.field[1], C.field[2], C.field[3], .76)
     bar.holder = holder
     return bar, holder
 end
@@ -688,7 +688,7 @@ function UI.AuraIcon(parent, size)
     icon:SetSize(size, size)
     icon:EnableMouse(true)
     icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    UI.Backdrop(icon, { .02, .03, .04, .35 }, C.line, 1)
+    UI.Backdrop(icon, { C.field[1], C.field[2], C.field[3], .35 }, C.line, 1)
     icon.texture = icon:CreateTexture(nil, "ARTWORK")
     icon.texture:SetPoint("TOPLEFT", 1, -1)
     icon.texture:SetPoint("BOTTOMRIGHT", -1, 1)
