@@ -2,6 +2,7 @@ local _, JP = ...
 local L = JP.L
 local UpgradeCalculator = {}
 local UI, C = JP.UI, JP.UI.colors
+local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon"
 
 -- Сколько гербов нужно, чтобы докачать снаряжение до потолка.
 --
@@ -846,6 +847,37 @@ end
 -- Жизненный цикл модуля
 ---------------------------------------------------------------------------
 
+function UpgradeCalculator:OpenFromUpgrader()
+    local welcome = JP.modules and JP.modules.Welcome
+    if not welcome then return end
+    if not welcome.frame then welcome:Create() end
+    if not welcome.frame then return end
+
+    -- Окно мастера оставляем открытым за MythicBoost: пока оно показано,
+    -- C_ItemUpgrade разрешает последовательно измерить все надетые вещи.
+    self.autoScanned = nil
+    welcome:SwitchPage("upgrades")
+    welcome.frame:Show()
+end
+
+function UpgradeCalculator:EnsureUpgraderShortcut()
+    if self.upgraderShortcut or not _G.ItemUpgradeFrame then return end
+    local frame = _G.ItemUpgradeFrame
+    local button = UI.IconButton(frame, ICON, 30)
+    button:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -38, -4)
+    button:SetFrameLevel(frame:GetFrameLevel() + 20)
+    button:SetScript("OnClick", function() UpgradeCalculator:OpenFromUpgrader() end)
+    button:HookScript("OnEnter", function(owner)
+        UI.Tooltip(owner, "MythicBoost", L("Сканировать"))
+    end)
+    button:HookScript("OnLeave", GameTooltip_Hide)
+    frame:HookScript("OnShow", function(owner)
+        button:SetFrameLevel(owner:GetFrameLevel() + 20)
+        button:Show()
+    end)
+    self.upgraderShortcut = button
+end
+
 function UpgradeCalculator:Create()
     if self.events then return end
     self.events = CreateFrame("Frame")
@@ -857,10 +889,16 @@ function UpgradeCalculator:Create()
         -- Подошёл к мастеру — замер начнётся сам, руками жать нечего.
         "ITEM_UPGRADE_MASTER_OPENED",
         "ITEM_UPGRADE_MASTER_CLOSED",
+        "ADDON_LOADED",
     }) do
         pcall(self.events.RegisterEvent, self.events, event)
     end
     self.events:SetScript("OnEvent", function(_, event)
+        if event == "ADDON_LOADED" or event == "ITEM_UPGRADE_MASTER_OPENED" then
+            -- Blizzard_ItemUpgradeUI грузится по требованию; в момент события
+            -- сам фрейм может появиться только к следующему кадру.
+            C_Timer.After(0, function() self:EnsureUpgraderShortcut() end)
+        end
         -- Новый подход к мастеру и новая вещь — повод замерить заново.
         if event == "ITEM_UPGRADE_MASTER_CLOSED" or event == "PLAYER_EQUIPMENT_CHANGED" then
             self.autoScanned = nil
@@ -871,6 +909,7 @@ function UpgradeCalculator:Create()
             self:Refresh()
         end
     end)
+    self:EnsureUpgraderShortcut()
 end
 
 function UpgradeCalculator:Enable() end

@@ -9,9 +9,38 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $addonRoot = Join-Path $repositoryRoot "MythicBoost"
 $tocPath = Join-Path $addonRoot "MythicBoost.toc"
+$architectureCheck = Join-Path $PSScriptRoot "CheckArchitecture.py"
+$localizationCheck = Join-Path $PSScriptRoot "CheckLocalization.py"
+$smokeTests = Join-Path $PSScriptRoot "TestMythicBoost.py"
+$releaseCheck = Join-Path $PSScriptRoot "VerifyRelease.py"
 
 if (-not (Test-Path -LiteralPath $tocPath)) {
     throw "MythicBoost.toc was not found: $tocPath"
+}
+
+if (-not (Test-Path -LiteralPath $architectureCheck)) {
+    throw "Architecture checker was not found: $architectureCheck"
+}
+if (-not (Test-Path -LiteralPath $smokeTests)) {
+    throw "Executable smoke tests were not found: $smokeTests"
+}
+if (-not (Test-Path -LiteralPath $localizationCheck)) {
+    throw "Localization checker was not found: $localizationCheck"
+}
+if (-not (Test-Path -LiteralPath $releaseCheck)) {
+    throw "Release verifier was not found: $releaseCheck"
+}
+& python $architectureCheck
+if ($LASTEXITCODE -ne 0) {
+    throw "Architecture check failed. Release was not created."
+}
+& python $localizationCheck
+if ($LASTEXITCODE -ne 0) {
+    throw "Localization check failed. Release was not created."
+}
+& python $smokeTests
+if ($LASTEXITCODE -ne 0) {
+    throw "Executable smoke tests failed. Release was not created."
 }
 
 if (-not $OutputDirectory) {
@@ -37,12 +66,7 @@ if (Test-Path -LiteralPath $archivePath) {
 try {
     New-Item -ItemType Directory -Path $stagedAddon -Force | Out-Null
 
-    # KeystoneTimer is an abandoned local prototype. OneDrive can restore its
-    # stale TOC line while the workspace is open, so release staging must use
-    # one authoritative sanitized TOC instead of trusting that transient line.
-    $releaseTocLines = Get-Content -LiteralPath $tocPath | Where-Object {
-        $_.Trim() -ne "Modules/KeystoneTimer.lua"
-    }
+    $releaseTocLines = Get-Content -LiteralPath $tocPath
     $tocEntries = $releaseTocLines | Where-Object {
         $_ -and -not $_.StartsWith("##")
     }
@@ -63,6 +87,7 @@ try {
         "README.txt",
         "LICENSE-XPERL.txt",
         "NOTICE-XPERL.txt",
+        "Media\MythicBoostIcon.png",
         "Media\XPerl_FrameBack.blp",
         "Media\XPerl_ThinEdge.blp"
     )
@@ -89,6 +114,14 @@ try {
 
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     Compress-Archive -LiteralPath $stagedAddon -DestinationPath $archivePath -CompressionLevel Optimal
+
+    & python $releaseCheck $archivePath
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-Path -LiteralPath $archivePath) {
+            Remove-Item -LiteralPath $archivePath -Force
+        }
+        throw "Release verification failed."
+    }
 
     $hash = Get-FileHash -LiteralPath $archivePath -Algorithm SHA256
     [pscustomobject]@{

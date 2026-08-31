@@ -13,7 +13,7 @@ local CHANNEL_COLOR = { .32, .30, 1 }
 local COMPLETE_COLOR = { .12, .86, .15 }
 local FAILED_COLOR = { 1, .09, 0 }
 local TIME_PANEL_WIDTH = 58
-local SETTINGS_DEFAULTS = { enabled = true, unlocked = false }
+local SETTINGS_DEFAULTS = { enabled = false, unlocked = false }
 
 local function MatteBarColor(bar, color)
     local r, g, b = unpack(color)
@@ -170,7 +170,7 @@ function CastBar:Start(channel, empower)
     frame.icon:SetTexture(icon or 136243)
     local target = self.targetName
     if type(target) == "string" and not issecretvalue(target) and target ~= "" and target ~= UnitName("player") then
-        frame.name:SetFormattedText("%s  |cff8fa1b5→ %s|r", displayName or name, target)
+        frame.name:SetFormattedText("%s  |cff8fa1b5> %s|r", displayName or name, target)
     else
         frame.name:SetText(displayName or name)
     end

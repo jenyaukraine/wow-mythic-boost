@@ -8,9 +8,44 @@ local C = JP.UI.colors
 local TOOLTIP_BG = { JP.UI.colors.surface[1], JP.UI.colors.surface[2], JP.UI.colors.surface[3], .97 }
 local TOOLTIP_EDGE = { JP.UI.colors.surfaceEdge[1], JP.UI.colors.surfaceEdge[2], JP.UI.colors.surfaceEdge[3], .96 }
 
+local function PlayerAnalysisEnabled()
+    local settings = MythicBoostDB and MythicBoostDB.playerAnalysis
+    return not settings or settings.enabled ~= false
+end
+
+local function TooltipSkinEnabled()
+    return MythicBoostDB and MythicBoostDB.minimalUI == true
+end
+
+local function RestoreTooltipSkin(tooltip)
+    if not tooltip.__mbSkinApplied then return end
+    if tooltip.NineSlice then
+        local original = tooltip.__mbNineSliceOriginal
+        if tooltip.NineSlice.SetAlpha then tooltip.NineSlice:SetAlpha(original and original.alpha or 1) end
+        tooltip.NineSlice:SetShown(not original or original.shown ~= false)
+    end
+    for _, region in ipairs({ tooltip.__mbBackdrop, tooltip.__mbBackdropShade, tooltip.__mbTopAccent }) do
+        if region then region:Hide() end
+    end
+    for _, edge in ipairs(tooltip.__mbBackdropEdges or {}) do edge:Hide() end
+    tooltip.__mbSkinApplied = false
+end
+
 local function ApplyTooltipSkin(tooltip)
     if not tooltip then return end
+    -- Tooltip enrichment is part of the player-analysis core, but replacing
+    -- every Blizzard tooltip is visual customization. Keep that replacement
+    -- coupled to the explicit Minimal UI opt-in and restore the native skin
+    -- when it is disabled.
+    if not TooltipSkinEnabled() then RestoreTooltipSkin(tooltip); return end
+    tooltip.__mbSkinApplied = true
     if tooltip.NineSlice and type(tooltip.NineSlice.SetAlpha) == "function" then
+        if not tooltip.__mbNineSliceOriginal then
+            tooltip.__mbNineSliceOriginal = {
+                alpha = tooltip.NineSlice:GetAlpha(),
+                shown = tooltip.NineSlice:IsShown(),
+            }
+        end
         tooltip.NineSlice:SetAlpha(0)
         tooltip.NineSlice:Hide()
     end
@@ -46,7 +81,11 @@ local function ApplyTooltipSkin(tooltip)
         edges[2]:SetPoint("BOTTOMLEFT"); edges[2]:SetPoint("BOTTOMRIGHT"); edges[2]:SetHeight(1)
         edges[3]:SetPoint("TOPLEFT");    edges[3]:SetPoint("BOTTOMLEFT");  edges[3]:SetWidth(1)
         edges[4]:SetPoint("TOPRIGHT");   edges[4]:SetPoint("BOTTOMRIGHT"); edges[4]:SetWidth(1)
+        tooltip.__mbBackdropEdges = edges
     end
+    tooltip.__mbBackdrop:Show()
+    tooltip.__mbBackdropShade:Show()
+    for _, edge in ipairs(tooltip.__mbBackdropEdges or {}) do edge:Show() end
     if not tooltip.__mbTopAccent then
         local accent = tooltip:CreateTexture(nil, "OVERLAY", nil, 7)
         accent:SetPoint("TOPLEFT", 1, -1)
@@ -177,6 +216,7 @@ local function AddRunCount(tooltip, runs)
 end
 
 local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, saveRecent)
+    if not PlayerAnalysisEnabled() then return end
     local keystone = profile and profile.mythicKeystoneProfile
     local runs = keystone and keystone.sortedDungeons
     if not runs or #runs == 0 or tooltip.__jpDungeonKey == uniqueKey then return end
@@ -187,7 +227,7 @@ local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, s
     tooltip.__jpDungeonKey = uniqueKey
 
     tooltip:AddLine(" ")
-    tooltip:AddLine(L("MythicBoost • Лучшие ключи"), .15, .75, 1)
+    tooltip:AddLine(L("MythicBoost - Лучшие ключи"), .15, .75, 1)
     for index = 1, math.min(8, #runs) do
         local run = runs[index]
         local dungeon = run.dungeon
@@ -213,6 +253,7 @@ local function IsUsableString(value)
 end
 
 local function AddUnitProfile(tooltip)
+    if not PlayerAnalysisEnabled() then return end
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local playerName, unit = tooltip:GetUnit()
     if not IsUsableString(playerName) or not IsUsableString(unit) then return end
@@ -233,6 +274,7 @@ local function AddUnitProfile(tooltip)
 end
 
 local function AddApplicantProfile(tooltip)
+    if not PlayerAnalysisEnabled() then return end
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local owner = tooltip:GetOwner()
     if not owner or not owner.memberIdx then return end
@@ -245,6 +287,7 @@ local function AddApplicantProfile(tooltip)
 end
 
 local function AddGenericRaiderIOProfile(tooltip)
+    if not PlayerAnalysisEnabled() then return end
     if tooltip.__jpDungeonKey or not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local tooltipName = tooltip:GetName()
     local firstLine = tooltipName and _G[tooltipName .. "TextLeft1"]
@@ -269,6 +312,7 @@ local function AddSearchResultProfile(tooltip, searchResultID)
     if JP.GroupSearchUI and JP.GroupSearchUI.ShowBlizzardResultTooltip then
         pcall(JP.GroupSearchUI.ShowBlizzardResultTooltip, JP.GroupSearchUI, tooltip:GetOwner(), searchResultID)
     end
+    if not PlayerAnalysisEnabled() then return end
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local info = C_LFGList.GetSearchResultInfo(searchResultID)
     if not info then return end
@@ -280,6 +324,7 @@ local function AddSearchResultProfile(tooltip, searchResultID)
 end
 
 local function AddFriendProfile()
+    if not PlayerAnalysisEnabled() then return end
     if not FriendsTooltip or not FriendsTooltip.button or not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local button = FriendsTooltip.button
     local characterName, realmName

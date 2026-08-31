@@ -20,7 +20,7 @@ local UI, C = JP.UI, JP.UI.colors
 local MAX_ENTRIES = 100     -- уникальных ошибок в журнале
 local MAX_MESSAGE = 1200    -- обрезаем гигантские сообщения
 local MAX_STACK = 4000      -- и трейсы: они бывают на сотни строк
-local SETTINGS_DEFAULTS = { enabled = true, keepBetweenSessions = true, muteSound = true }
+local SETTINGS_DEFAULTS = { enabled = false, keepBetweenSessions = true }
 
 -- Журнал до появления SavedVariables. MythicBoostDB создаётся только на
 -- ADDON_LOADED, а ошибка может прилететь раньше — тогда она копится здесь
@@ -36,9 +36,10 @@ end
 
 function ErrorGuard:IsEnabled()
     local settings = self:GetSettings()
-    -- До загрузки базы считаем включённым: пропустить ошибку на экран хуже,
-    -- чем лишний раз её проглотить.
-    if not settings then return true end
+    -- Until SavedVariables are ready, forward errors to Blizzard. Globally
+    -- suppressing errors before the player has opted in is too invasive for
+    -- an addon whose primary purpose is Mythic+ group analysis.
+    if not settings then return false end
     return settings.enabled == true
 end
 
@@ -403,19 +404,36 @@ end
 -- Жизненный цикл
 ---------------------------------------------------------------------------
 
-function ErrorGuard:Create()
-    self:SuppressBlizzardFrame()
+function ErrorGuard:UpdateTicker()
+    if self:IsEnabled() then
+        if not self.ticker and C_Timer then
+            self.ticker = C_Timer.NewTicker(1, function()
+                if ErrorGuard.dirty then
+                    ErrorGuard.dirty = false
+                    ErrorGuard:Refresh()
+                end
+            end)
+        end
+    elseif self.ticker then
+        self.ticker:Cancel()
+        self.ticker = nil
+    end
+end
 
+function ErrorGuard:SetEnabled(value)
+    local settings = self:GetSettings()
+    if not settings then return end
+    settings.enabled = value and true or false
+    if settings.enabled then self:SuppressBlizzardFrame() end
+    self:UpdateTicker()
+end
+
+function ErrorGuard:Create()
+    if self:IsEnabled() then self:SuppressBlizzardFrame() end
     -- Окно перерисовываем не на каждую ошибку, а раз в секунду: при буре из
     -- OnUpdate перерисовка на каждое срабатывание была бы дороже самой ошибки.
-    if not self.ticker and C_Timer then
-        self.ticker = C_Timer.NewTicker(1, function()
-            if ErrorGuard.dirty then
-                ErrorGuard.dirty = false
-                ErrorGuard:Refresh()
-            end
-        end)
-    end
+    -- Выключенный перехват не держит фоновый ticker.
+    self:UpdateTicker()
 
     if not self.loader then
         self.loader = CreateFrame("Frame")
@@ -434,6 +452,7 @@ function ErrorGuard:Enable()
     -- Чужие ловцы ошибок ставят свой обработчик тем же seterrorhandler, и
     -- побеждает тот, кто вызвал его последним. Одновременно с BugGrabber
     -- работать нельзя — предупреждаем прямо, а не оставляем гадать.
+    if not self:IsEnabled() then return end
     local conflicts = {}
     for _, name in ipairs({ "!BugGrabber", "BugGrabber", "BugSack", "Swatter" }) do
         if UI.IsAddOnLoaded(name) then conflicts[#conflicts + 1] = name end
@@ -444,8 +463,11 @@ function ErrorGuard:Enable()
     end
 end
 
-function ErrorGuard:Disable() if self.window then self.window:Hide() end end
-function ErrorGuard:Destroy() if self.window then self.window:Hide() end end
+function ErrorGuard:Disable()
+    if self.window then self.window:Hide() end
+    if self.ticker then self.ticker:Cancel(); self.ticker = nil end
+end
+function ErrorGuard:Destroy() self:Disable() end
 
 JP.ErrorGuard = ErrorGuard
 JP:RegisterModule("ErrorGuard", ErrorGuard)

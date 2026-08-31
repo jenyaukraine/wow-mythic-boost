@@ -3,14 +3,19 @@ local L = JP.L
 local Welcome = { rows = {} }
 local UI = JP.UI
 local C = UI.colors
+local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon"
 
 local DEFAULT_WIDTH, DEFAULT_HEIGHT = 1320, 840
--- Пять вкладок требуют 12 + 5*146 = 742 пикселя, остальное отдаём под
+-- Шесть вкладок требуют 12 + 6*146 = 888 пикселей, остальное отдаём под
 -- содержимое. Прежние 1160x700 держали окно больше, чем нужно любой из
 -- вкладок, и половина высоты уходила в пустоту.
-local MIN_WIDTH, MIN_HEIGHT = 1000, 560
+-- The settings page needs enough vertical room for its last toggle and help
+-- text. At 560 px those controls were clipped even though the resize grip
+-- still allowed that size, so 650 is the truthful minimum for every tab.
+local MIN_WIDTH, MIN_HEIGHT = 1000, 650
 local HEADER_HEIGHT = 64
 local WINDOW_ALPHA = .94
+local ONBOARDING_VERSION = 1
 
 local function SaveWindow(frame)
     if frame.maximized then return end
@@ -47,8 +52,10 @@ local function BuildHeader(self, frame)
     local badge = UI.Panel(header, { .10, .42, .58, 1 }, { .22, .70, .92, 1 })
     badge:SetSize(36, 36)
     badge:SetPoint("LEFT", 18, 1)
-    local mark = UI.Text(badge, "GameFontNormalLarge", "MB", { 1, 1, 1, 1 })
-    mark:SetPoint("CENTER", 0, 0)
+    local mark = badge:CreateTexture(nil, "ARTWORK")
+    mark:SetPoint("TOPLEFT", 2, -2)
+    mark:SetPoint("BOTTOMRIGHT", -2, 2)
+    mark:SetTexture(ICON)
 
     -- Вместо повторения названия аддона показываем полезное состояние пати.
     -- Каждый слот — настоящий Frame/Texture, поэтому пустые места больше не
@@ -95,6 +102,72 @@ local function BuildHeader(self, frame)
     self.status:SetJustifyH("RIGHT")
 
     return header
+end
+
+local function BuildGuide(self, owner)
+    local shade = CreateFrame("Frame", nil, owner, "BackdropTemplate")
+    shade:SetAllPoints()
+    shade:SetFrameLevel(owner:GetFrameLevel() + 50)
+    shade:EnableMouse(true)
+    UI.Backdrop(shade, { .01, .015, .022, .86 }, { 0, 0, 0, 0 })
+
+    local card = UI.Panel(shade, { .035, .052, .071, 1 }, { .20, .52, .68, 1 })
+    card:SetSize(760, 404)
+    card:SetPoint("CENTER", 0, 0)
+
+    local close = UI.CloseButton(card)
+    close:SetPoint("TOPRIGHT", -10, -10)
+    close:SetScript("OnClick", function() shade:Hide() end)
+
+    local title = UI.Text(card, "GameFontNormalHuge", L("Что ты хочешь сделать?"), C.text)
+    title:SetPoint("TOPLEFT", 28, -24)
+    local subtitle = UI.Text(card, "GameFontHighlightSmall",
+        L("MythicBoost ведёт по трём шагам: найти группу, собрать пати и сохранить результат."), C.muted)
+    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -9)
+
+    local function Choice(index, heading, description, action, onClick)
+        local panel = UI.Panel(card, C.panel, C.line)
+        panel:SetPoint("TOPLEFT", 28, -94 - (index - 1) * 86)
+        panel:SetPoint("TOPRIGHT", -28, -94 - (index - 1) * 86)
+        panel:SetHeight(72)
+        local number = UI.Text(panel, "GameFontNormalLarge", tostring(index), C.accent)
+        number:SetPoint("LEFT", 16, 0)
+        local label = UI.Text(panel, "GameFontNormal", heading, C.text)
+        label:SetPoint("TOPLEFT", 48, -13)
+        local detail = UI.Text(panel, "GameFontHighlightSmall", description, C.muted)
+        detail:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -6)
+        detail:SetPoint("RIGHT", -190, 0)
+        detail:SetJustifyH("LEFT")
+        local button = UI.Button(panel, action, 160, 32)
+        button:SetPoint("RIGHT", -14, 0)
+        button:SetScript("OnClick", function()
+            MythicBoostDB.onboardingVersion = ONBOARDING_VERSION
+            shade:Hide()
+            onClick()
+        end)
+    end
+
+    Choice(1, L("Найти подходящую группу"),
+        L("Выбери подземелья и нажми «Найти группы». Результаты можно отсортировать по силе и шансу повысить рейтинг."),
+        L("К поиску"), function() self:SwitchPage("groups") end)
+    Choice(2, L("Собрать группу на свой ключ"),
+        L("Сначала создай объявление в окне Blizzard. После этого кандидаты появятся здесь с опытом по каждому подземелью."),
+        L("Создать объявление"), function()
+            if JP.FrameSwitch then JP.FrameSwitch.OpenBlizzard() end
+        end)
+    Choice(3, L("Проверить пати или кандидатов"),
+        L("Сравни рейтинг, лучшие ключи и слабые места. Пригласить или отклонить игрока можно прямо из списка."),
+        L("К кандидатам"), function() self:SwitchPage("applicants") end)
+
+    local hint = UI.Text(card, "GameFontHighlightSmall",
+        L("Подсказка: окно всегда открывается командой /mb или через кнопку аддона у миникарты."), C.faint)
+    hint:SetPoint("BOTTOMLEFT", 28, 18)
+    shade:Hide()
+    self.guide = shade
+end
+
+function Welcome:ShowGuide()
+    if self.guide then self.guide:Show() end
 end
 
 -- Пустая выдача без объяснения — худшее, что может показать поиск: «0 из 100»
@@ -145,8 +218,9 @@ function Welcome:Create()
     local tabTop = -(HEADER_HEIGHT + 8)
     self.tabs = {}
     local order = {
-        { key = "groups", label = L("ПОДБОР ГРУПП") },
-        { key = "applicants", label = L("ПАТИ / КАНДИДАТЫ") },
+        { key = "groups", label = L("НАЙТИ ГРУППУ") },
+        { key = "applicants", label = L("СОБРАТЬ ПАТИ") },
+        { key = "history", label = L("НАПАРНИКИ") },
         { key = "guild", label = L("РЕЙТИНГ ГИЛЬДИИ") },
         { key = "upgrades", label = L("УЛУЧШЕНИЯ") },
         { key = "settings", label = L("НАСТРОЙКИ") },
@@ -176,6 +250,12 @@ function Welcome:Create()
     applicants:Hide()
     JP.ApplicantBoard:Build(self, applicants)
 
+    local history = UI.Panel(frame, C.panel, C.line)
+    history:SetPoint("TOPLEFT", 12, pageTop)
+    history:SetPoint("BOTTOMRIGHT", -12, 12)
+    history:Hide()
+    JP.RunHistory:Build(self, history)
+
     local upgrades = UI.Panel(frame, C.panel, C.line)
     upgrades:SetPoint("TOPLEFT", 12, pageTop)
     upgrades:SetPoint("BOTTOMRIGHT", -12, 12)
@@ -189,11 +269,12 @@ function Welcome:Create()
     JP.SettingsHub:Build(self, settings)
 
     self.pages = {
-        groups = groups, applicants = applicants, guild = guild,
+        groups = groups, applicants = applicants, history = history, guild = guild,
         upgrades = upgrades, settings = settings,
     }
     self.currentPage = "groups"
     self.tabs.groups:SetActive(true)
+    BuildGuide(self, frame)
 
     local resize = CreateFrame("Button", nil, frame)
     resize:SetSize(20, 20)
@@ -266,10 +347,16 @@ function Welcome:Create()
             JP.GroupSearchUI:Layout(self)
             JP.GuildBoard:Layout()
             JP.ApplicantBoard:Layout()
+            JP.RunHistory:Layout()
             SaveWindow(frame)
         end)
     end)
-    frame:SetScript("OnShow", function() self:Refresh() end)
+    frame:SetScript("OnShow", function()
+        self:Refresh()
+        if (tonumber(MythicBoostDB.onboardingVersion) or 0) < ONBOARDING_VERSION then
+            self:ShowGuide()
+        end
+    end)
     frame:SetScript("OnHide", function()
         if JP.GroupSearchUI.groupTooltip then JP.GroupSearchUI.groupTooltip:Hide() end
     end)
@@ -305,6 +392,11 @@ function Welcome:Refresh()
         self.status:SetText("")
         return
     end
+    if self.currentPage == "history" then
+        JP.RunHistory:Refresh()
+        self.status:SetText("")
+        return
+    end
     if self.currentPage == "upgrades" then
         JP.UpgradeCalculator:Refresh()
         self.status:SetText("")
@@ -322,42 +414,57 @@ function Welcome:Refresh()
 
     local batch = JP.GroupSearchUI.completedBatch
     JP.GroupSearchUI.completedBatch = nil
-    local matches, message, scanned, rejected
+    local matches, excluded, message, scanned, rejected
     if batch then
-        matches, scanned, rejected = batch.matches or {}, batch.scanned or 0, batch.rejected or {}
+        matches, excluded = batch.matches or {}, batch.excluded or {}
+        scanned, rejected = batch.scanned or 0, batch.rejected or {}
     else
-        matches, message, scanned, rejected = JP.AutoMatch:Scan(
+        matches, message, scanned, rejected, excluded = JP.AutoMatch:Scan(
             self:GetGroupFilters(), {
                 bestByMap = self.bestByMap,
                 bestByActivity = self.bestByActivity,
             })
     end
     -- Сортируем по силе всей текущей группы, а не только по лидеру.
-    JP.GroupSearchUI:EnrichPartyRatings(matches)
-    self.matches = matches
+    excluded = excluded or {}
+    local experienceRejected = JP.GroupSearchUI:EnrichPartyRatings(matches, self.groupFilters, excluded) or 0
+    if experienceRejected > 0 then
+        rejected = rejected or {}
+        local reason = L("не все участники проходили этот уровень")
+        rejected[reason] = (rejected[reason] or 0) + experienceRejected
+    end
+    self.eligibleMatches = matches
+    self.excludedMatches = excluded
+    self.matches = JP.GroupSearchUI:ComposeResults(matches, excluded)
 
     local visible = self.visibleRows or 5
-    local maximum = math.max(0, #matches - visible)
+    local maximum = math.max(0, #self.matches - visible)
     self.scrollBar:SetMinMaxValues(0, maximum)
     self.offset = math.min(self.offset or 0, maximum)
     self.scrollBar:SetValue(self.offset)
     self.scrollBar:SetShown(maximum > 0)
     self:RenderRows()
 
-    self.empty:SetShown(#matches == 0)
-    if #matches == 0 then
-        self.empty:SetText(message or EmptyStateText(rejected, scanned))
+    self.empty:SetShown(#self.matches == 0)
+    if #self.matches == 0 then
+        local rejectedHidden = #excluded > 0 and MythicBoostDB.search
+            and MythicBoostDB.search.showRejectedResults == false
+        self.empty:SetText(rejectedHidden
+            and (L("Подходящих групп нет. Ещё %d групп скрыты настройкой нижней серой секции.")):format(#excluded)
+            or message or EmptyStateText(rejected, scanned))
     end
 
     -- Счётчик показывает и отбор, и объём выборки: сразу видно, фильтры
     -- слишком строгие или Blizzard прислал мало групп.
     local scope = JP.GroupSearchUI:GetScopeText(self)
     if scanned and scanned > 0 then
-        self.resultsCount:SetText((L("%d из %d  •  %s")):format(#matches, scanned, scope))
+        self.resultsCount:SetText((L("%d подходят  -  %d ниже  -  %d всего"))
+            :format(#matches, #excluded, scanned))
     else
         self.resultsCount:SetText(scope or "")
     end
-    self.status:SetText(#matches > 0 and (L("найдено групп: ") .. #matches) or "")
+    self.status:SetText(scanned and scanned > 0 and
+        ((L("подходит групп: %d, ниже фильтров: %d")):format(#matches, #excluded)) or "")
 end
 
 function Welcome:Toggle()

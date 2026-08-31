@@ -2,6 +2,11 @@ local _, JP = ...
 local C = JP.UI.colors
 local NameplateMarker = { plates = {} }
 
+local function Enabled()
+    local settings = MythicBoostDB and MythicBoostDB.playerAnalysis
+    return not settings or (settings.enabled ~= false and settings.nameplateMarkers ~= false)
+end
+
 local function FullUnitName(unit)
     local name, realm = UnitFullName(unit)
     if type(name) ~= "string" or name == "" then return end
@@ -29,6 +34,7 @@ local function CreateMarker(plate)
 end
 
 function NameplateMarker:Update(unit)
+    if not Enabled() then return end
     if not unit or not UnitIsPlayer(unit) or UnitIsUnit(unit, "player") then return end
     local plate = C_NamePlate.GetNamePlateForUnit(unit)
     if not plate then return end
@@ -77,6 +83,7 @@ function NameplateMarker:Create()
 end
 
 function NameplateMarker:Enable()
+    if not Enabled() then self:Disable(); return end
     if not self.eventFrame then self:Create() end
     self.eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
     self.eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")

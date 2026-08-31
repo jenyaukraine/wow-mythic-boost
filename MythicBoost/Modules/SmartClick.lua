@@ -2,7 +2,7 @@ local _, JP = ...
 local L = JP.L
 local SmartClick = {}
 local UI, C = JP.UI, JP.UI.colors
-local SETTINGS_DEFAULTS = { buff = true, res = true }
+local SETTINGS_DEFAULTS = { buff = false, res = false }
 
 ---------------------------------------------------------------------------
 -- Умный клик: макрос MBSmartClick, который ведёт аддон
@@ -345,7 +345,7 @@ function SmartClick:MissingBuff()
                 local data, blocked = SafeAura(unit, index, "HELPFUL")
                 -- Ауры закрыты целиком — подсказка по баффу сейчас невозможна,
                 -- и перебирать оставшиеся тридцать девять слотов незачем.
-                if blocked then return nil end
+                if blocked then return nil, true end
                 if not data then break end
                 local spellID = data.spellId
                 if not issecretvalue(spellID) and wanted[spellID] then found = true; break end
@@ -417,11 +417,17 @@ function SmartClick:BuildBuffButton()
     button.label:SetPoint("TOP", button, "BOTTOM", 0, -4)
 
     button:SetScript("OnEnter", function(owner)
-        UI.Tooltip(owner, name, L("Бафф нужен: ") .. (owner.missingText or "—"),
-            L("Заклинание групповое — один каст закрывает всех в радиусе."))
+        -- Secure-фрейм технически остаётся показанным ради работы в бою, но
+        -- при alpha=0 не должен перехватывать наведение пустым тултипом.
+        if owner:GetAlpha() <= .01 then return end
+        UI.Tooltip(owner, name, L("Бафф нужен: ") .. (owner.missingText or "—"))
     end)
     button:SetScript("OnLeave", GameTooltip_Hide)
 
+    -- Безопасное начальное состояние. Если чтение аур сразу после входа или
+    -- /reload закрыто, RefreshBuffButton выйдет без результата и кнопка не
+    -- вспыхнет с текстом «Бафф нужен: —».
+    button:SetAlpha(0)
     button:Hide()
     self.buffButton = button
     return button
@@ -433,29 +439,38 @@ function SmartClick:RefreshBuffButton()
         if self.buffButton and not InCombatLockdown() then self.buffButton:Hide() end
         return
     end
-    -- Show/Hide на secure-кнопке в бою заблокированы. Не трогаем её вовсе:
-    -- бафф — занятие мирное, а мигать кнопкой посреди пула незачем.
-    if InCombatLockdown() then return end
-
-    local missing = self:MissingBuff()
-    local button = self:BuildBuffButton()
+    -- Secure-кнопку нельзя Show() после начала боя. Держим сам фрейм заранее
+    -- показанным, а визуальную видимость меняем через alpha — это разрешено в
+    -- бою и не трогает защищённое действие. Поэтому пустая кнопка не висит на
+    -- экране, но мгновенно проявляется, если бафф пропал уже во время боя.
+    local inCombat = InCombatLockdown()
+    local button = self.buffButton
+    if not button and inCombat then return end
+    button = button or self:BuildBuffButton()
     if not button then return end
+    if not inCombat then button:Show() end
+    local missing, blocked = self:MissingBuff()
+    if blocked then return end
 
     -- Макрос собирается один раз при создании кнопки, а заклинание у персонажа
     -- может смениться вместе со специализацией. Переписываем вне боя, иначе
     -- кнопка останется с прошлым кастом.
     local _, class = UnitClass("player")
     local current = class and BUFF[class] and SpellName(BUFF[class])
-    if current and current ~= button.spellName then
+    if not inCombat and current and current ~= button.spellName then
         button:SetAttribute("macrotext", BuffMacro(current))
         button.spellName = current
     end
 
-    if not missing then button:Hide(); return end
-
-    button.missingText = table.concat(missing, ", ")
-    button.label:SetText(#missing > 1 and (L("без баффа: ") .. #missing) or button.missingText)
-    button:Show()
+    if missing then
+        button.missingText = table.concat(missing, ", ")
+        button.label:SetText(#missing > 1 and (L("без баффа: ") .. #missing) or button.missingText)
+        button:SetAlpha(1)
+    else
+        button.missingText = "—"
+        button.label:SetText("")
+        button:SetAlpha(0)
+    end
 end
 
 function SmartClick:Create()
@@ -473,6 +488,7 @@ function SmartClick:Create()
         "SPELLS_CHANGED",
         "GROUP_ROSTER_UPDATE",
         "UNIT_AURA",
+        "UNIT_SPELLCAST_SUCCEEDED",
     }) do
         pcall(self.events.RegisterEvent, self.events, event)
     end
@@ -480,7 +496,18 @@ function SmartClick:Create()
     -- вместе с переучиванием заклинаний, и собирать макрос десять раз подряд
     -- незачем.
     local queued = false
-    self.events:SetScript("OnEvent", function()
+    self.events:SetScript("OnEvent", function(_, event, unit, _, spellID)
+        -- В бою Blizzard может закрыть чтение части групповых аур. Успешный
+        -- групповой каст при этом известен точно: сразу гасим подсказку, а
+        -- следующая доступная проверка снова покажет её только при пропаже.
+        if event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" then
+            local _, class = UnitClass("player")
+            if class and BUFF[class] == spellID and SmartClick.buffButton then
+                SmartClick.buffButton.missingText = "—"
+                SmartClick.buffButton.label:SetText("")
+                SmartClick.buffButton:SetAlpha(0)
+            end
+        end
         if queued then return end
         queued = true
         C_Timer.After(.3, function()
@@ -491,7 +518,11 @@ function SmartClick:Create()
     end)
 end
 
-function SmartClick:Enable() self:Apply() end
+function SmartClick:Enable()
+    self:Apply()
+    -- Подготавливаем secure-кнопку до первого боя, а не ждём UNIT_AURA.
+    self:RefreshBuffButton()
+end
 function SmartClick:Disable() end
 function SmartClick:Destroy() end
 

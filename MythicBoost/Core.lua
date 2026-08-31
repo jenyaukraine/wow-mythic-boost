@@ -4,45 +4,11 @@ local L = JP.L
 JP.name = addonName
 JP.modules, JP.pendingReloads = {}, {}
 JP.positivePlayers = {}
+JP.positivePlayerOrder = {}
 
-local DB_VERSION = 5
-local SCANNED_TTL = 30 * 24 * 60 * 60   -- запись об игроке живёт месяц
-local SCANNED_LIMIT = 300               -- и база не растёт бесконечно
-
--- Midnight помечает часть данных как secret. На клиентах без этого API
--- подставляем заглушку, чтобы модули могли звать проверку без условий.
-if type(issecretvalue) ~= "function" then
-    issecretvalue = function() return false end
-end
-
-function JP.UsableNumber(value)
-    return type(value) == "number" and not issecretvalue(value)
-end
-
-function JP.SafeNumber(value)
-    return JP.UsableNumber(value) and value or nil
-end
-
-function JP.SafeString(value)
-    if type(value) ~= "string" or issecretvalue(value) or value == "" then return nil end
-    return value
-end
-
-function JP.SafeStringOrEmpty(value)
-    return type(value) == "string" and not issecretvalue(value) and value or nil
-end
-
-function JP.UsableString(value)
-    return JP.SafeString(value) ~= nil
-end
-
-function JP.SafeBoolean(value)
-    return type(value) == "boolean" and not issecretvalue(value) and value or false
-end
-
-function JP.SafeTable(value)
-    return type(value) == "table" and not issecretvalue(value) and value or nil
-end
+local DB_VERSION = JP.Contracts.DATABASE_VERSION
+local SCANNED_TTL = JP.Limits.SCANNED_PLAYER_TTL
+local SCANNED_LIMIT = JP.Limits.SCANNED_PLAYERS
 
 function JP.Settings(section, defaults)
     if type(MythicBoostDB) ~= "table" then return nil end
@@ -78,7 +44,7 @@ end
 -- не гадая, а по фактам от API.
 ---------------------------------------------------------------------------
 
-local LOG_LIMIT = 200
+local LOG_LIMIT = JP.Limits.LOG_ENTRIES
 JP.log = {}
 
 function JP:IsLogging()
@@ -144,7 +110,7 @@ end
 function JP:RefreshLocalBests(requestInfo)
     DropStaleSeason()
     if requestInfo and C_MythicPlus and C_MythicPlus.RequestMapInfo then C_MythicPlus.RequestMapInfo() end
-    for _, mapID in ipairs(C_ChallengeMode.GetMapTable and C_ChallengeMode.GetMapTable() or {}) do
+    for _, mapID in ipairs(JP.API.GetChallengeMapIDs()) do
         local best = ApiBestLevel(mapID)
         if best > 0 then self:SetLocalBest(mapID, best) end
     end
@@ -169,13 +135,36 @@ local function StorePlayer(fullName, data)
     data.name = fullName
     data.lastSeen = time()
     MythicBoostDB.scannedPlayers[full] = data
+    local total, oldestKey, oldestSeen = 0, nil, math.huge
+    for key, record in pairs(MythicBoostDB.scannedPlayers) do
+        total = total + 1
+        local seen = type(record) == "table" and tonumber(record.lastSeen) or 0
+        if seen < oldestSeen then oldestKey, oldestSeen = key, seen end
+    end
+    if total > SCANNED_LIMIT and oldestKey then
+        local removed = MythicBoostDB.scannedPlayers[oldestKey]
+        MythicBoostDB.scannedPlayers[oldestKey] = nil
+        if JP.positivePlayers[oldestKey] == removed then JP.positivePlayers[oldestKey] = nil end
+        local short = oldestKey:match("^([^-]+)")
+        if short and JP.positivePlayers[short] == removed then JP.positivePlayers[short] = nil end
+    end
 end
 
 function JP:MarkPositivePlayer(fullName, data, saveRecent)
     local full, short = PlayerKeys(fullName)
     if not full then return end
+    local isNew = self.positivePlayers[full] == nil
     self.positivePlayers[full] = data or true
     if short then self.positivePlayers[short] = data or true end
+    if isNew then
+        self.positivePlayerOrder[#self.positivePlayerOrder + 1] = { key = full, short = short }
+        while #self.positivePlayerOrder > SCANNED_LIMIT do
+            local old = table.remove(self.positivePlayerOrder, 1)
+            local removed = self.positivePlayers[old.key]
+            self.positivePlayers[old.key] = nil
+            if old.short and self.positivePlayers[old.short] == removed then self.positivePlayers[old.short] = nil end
+        end
+    end
     if saveRecent and type(data) == "table" then StorePlayer(fullName, data) end
     local marker = self.modules.NameplateMarker
     if marker and marker.RefreshAll then marker:RefreshAll() end
@@ -218,6 +207,7 @@ local function RestorePositivePlayers()
         JP.positivePlayers[key] = data
         local short = key:match("^([^-]+)")
         if short then JP.positivePlayers[short] = data end
+        JP.positivePlayerOrder[#JP.positivePlayerOrder + 1] = { key = key, short = short }
     end
 end
 
@@ -313,6 +303,9 @@ end
 local function InitializeDatabase()
     MythicBoostDB = type(MythicBoostDB) == "table" and MythicBoostDB or {}
     local db = MythicBoostDB
+    local function Default(settings, key, value)
+        if settings[key] == nil then settings[key] = value end
+    end
     db.dbVersion = DB_VERSION
     db.scannedPlayers = type(db.scannedPlayers) == "table" and db.scannedPlayers or {}
     db.groupFilters = type(db.groupFilters) == "table" and db.groupFilters or {}
@@ -322,6 +315,29 @@ local function InitializeDatabase()
     if db.minimumKeystoneRuns ~= nil and not tonumber(db.minimumKeystoneRuns) then db.minimumKeystoneRuns = nil end
     if db.filterGroupFinder == nil then db.filterGroupFinder = true end
     if db.logging == nil then db.logging = false end
+    -- Search and analysis are the product core. Rejected results stay visible
+    -- by default so our list never looks smaller than Blizzard's real result
+    -- set; the player may hide the lower section or make it read-only.
+    db.search = type(db.search) == "table" and db.search or {}
+    Default(db.search, "showRejectedResults", true)
+    Default(db.search, "allowRejectedApplications", true)
+    db.playerAnalysis = type(db.playerAnalysis) == "table" and db.playerAnalysis or {}
+    Default(db.playerAnalysis, "enabled", true)
+    Default(db.playerAnalysis, "nameplateMarkers", true)
+    -- Earlier releases silently raised the required number of the leader's
+    -- +10 runs every time *the player* finished a key. Those values are not
+    -- causally related and the hidden growth eventually pushed most listings
+    -- into the rejected section. Migrate that legacy automatic value once;
+    -- explicit future edits of runsMin remain untouched.
+    if db.search.defaultsRevision ~= 1 then
+        local storedRuns = tonumber(db.groupFilters.runsMin)
+        local automaticRuns = tonumber(db.minimumKeystoneRuns)
+        if storedRuns == nil or (automaticRuns and storedRuns == automaticRuns) then
+            db.groupFilters.runsMin = 0
+        end
+        db.minimumKeystoneRuns = 0
+        db.search.defaultsRevision = 1
+    end
     -- Старый режим захвата штатной кнопки удалён: MythicBoost теперь
     -- открывается только своей кнопкой внутри Blizzard Group Finder.
     db.replaceGroupFinder = false
@@ -329,27 +345,86 @@ local function InitializeDatabase()
     -- галочка возможности, а полный рескин чужих панелей, миникарты и
     -- трекера. Такое включают осознанно, а не получают при обновлении.
     if db.minimalUI == nil then db.minimalUI = false end
+    db.minimalUIOptions = type(db.minimalUIOptions) == "table" and db.minimalUIOptions or {}
+    -- Отдельное владение миникартой: старым пользователям сохраняем прежний
+    -- вид, но теперь его можно выключить независимо от остального Minimal UI.
+    if db.minimalUIOptions.minimap == nil then db.minimalUIOptions.minimap = true end
+    -- The bottom HUD takes ownership of positions, so upgrades never enable
+    -- it behind the player's back.  The one-time layout proposal turns it on
+    -- only after explicit acceptance.
+    if db.minimalUIOptions.bottomDock == nil then db.minimalUIOptions.bottomDock = false end
+    if db.minimalUIOptions.compactActionBars == nil then db.minimalUIOptions.compactActionBars = false end
+    if db.minimalUIOptions.hideStanceBar == nil then db.minimalUIOptions.hideStanceBar = false end
     db.convenience = type(db.convenience) == "table" and db.convenience or {}
-    if db.convenience.hideBags == nil then db.convenience.hideBags = true end
-    -- Удобства включены сразу. Раньше им вообще не задавался дефолт, а
-    -- Enabled() требует строго true — девять возможностей молча лежали
-    -- выключенными, и о них никто не знал.
-    for _, key in ipairs({
-        "autoKeystone", "autoQuests", "guildRepair", "repair",
-        "resurrection", "resNoCombat", "sellJunk", "summon", "whisperInvite",
-    }) do
-        if db.convenience[key] == nil then db.convenience[key] = true end
-    end
+    -- Actions that accept dialogs, spend money, alter quests or invite other
+    -- people are explicit opt-ins. Inserting a Keystone is the only automatic
+    -- action enabled initially: it runs after the player opens the pedestal.
+    local convenienceDefaults = {
+        autoKeystone = true,
+        autoQuests = false,
+        guildRepair = true,
+        hideBags = true,
+        merchantSummary = true,
+        repair = false,
+        resurrection = false,
+        resNoCombat = true,
+        sellJunk = false,
+        summon = false,
+        whisperInvite = false,
+    }
+    for key, value in pairs(convenienceDefaults) do Default(db.convenience, key, value) end
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
-    if db.unitFrames.enabled == nil then db.unitFrames.enabled = true end
-    if db.unitFrames.hideBlizzard == nil then db.unitFrames.hideBlizzard = true end
+    Default(db.unitFrames, "enabled", false)
+    Default(db.unitFrames, "hideBlizzard", true)
+    -- The compact player/target capsule is optional, but once enabled it must
+    -- be a complete HUD component rather than a fixed mock-up. These values
+    -- are deliberately independent so an existing profile only receives the
+    -- settings it did not already choose.
+    Default(db.unitFrames, "scale", 1)
+    Default(db.unitFrames, "opacity", 1)
+    Default(db.unitFrames, "showHealthText", true)
+    Default(db.unitFrames, "showPowerText", true)
+    Default(db.unitFrames, "animatedPortrait", true)
+    Default(db.unitFrames, "showBadges", true)
+    Default(db.unitFrames, "badgesUnlocked", false)
+    Default(db.unitFrames, "badgeShape", 1)
+    Default(db.unitFrames, "alwaysShowTarget", false)
+    db.unitFrames.badgePositions = type(db.unitFrames.badgePositions) == "table"
+        and db.unitFrames.badgePositions or {}
+    Default(db.unitFrames, "showPlayerAuras", true)
+    Default(db.unitFrames, "showTargetAuras", true)
+    Default(db.unitFrames, "aurasAbove", false)
+    Default(db.unitFrames, "showResourcePips", true)
+    Default(db.unitFrames, "showEmptyResources", true)
+    Default(db.unitFrames, "resourceHeight", 10)
+    Default(db.unitFrames, "resourceGap", 2)
+    Default(db.unitFrames, "resourceOpacity", 1)
+    local function ClampFrameNumber(key, minimum, maximum, fallback)
+        local value = tonumber(db.unitFrames[key])
+        if not value then value = fallback end
+        db.unitFrames[key] = math.max(minimum, math.min(maximum, value))
+    end
+    ClampFrameNumber("scale", .75, 2.00, 1)
+    ClampFrameNumber("badgeShape", 1, 3, 1)
+    ClampFrameNumber("opacity", .55, 1, 1)
+    ClampFrameNumber("resourceHeight", 6, 16, 10)
+    ClampFrameNumber("resourceGap", 0, 6, 2)
+    ClampFrameNumber("resourceOpacity", .30, 1, 1)
     db.castBar = type(db.castBar) == "table" and db.castBar or {}
-    if db.castBar.enabled == nil then db.castBar.enabled = true end
+    Default(db.castBar, "enabled", false)
     db.lootUI = type(db.lootUI) == "table" and db.lootUI or {}
-    if db.lootUI.enabled == nil then db.lootUI.enabled = true end
-    if db.lootUI.atCursor == nil then db.lootUI.atCursor = true end
-    if db.lootUI.showRolls == nil then db.lootUI.showRolls = true end
-    if db.lootUI.showHistory == nil then db.lootUI.showHistory = true end
+    Default(db.lootUI, "enabled", false)
+    Default(db.lootUI, "atCursor", true)
+    Default(db.lootUI, "showRolls", true)
+    Default(db.lootUI, "showHistory", true)
+    db.smartClick = type(db.smartClick) == "table" and db.smartClick or {}
+    Default(db.smartClick, "buff", false)
+    Default(db.smartClick, "res", false)
+    db.rcLoot = type(db.rcLoot) == "table" and db.rcLoot or {}
+    Default(db.rcLoot, "enabled", false)
+    db.errorGuard = type(db.errorGuard) == "table" and db.errorGuard or {}
+    Default(db.errorGuard, "enabled", false)
+    Default(db.errorGuard, "keepBetweenSessions", true)
     db.bagUI = type(db.bagUI) == "table" and db.bagUI or {}
     -- The unified inventory replaces protected Blizzard bag behaviour, so it
     -- must be an explicit opt-in. Apply this once to profiles that inherited
@@ -375,16 +450,25 @@ local function InitializeDatabase()
         end
         db.bagUI.errorLogPruned = 1
     end
-    -- Начиная с версии БД 3 все перемещаемые элементы используют один режим.
-    -- При первом запуске после обновления сохраняем прежнее разблокированное
-    -- состояние, но больше не держим три независимых переключателя.
-    if db.interfaceUnlocked == nil then
-        db.interfaceUnlocked = db.unitFrames.unlocked == true or db.castBar.unlocked == true
+    -- Revision 2 keeps the convenient global switch but no longer overwrites
+    -- the capsule-specific move toggle on every /reload. Existing profiles are
+    -- migrated once from the old single-state model, then each component may
+    -- be locked independently from its own settings page.
+    if db.interfaceUnlockRevision ~= 2 then
+        local unlocked = db.interfaceUnlocked == true or db.unitFrames.unlocked == true
+            or db.castBar.unlocked == true or db.convenience.movableKeystoneFrame == true
+        db.interfaceUnlocked = unlocked
+        db.unitFrames.unlocked = unlocked
+        db.castBar.unlocked = unlocked
+        db.convenience.movableKeystoneFrame = unlocked
+        db.interfaceUnlockRevision = 2
+    else
+        db.unitFrames.unlocked = db.unitFrames.unlocked == true
+        db.castBar.unlocked = db.castBar.unlocked == true
+        db.convenience.movableKeystoneFrame = db.convenience.movableKeystoneFrame == true
+        db.interfaceUnlocked = db.unitFrames.unlocked or db.castBar.unlocked
+            or db.convenience.movableKeystoneFrame
     end
-    db.interfaceUnlocked = db.interfaceUnlocked == true
-    db.unitFrames.unlocked = db.interfaceUnlocked
-    db.castBar.unlocked = db.interfaceUnlocked
-    db.convenience.movableKeystoneFrame = db.interfaceUnlocked
     JP.db = db
 end
 
@@ -405,9 +489,15 @@ events:SetScript("OnEvent", function(_, event, arg1)
         JP.pendingReloads = {}
         for name in pairs(pending) do JP:ReloadModule(name) end
     elseif event == "CHALLENGE_MODE_COMPLETED" then
-        local mapID = C_ChallengeMode.GetActiveChallengeMapID and C_ChallengeMode.GetActiveChallengeMapID()
-        local level = C_ChallengeMode.GetActiveKeystoneInfo and C_ChallengeMode.GetActiveKeystoneInfo()
-        if mapID and level then JP:SetLocalBest(mapID, level) end
+        local completion = JP.API.GetChallengeCompletion()
+        local active = JP.API.GetActiveChallenge()
+        local mapID, level = completion and completion.mapID, completion and completion.level
+        if not JP.UsableNumber(mapID) then mapID = active and active.mapID end
+        if not JP.UsableNumber(level) then level = active and active.level end
+        if not (completion and completion.practiceRun)
+            and JP.UsableNumber(mapID) and JP.UsableNumber(level) then
+            JP:SetLocalBest(mapID, level)
+        end
         for _, delay in ipairs({ 1, 4, 9 }) do C_Timer.After(delay, function() JP:RefreshLocalBests(true) end) end
     elseif event == "CHALLENGE_MODE_MAPS_UPDATE" then
         JP:RefreshLocalBests()
@@ -565,6 +655,7 @@ SlashCmdList.MYTHICBOOST = function(input)
     elseif command == "clear" then
         wipe(MythicBoostDB.scannedPlayers)
         wipe(JP.positivePlayers)
+        wipe(JP.positivePlayerOrder)
         local marker = JP.modules.NameplateMarker
         if marker and marker.RefreshAll then marker:RefreshAll() end
         JP:Print(L("База перспективных игроков очищена."))

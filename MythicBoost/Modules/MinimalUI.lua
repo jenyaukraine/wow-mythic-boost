@@ -110,6 +110,31 @@ local function RestoreVisibility(self)
     if self.savedTextureAlpha then wipe(self.savedTextureAlpha) end
 end
 
+local function BasicMinimapIsActive()
+    return UI.IsAddOnLoaded("BasicMinimap")
+        or UI.IsAddOnLoaded("BasicMinimap_Options")
+        or type(_G.BasicMinimap) == "table"
+end
+
+-- Minimap ownership is restored independently from the rest of Minimal UI.
+-- Restoring the global bucket here would also undo valid action-bar, tracker,
+-- bag, and chat styling when BasicMinimap is present.
+local function RememberAndHideMinimap(self, object)
+    if not IsObject(object) then return end
+    self.minimapSavedVisibility = self.minimapSavedVisibility or UI.WeakKeys()
+    if self.minimapSavedVisibility[object] == nil then
+        self.minimapSavedVisibility[object] = object:IsShown() and true or false
+    end
+    object:Hide()
+end
+
+local function RestoreMinimapVisibility(self)
+    for object, shown in pairs(self.minimapSavedVisibility or {}) do
+        if IsObject(object) then object:SetShown(shown) end
+    end
+    if self.minimapSavedVisibility then wipe(self.minimapSavedVisibility) end
+end
+
 local function HideTextureRegions(self, owner)
     if not owner or type(owner.GetRegions) ~= "function" then return end
     for _, region in ipairs({ owner:GetRegions() }) do
@@ -146,11 +171,28 @@ end
 -- of our square cyan edge whenever the mouse enters a button.
 local function MuteActionStateTextures(self, button)
     self.savedTextureAlpha = self.savedTextureAlpha or UI.WeakKeys()
-    for _, getter in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture", "GetDisabledTexture" }) do
+    local icon = button.icon or button.Icon
+    for _, getter in ipairs({
+        "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture", "GetDisabledTexture", "GetCheckedTexture",
+    }) do
         local texture = type(button[getter]) == "function" and button[getter](button)
         if texture and type(texture.SetAlpha) == "function" then
             if self.savedTextureAlpha[texture] == nil then self.savedTextureAlpha[texture] = texture:GetAlpha() end
             texture:SetAlpha(0)
+        end
+    end
+    -- У разных поколений Blizzard_ActionBar круглая подсветка носит разные
+    -- имена. Надёжнее убрать все собственные Texture-регионы кнопки, кроме
+    -- самой иконки и наших квадратных украшений, чем бесконечно догонять
+    -- переименования Normal/Checked/SpellActivationAlert.
+    if type(button.GetRegions) == "function" then
+        for _, region in ipairs({ button:GetRegions() }) do
+            if region ~= icon and not region.__mbActionDecoration
+                and type(region.GetObjectType) == "function" and region:GetObjectType() == "Texture"
+                and type(region.SetAlpha) == "function" then
+                if self.savedTextureAlpha[region] == nil then self.savedTextureAlpha[region] = region:GetAlpha() end
+                region:SetAlpha(0)
+            end
         end
     end
 end
@@ -184,13 +226,54 @@ local function MuteSuggestionGlow(self, button, object, animation)
     self.savedTextureAlpha = self.savedTextureAlpha or UI.WeakKeys()
     if self.savedTextureAlpha[object] == nil then self.savedTextureAlpha[object] = object:GetAlpha() end
 
+    local muting = false
+    local ForceSquareOnly
+    local function HookAlpha(node)
+        if node.__mbGlowAlphaHooked or type(node.SetAlpha) ~= "function" then return end
+        node.__mbGlowAlphaHooked = true
+        hooksecurefunc(node, "SetAlpha", function(_, alpha)
+            if not muting and MythicBoostDB and MythicBoostDB.minimalUI and alpha and alpha > 0 then
+                ForceSquareOnly()
+            end
+        end)
+    end
+
+    local function MuteTree(node, seen, depth)
+        if not node or seen[node] or depth > 8 then return end
+        seen[node] = true
+        if type(node.SetAlpha) == "function" then
+            if self.savedTextureAlpha[node] == nil then self.savedTextureAlpha[node] = node:GetAlpha() end
+            HookAlpha(node)
+        end
+        if type(node.GetAnimationGroups) == "function" then
+            for _, group in ipairs({ node:GetAnimationGroups() }) do
+                if group and type(group.Stop) == "function" then pcall(group.Stop, group) end
+            end
+        end
+        if type(node.GetRegions) == "function" then
+            for _, region in ipairs({ node:GetRegions() }) do MuteTree(region, seen, depth + 1) end
+        end
+        if type(node.GetChildren) == "function" then
+            for _, child in ipairs({ node:GetChildren() }) do MuteTree(child, seen, depth + 1) end
+        end
+        if type(node.SetAlpha) == "function" then node:SetAlpha(0) end
+    end
+
+    ForceSquareOnly = function()
+        if muting then return end
+        if not MythicBoostDB or not MythicBoostDB.minimalUI then return end
+        muting = true
+        -- AssistedCombatRotationFrame owns its own animation group and may
+        -- restore alpha without calling Show(). Stop every group we can see
+        -- and mute the child textures as well as the parent frame.
+        if animation and type(animation.Stop) == "function" then pcall(animation.Stop, animation) end
+        MuteTree(object, {}, 0)
+        muting = false
+    end
+
     local function Mirror(shown)
         button.__mbSpellSuggested = shown or nil
-        if shown then
-            -- Анимация гоняет альфу сама и перебила бы разовый SetAlpha(0).
-            if animation and type(animation.Stop) == "function" then pcall(animation.Stop, animation) end
-            object:SetAlpha(0)
-        end
+        ForceSquareOnly()
         ApplyActionBorderColor(button)
     end
 
@@ -199,9 +282,42 @@ local function MuteSuggestionGlow(self, button, object, animation)
         hooksecurefunc(object, "Show", function() Mirror(true) end)
         hooksecurefunc(object, "Hide", function() Mirror(false) end)
         hooksecurefunc(object, "SetShown", function(_, shown) Mirror(shown and true or false) end)
+        -- The green rotation suggestion animates SetAlpha after Show(). The
+        -- hook immediately forces it back to zero while our square border
+        -- continues to carry the suggestion state.
+        HookAlpha(object)
     end
-    object:SetAlpha(0)
+    ForceSquareOnly()
     Mirror(object:IsShown() and true or false)
+end
+
+local function MuteActionSuggestionGlows(self, button)
+    MuteSuggestionGlow(self, button, button.SpellHighlightTexture, button.SpellHighlightAnim)
+    local seen = {}
+    for _, object in pairs({
+        button.AssistedCombatRotationFrame,
+        button.SpellActivationAlert,
+        button.SpellActivationOverlay,
+        button.SpellActivationOverlayFrame,
+        button.OverlayGlow,
+        button.ProcGlow,
+        button.Glow,
+    }) do
+        if object and not seen[object] then
+            seen[object] = true
+            MuteSuggestionGlow(self, button, object)
+        end
+    end
+    local name = type(button.GetName) == "function" and button:GetName()
+    if name then
+        for _, suffix in ipairs({ "SpellActivationAlert", "SpellActivationOverlay", "OverlayGlow" }) do
+            local object = _G[name .. suffix]
+            if object and not seen[object] then
+                seen[object] = true
+                MuteSuggestionGlow(self, button, object)
+            end
+        end
+    end
 end
 
 local function StyleMinimapZoneLabel(self, enabled)
@@ -558,7 +674,7 @@ local function StyleMinimapAddonButtons(self, enabled)
         if type(button.HookScript) == "function" and not button.__mbMinimapKeepParked then
             button.__mbMinimapKeepParked = true
             button:HookScript("OnShow", function(owner)
-                if not MythicBoostDB or not MythicBoostDB.minimalUI or not owner.__mbMinimapMenu then return end
+                if not self.minimapOwnershipActive or not owner.__mbMinimapMenu then return end
                 owner:SetParent(owner.__mbMinimapMenu)
                 owner:SetScale(.01)
                 owner:SetAlpha(0)
@@ -613,12 +729,25 @@ end
 
 function MinimalUI:StyleMinimap(enabled)
     if not Minimap then return end
+
+    if enabled and BasicMinimapIsActive() then
+        if self.minimapOwnershipActive then self:StyleMinimap(false) end
+        self.externalMinimapOwner = "BasicMinimap"
+        return
+    end
+    self.externalMinimapOwner = nil
+
+    -- Do not "restore" a map MythicBoost never owned: even writing a cached
+    -- mask in the disabled path would overwrite BasicMinimap's configuration.
+    if not enabled and not self.minimapOwnershipActive then return end
+
     if not self.roundMask then
         local ok, mask = pcall(Minimap.GetMaskTexture, Minimap)
         self.roundMask = ok and mask or FALLBACK_ROUND_MASK
     end
 
     if enabled then
+        self.minimapOwnershipActive = true
         -- Blizzard keeps the map about 70 px below the top of MinimapCluster
         -- to reserve space for its old header. Our zone and clock live inside
         -- the map, so that reservation is just an empty strip. Preserve the
@@ -666,11 +795,11 @@ function MinimalUI:StyleMinimap(enabled)
             _G.MiniMapTrackingButtonBorder,
             MinimapCluster and MinimapCluster.BorderTop,
         }) do
-            RememberAndHide(self, object)
+            RememberAndHideMinimap(self, object)
             if object and type(object.HookScript) == "function" and not object.__mbKeepMinimapHidden then
                 object.__mbKeepMinimapHidden = true
                 object:HookScript("OnShow", function(owner)
-                    if MythicBoostDB and MythicBoostDB.minimalUI then owner:Hide() end
+                    if self.minimapOwnershipActive then owner:Hide() end
                 end)
             end
         end
@@ -691,12 +820,12 @@ function MinimalUI:StyleMinimap(enabled)
         -- count opens a compact text list, never another grid of icon cards.
         StyleMinimapAddonButtons(self, true)
         local nativeCompartment = _G.AddonCompartmentFrame
-        RememberAndHide(self, nativeCompartment)
+        RememberAndHideMinimap(self, nativeCompartment)
         if nativeCompartment and type(nativeCompartment.HookScript) == "function"
             and not nativeCompartment.__mbKeepHidden then
             nativeCompartment.__mbKeepHidden = true
             nativeCompartment:HookScript("OnShow", function(owner)
-                if MythicBoostDB and MythicBoostDB.minimalUI then owner:Hide() end
+                if self.minimapOwnershipActive then owner:Hide() end
             end)
         end
         -- The minimap already has its own one-pixel border. A second enclosing
@@ -708,13 +837,14 @@ function MinimalUI:StyleMinimap(enabled)
             self.mouseWheelHooked = true
             Minimap:EnableMouseWheel(true)
             Minimap:HookScript("OnMouseWheel", function(map, delta)
-                if not MythicBoostDB or not MythicBoostDB.minimalUI then return end
+                if not self.minimapOwnershipActive then return end
                 local zoom = map:GetZoom() + (delta > 0 and 1 or -1)
                 local maximum = type(map.GetZoomLevels) == "function" and map:GetZoomLevels() - 1 or 5
                 map:SetZoom(math.max(0, math.min(maximum, zoom)))
             end)
         end
     else
+        self.minimapOwnershipActive = false
         local layout = self.minimapMapLayout
         if layout and not InCombatLockdown() then
             if layout.parent then Minimap:SetParent(layout.parent) end
@@ -732,7 +862,8 @@ function MinimalUI:StyleMinimap(enabled)
             if type(Minimap[method]) == "function" then pcall(Minimap[method], Minimap, 1) end
         end
         if self.minimapBorder then self.minimapBorder:Hide() end
-        StyleMinimapZoneLabel(self, false)
+        if self.minimapZoneLayout then StyleMinimapZoneLabel(self, false) end
+        RestoreMinimapVisibility(self)
         local panel = self.unifiedPanels and self.unifiedPanels[Minimap] and self.unifiedPanels[Minimap].minimap
         if panel then panel:Hide() end
     end
@@ -1509,7 +1640,17 @@ end
 function MinimalUI:StyleActionButtons(enabled)
     -- Экшен-кнопки защищены в бою. Настройка уже сохранена, а визуальное
     -- применение/возврат выполнится на PLAYER_REGEN_ENABLED.
-    if InCombatLockdown() then return end
+    if InCombatLockdown() then
+        -- Якоря и размеры в бою не трогаем, но подсветка ротации — обычная
+        -- визуальная надстройка. Она как раз создаётся/анимируется в бою, так
+        -- что её необходимо заглушать и здесь.
+        if enabled then
+            for _, button in ipairs(ActionButtons()) do
+                MuteActionSuggestionGlows(self, button)
+            end
+        end
+        return
+    end
     self.actionState = self.actionState or UI.WeakKeys()
     local parents = {}
     for _, button in ipairs(ActionButtons()) do
@@ -1557,13 +1698,17 @@ function MinimalUI:StyleActionButtons(enabled)
                 gloss:SetGradient("VERTICAL",
                     CreateColor(1, 1, 1, 0),
                     CreateColor(.82, .94, 1, .19))
+                gloss.__mbActionDecoration = true
                 button.__mbActionGloss = gloss
             end
             if not button.__mbEmptyFill then
                 local fill = button:CreateTexture(nil, "BACKGROUND", nil, 2)
                 fill:SetPoint("TOPLEFT", ACTION_ICON_INSET, -ACTION_ICON_INSET)
                 fill:SetPoint("BOTTOMRIGHT", -ACTION_ICON_INSET, ACTION_ICON_INSET)
-                fill:SetColorTexture(.008, .014, .022, .76)
+                -- Пустой слот должен лишь намекать на своё место, а не
+                -- выглядеть чёрной заглушкой поверх мира.
+                fill:SetColorTexture(.16, .22, .28, .24)
+                fill.__mbActionDecoration = true
                 button.__mbEmptyFill = fill
             end
             local cooldown = button.cooldown or button.Cooldown
@@ -1609,8 +1754,7 @@ function MinimalUI:StyleActionButtons(enabled)
                     if self.HotKey and self.__mbEmptyAction then self.HotKey:SetAlpha(.38) end
                 end)
             end
-            MuteSuggestionGlow(self, button, button.SpellHighlightTexture, button.SpellHighlightAnim)
-            MuteSuggestionGlow(self, button, button.AssistedCombatRotationFrame)
+            MuteActionSuggestionGlows(self, button)
             button.__mbEmptyAction = IsEmptyActionButton(button)
             button.__mbEmptyFill:SetShown(button.__mbEmptyAction)
             button.__mbActionGloss:SetShown(not button.__mbEmptyAction)
@@ -1835,13 +1979,15 @@ end
 
 function MinimalUI:Apply()
     local enabled = MythicBoostDB and MythicBoostDB.minimalUI == true
+    local minimapEnabled = enabled and MythicBoostDB.minimalUIOptions
+        and MythicBoostDB.minimalUIOptions.minimap ~= false
     local hideBags = MythicBoostDB and MythicBoostDB.convenience
         and MythicBoostDB.convenience.hideBags ~= false
     if not enabled then
         RestoreVisibility(self)
         self:HideUnifiedPanels()
     end
-    self:StyleMinimap(enabled)
+    self:StyleMinimap(minimapEnabled)
     self:StyleMicroMenu(enabled)
     self:StyleObjectiveTracker(enabled)
     self:StyleActionButtons(enabled)
@@ -1850,6 +1996,7 @@ function MinimalUI:Apply()
     self:StylePlayerAuras(enabled)
     self:StyleBags(hideBags)
     if JP.MinimalChat then JP.MinimalChat:Apply() end
+    if JP.BottomDock then JP.BottomDock:Apply() end
 
     -- Страховочный проход для тех слоёв, у которых нет своего события: панель
     -- кулдаунов и окна Details создаются на лету чужим кодом, лента
@@ -1870,7 +2017,9 @@ function MinimalUI:Apply()
             -- Пока открыт режим редактирования, Blizzard должен свободно
             -- показывать и двигать свои макеты без борьбы с нашим тикером.
             if _G.EditModeManagerFrame and _G.EditModeManagerFrame:IsShown() then return end
-            self:StyleMinimap(true)
+            local ownMinimap = MythicBoostDB.minimalUIOptions
+                and MythicBoostDB.minimalUIOptions.minimap ~= false
+            self:StyleMinimap(ownMinimap)
             self:StyleCooldownEffectBars(true)
             self:StyleDetails(true)
             self:StylePlayerAuras(true)
@@ -1885,6 +2034,12 @@ end
 function MinimalUI:SetEnabled(enabled)
     MythicBoostDB.minimalUI = enabled and true or false
     self:Apply()
+end
+
+function MinimalUI:SetMinimapEnabled(enabled)
+    MythicBoostDB.minimalUIOptions = MythicBoostDB.minimalUIOptions or {}
+    MythicBoostDB.minimalUIOptions.minimap = enabled and true or false
+    self:StyleMinimap(MythicBoostDB.minimalUI == true and enabled == true)
 end
 
 function MinimalUI:Create()
@@ -1917,7 +2072,7 @@ function MinimalUI:Create()
         "PLAYER_REGEN_ENABLED",
     }) do
         if not pcall(self.events.RegisterEvent, self.events, event) then
-            JP:Log("MinimalUI: событие %s недоступно в этом клиенте", event)
+                JP:Log(L("MinimalUI: событие %s недоступно в этом клиенте"), event)
         end
     end
     -- Событий здесь два десятка, и часть приходит пачками: ACTIONBAR_SLOT_CHANGED

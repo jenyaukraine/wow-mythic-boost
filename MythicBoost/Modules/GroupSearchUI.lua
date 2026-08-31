@@ -21,6 +21,7 @@ local ACTIVITY_GROUP_BY_MAP = {
 }
 
 local MAX_RESULT_ROWS = 12
+local APPLICATION_CAP = JP.Limits.ACTIVE_APPLICATIONS
 local ROW_HEIGHT, ROW_STEP = 62, 68
 local CARD_HEIGHT, CARD_GAP = 80, 8
 local CARD_PAD = 12
@@ -127,6 +128,13 @@ local function OpenOwnKeystoneListingForm()
     end
 end
 
+-- One public action for every "create/manage listing" button. Keeping it in
+-- one place prevents the empty-state button and the compact key card from
+-- disagreeing about what a click should do.
+function GroupSearchUI:OpenListingAction()
+    OpenOwnKeystoneListingForm()
+end
+
 -- fileID = 0 приходит от API как «текстуры нет». Без этой проверки
 -- SetTexture(0) рисует чёрный прямоугольник вместо карточки.
 local function ValidTexture(value)
@@ -205,6 +213,21 @@ end
 -- соседнего реалма. Теперь догадка принимается только если она одна:
 -- при нескольких совпадениях показываем прочерк, а не чужие данные.
 local profileRunCache, resolvedProfileCache = {}, {}
+local PROFILE_CACHE_LIMIT = JP.Limits.PROFILE_CACHE_ENTRIES
+local profileCacheEntries = 0
+
+local function RememberProfileCache(cache, key, value)
+    if cache[key] == nil then
+        profileCacheEntries = profileCacheEntries + 1
+        if profileCacheEntries > PROFILE_CACHE_LIMIT then
+            wipe(profileRunCache)
+            wipe(resolvedProfileCache)
+            profileCacheEntries = 1
+        end
+    end
+    cache[key] = value == nil and false or value
+    return value
+end
 
 local function RunsRank(runs)
     local rank = 0
@@ -223,8 +246,7 @@ local function ResolveRaiderProfile(name, leaderName, classFilename)
     if resolvedProfileCache[cacheKey] ~= nil then return resolvedProfileCache[cacheKey] or nil end
 
     local function Remember(profile)
-        resolvedProfileCache[cacheKey] = profile or false
-        return profile
+        return RememberProfileCache(resolvedProfileCache, cacheKey, profile)
     end
 
     -- Реалм известен точно.
@@ -299,13 +321,14 @@ local function ResolveRaiderRuns(name, leaderName, classFilename)
     local profile = ResolveRaiderProfile(name, leaderName, classFilename)
     local keystone = profile and profile.mythicKeystoneProfile
     local runs = keystone and keystone.sortedDungeons
-    profileRunCache[cacheKey] = type(runs) == "table" and #runs > 0 and runs or false
+    RememberProfileCache(profileRunCache, cacheKey, type(runs) == "table" and #runs > 0 and runs or nil)
     return profileRunCache[cacheKey] or nil
 end
 
 function GroupSearchUI:ClearProfileCache()
     wipe(profileRunCache)
     wipe(resolvedProfileCache)
+    profileCacheEntries = 0
 end
 
 local function PartyRatingColorCode(value)
@@ -316,29 +339,120 @@ local function PartyRatingColorCode(value)
     return "43d17a"
 end
 
+local function CurrentPlayerRole()
+    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned("player")
+    if role ~= "TANK" and role ~= "HEALER" and role ~= "DAMAGER" then
+        local spec = GetSpecialization and GetSpecialization()
+        role = spec and GetSpecializationRole and GetSpecializationRole(spec) or "DAMAGER"
+    end
+    return role
+end
+
+-- Это не выдуманный «шанс инвайта», а порядок, куда выгоднее подаваться.
+-- Геометрическая свёртка не даёт одному сильному параметру полностью скрыть
+-- плохой: старое объявление с ненужной ролью не станет первым из-за уровня.
+local function CalculateApplicationPriority(match, ownScore, playerRole)
+    local exactLevel = match.keyLevel and not match.keyApprox and not match.keyLevelProtected
+        and tonumber(match.keyLevel) or nil
+    local level = exactLevel or tonumber(match.targetLevel or match.keyLevel)
+    local best = tonumber(match.bestLevel) or 0
+    local delta = level and (level - best) or 0
+    local upgrade = level and math.max(.35, math.min(1, .55 + delta * .15)) or .48
+
+    local counts = match.roleCounts or {}
+    local roleNeeded = (playerRole == "TANK" and (counts.TANK or 0) == 0)
+        or (playerRole == "HEALER" and (counts.HEALER or 0) == 0)
+        or (playerRole == "DAMAGER" and (counts.DAMAGER or 0) < 3)
+    local demand = roleNeeded and 1 or .72
+
+    local members = math.max(1, tonumber(match.partyScoreMembers or match.members) or 1)
+    local known = math.min(members, tonumber(match.partyScoreKnown) or 0)
+    local average = tonumber(match.partyScoreAverage) or 0
+    local gap = ownScore > 0 and average > 0 and math.abs(average - ownScore) or 700
+    local scoreFit = 1 / (1 + gap / 1100)
+    local dataCoverage = .55 + .45 * known / members
+    local almostReady = .68 + .32 * math.min(4, members) / 4
+    local composition = math.sqrt(scoreFit * dataCoverage) * almostReady
+
+    local age = math.max(0, tonumber(match.age) or 600)
+    local freshness = math.max(.35, math.exp(-age / 720))
+    local certainty = match.keyApprox and .82 or (level and 1 or .70)
+    local raw = (upgrade ^ .32) * (demand ^ .24) * (composition ^ .28) * (freshness ^ .16) * certainty
+    local priority = math.max(1, math.min(100, math.floor(raw * 100 + .5)))
+
+    local reasons = {}
+    if delta > 0 then reasons[#reasons + 1] = L("выше твоего рекорда") end
+    if roleNeeded then reasons[#reasons + 1] = L("твоя роль нужна") end
+    if members >= 4 then reasons[#reasons + 1] = L("почти готовая группа") end
+    if age <= 120 then reasons[#reasons + 1] = L("свежее объявление") end
+    if #reasons == 0 then
+        reasons[1] = match.keyApprox and L("уровень ключа приблизительный") or L("подходит базовым фильтрам")
+    end
+    return priority, table.concat(reasons, L(", "))
+end
+
+local function ProfileBestForMap(profile, mapID)
+    local keystone = profile and profile.mythicKeystoneProfile
+    for _, run in ipairs(type(keystone and keystone.sortedDungeons) == "table" and keystone.sortedDungeons or {}) do
+        local dungeon = run and run.dungeon
+        local runMapID = dungeon and (dungeon.keystone_instance or dungeon.id)
+        if tonumber(runMapID) == tonumber(mapID) then
+            return tonumber(run.bestRunLevel or run.level) or 0
+        end
+    end
+    return 0
+end
+
+local function BlizzardBestForMap(scoreInfo, mapID)
+    for _, entry in ipairs(SafeTable(scoreInfo) or {}) do
+        local runMapID = UsableNumber(entry.challengeModeID) and entry.challengeModeID
+            or (UsableNumber(entry.mapChallengeModeID) and entry.mapChallengeModeID)
+        if tonumber(runMapID) == tonumber(mapID) then return tonumber(entry.bestRunLevel) or 0 end
+    end
+    return 0
+end
+
 -- Считаем силу всей уже собранной группы. Точный общий рейтинг лидера
 -- приходит от Blizzard, остальные профили берём из локальной базы Raider.IO.
 -- Делитель — фактическое количество людей, как и ожидается от среднего.
-function GroupSearchUI:EnrichPartyRatings(matches)
+local EXPERIENCE_REJECTION = L("не все участники проходили этот уровень")
+
+function GroupSearchUI:EnrichPartyRatings(matches, filters, excluded)
+    filters = filters or {}
+    excluded = excluded or {}
     for _, match in ipairs(type(matches) == "table" and matches or {}) do
         local members = type(match.memberInfo) == "table" and match.memberInfo or {}
         local memberCount = math.max(tonumber(match.members) or 0, #members)
         local total, known, leaderCounted = 0, 0, false
+        local requiredLevel = (match.keyLevel and not match.keyApprox and match.keyLevel)
+            or match.targetLevel
+        local everyoneExperienced = requiredLevel ~= nil
+        local experienceConfirmed = 0
 
         for _, member in ipairs(members) do
             local memberName = SafeString(member.name)
             local leaderBase = match.leaderName and match.leaderName:match("^([^%-]+)")
             local isLeader = member.isLeader
                 or (leaderBase and memberName and leaderBase:lower() == memberName:lower())
+            local lookupName = memberName or (isLeader and match.leaderName)
+            local profile = ResolveRaiderProfile(lookupName, match.leaderName, member.classFilename)
             local score
             if isLeader and UsableNumber(match.score) and match.score > 0 then
                 score, leaderCounted = match.score, true
             else
-                local lookupName = memberName or (isLeader and match.leaderName)
-                score = ProfileScore(ResolveRaiderProfile(lookupName, match.leaderName, member.classFilename))
+                score = ProfileScore(profile)
             end
             if UsableNumber(score) and score > 0 then
                 total, known = total + score, known + 1
+            end
+            if filters.experiencedParty == true then
+                local best = ProfileBestForMap(profile, match.mapID)
+                if isLeader and best <= 0 then best = BlizzardBestForMap(match.leaderDungeonScoreInfo, match.mapID) end
+                if requiredLevel and best >= requiredLevel then
+                    experienceConfirmed = experienceConfirmed + 1
+                else
+                    everyoneExperienced = false
+                end
             end
         end
 
@@ -350,10 +464,64 @@ function GroupSearchUI:EnrichPartyRatings(matches)
         match.partyScoreTotal = total
         match.partyScoreKnown = math.min(known, memberCount)
         match.partyScoreMembers = memberCount
-        match.partyScoreAverage = total / memberCount
+        -- Неизвестный профиль снижает уверенность отдельно; считать его как
+        -- нулевой RIO и занижать среднее вдвое математически неверно.
+        match.partyScoreAverage = known > 0 and total / known or 0
+        match.experienceRequiredLevel = requiredLevel
+        match.experienceConfirmed = experienceConfirmed
+        match.everyoneExperienced = everyoneExperienced and experienceConfirmed == memberCount
+    end
+
+    local experienceRejected = 0
+    if filters.experiencedParty == true then
+        for index = #matches, 1, -1 do
+            if not matches[index].everyoneExperienced then
+                local match = table.remove(matches, index)
+                match.rejected = true
+                match.rejectionReason = EXPERIENCE_REJECTION
+                match.actionable = true
+                excluded[#excluded + 1] = match
+                experienceRejected = experienceRejected + 1
+            end
+        end
+    end
+
+    local ownScore = C_ChallengeMode.GetOverallDungeonScore and C_ChallengeMode.GetOverallDungeonScore() or 0
+    ownScore = UsableNumber(ownScore) and ownScore or 0
+    local playerRole = CurrentPlayerRole()
+    for _, match in ipairs(type(matches) == "table" and matches or {}) do
+        match.applicationPriority, match.applicationReason = CalculateApplicationPriority(match, ownScore, playerRole)
+        -- Coach metadata is derived from the canonical priority score; it is
+        -- descriptive UI state, never a second ranking model.
+        local known = tonumber(match.partyScoreKnown) or 0
+        local members = math.max(1, tonumber(match.partyScoreMembers or match.members) or 1)
+        local coverage = math.floor(math.min(1, known / members) * 100 + .5)
+        local keyConfidence = match.keyLevelProtected and 45 or (match.keyApprox and 70 or (match.keyLevel and 100 or 35))
+        match.applicationConfidence = math.floor((coverage * .55 + keyConfidence * .45) + .5)
+        match.applicationUnknowns = {}
+        if known < members then match.applicationUnknowns[#match.applicationUnknowns + 1] = L("неполный RIO") end
+        if match.keyLevelProtected or match.keyApprox then
+            match.applicationUnknowns[#match.applicationUnknowns + 1] = L("уровень ключа скрыт или оценён")
+        end
+        if #match.applicationUnknowns > 0 then
+            match.applicationState = "unknown"
+        elseif (match.applicationPriority or 0) >= 70 then
+            match.applicationState = "ready"
+        elseif (match.applicationPriority or 0) >= 45 then
+            match.applicationState = "risky"
+        else
+            match.applicationState = "unknown"
+        end
+        match.applicationReasons = {}
+        for reason in tostring(match.applicationReason or ""):gmatch("[^,]+") do
+            match.applicationReasons[#match.applicationReasons + 1] = reason:gsub("^%s+", ""):gsub("%s+$", "")
+        end
     end
 
     table.sort(matches, function(a, b)
+        if (a.applicationPriority or 0) ~= (b.applicationPriority or 0) then
+            return (a.applicationPriority or 0) > (b.applicationPriority or 0)
+        end
         -- Более собранная группа выше: в ней меньше ожидания и меньше риска,
         -- что хороший лидер исчезнет, пока добираются остальные роли.
         local membersA, membersB = a.partyScoreMembers or a.members or 0, b.partyScoreMembers or b.members or 0
@@ -368,6 +536,29 @@ function GroupSearchUI:EnrichPartyRatings(matches)
         if (a.score or 0) ~= (b.score or 0) then return (a.score or 0) > (b.score or 0) end
         return (a.age or math.huge) < (b.age or math.huge)
     end)
+    table.sort(excluded, function(a, b)
+        return (a.sourceOrder or math.huge) < (b.sourceOrder or math.huge)
+    end)
+    return experienceRejected
+end
+
+function GroupSearchUI:ComposeResults(matches, excluded)
+    local results = {}
+    for _, match in ipairs(matches or {}) do results[#results + 1] = match end
+    local settings = JP.Settings and JP.Settings("search", {
+        showRejectedResults = true,
+        allowRejectedApplications = true,
+    })
+    local showRejected = not settings or settings.showRejectedResults ~= false
+    if showRejected and #(excluded or {}) > 0 then
+        results[#results + 1] = {
+            isSection = true,
+            sectionCount = #excluded,
+            sectionLabel = (L("НЕ ПРОШЛИ ФИЛЬТРЫ - %d")):format(#excluded),
+        }
+        for _, match in ipairs(excluded) do results[#results + 1] = match end
+    end
+    return results
 end
 
 local function TimedValue(level, increments, finished)
@@ -438,9 +629,8 @@ end
 
 local function DungeonKeyTexture(mapID)
     mapID = tonumber(mapID)
-    if not mapID or not C_ChallengeMode or type(C_ChallengeMode.GetMapUIInfo) ~= "function" then return end
-    local _, _, _, icon, background = C_ChallengeMode.GetMapUIInfo(mapID)
-    return ValidTexture(icon) or ValidTexture(background)
+    local info = mapID and JP.API.GetChallengeMap(mapID)
+    return info and (ValidTexture(info.icon) or ValidTexture(info.background))
 end
 
 local function DungeonColumns()
@@ -452,8 +642,9 @@ local function DungeonColumns()
         local mapID = tonumber(key)
         local challengeIcon, challengeBackground
         if mapID then
-            local _, _, _, icon, background = C_ChallengeMode.GetMapUIInfo(mapID)
-            challengeIcon, challengeBackground = icon, background
+            local info = JP.API.GetChallengeMap(mapID)
+            challengeIcon = info and info.icon
+            challengeBackground = info and info.background
         end
         columns[#columns + 1] = {
             key = key or index,
@@ -467,10 +658,10 @@ local function DungeonColumns()
     end
     if #columns == 0 then
         for index, mapID in ipairs(SEASON_ORDER) do
-            local name, _, _, icon, background = C_ChallengeMode.GetMapUIInfo(mapID)
+            local info = JP.API.GetChallengeMap(mapID) or {}
             columns[#columns + 1] = {
-                key = mapID, label = DUNGEON_SHORT[mapID] or tostring(index), name = name,
-                texture = ValidTexture(icon) or ValidTexture(background),
+                key = mapID, label = DUNGEON_SHORT[mapID] or tostring(index), name = info.name,
+                texture = ValidTexture(info.icon) or ValidTexture(info.background),
             }
         end
     end
@@ -513,6 +704,7 @@ function GroupSearchUI:GetDungeonCells(fullName, classFilename)
         local run = mapped[column.key]
         local value, grade = RaiderKeyValue(run)
         cells[index] = {
+            mapID = column.key,
             label = column.label,
             value = value,
             grade = grade,
@@ -550,6 +742,7 @@ function GroupSearchUI:GetPartyMemberProfile(unit)
         local run = mapped[column.key]
         local value, grade = RaiderKeyValue(run)
         cells[index] = {
+            mapID = column.key,
             value = value,
             grade = grade,
             level = RunLevel(run),
@@ -634,9 +827,20 @@ local function GetGroupTooltip()
 
     frame.meta = UI.Text(frame, "GameFontHighlightSmall", "", C.muted)
     frame.meta:SetPoint("TOPLEFT", 14, -32)
-    frame.meta:SetPoint("TOPRIGHT", -14, -32)
+    frame.meta:SetPoint("TOPRIGHT", -126, -32)
     frame.meta:SetJustifyH("LEFT")
     frame.meta:SetWordWrap(false)
+
+    frame.rioBadge = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    frame.rioBadge:SetSize(104, 38)
+    frame.rioBadge:SetPoint("TOPRIGHT", -12, -9)
+    UI.Backdrop(frame.rioBadge, { .025, .040, .055, .98 }, { .20, .46, .62, .95 })
+    frame.rioLabel = UI.Text(frame.rioBadge, "GameFontNormalSmall", L("СР. RIO"), C.muted)
+    frame.rioLabel:SetPoint("TOP", 0, -3)
+    frame.rioValue = UI.Text(frame.rioBadge, "GameFontNormal", "0", C.amber)
+    frame.rioValue:SetPoint("BOTTOM", 0, 3)
+    local rioFont = frame.rioValue:GetFont()
+    if rioFont then frame.rioValue:SetFont(rioFont, 17, "OUTLINE") end
 
     local divider = UI.Line(frame, C.accentDim)
     divider:SetPoint("TOPLEFT", 12, -54)
@@ -762,19 +966,33 @@ local function ShowGroupTooltip(row, externalResultID, externalDungeonName, plac
         end
         listingKeyLevel = ParseListingLevel(info.name) or ParseListingLevel(info.comment)
     end
-    local ratingText
+    local ratingText, ratingValue
     local memberCount = UsableNumber(info.numMembers) and info.numMembers or 0
-    if match and match.partyScoreAverage then
-        ratingText = (L("средний RIO %d, найдено %d/%d")):format(
-            math.floor(match.partyScoreAverage + .5),
+    if match and match.rejected then
+        ratingText = (L("не прошло фильтр: %s")):format(match.rejectionReason or L("причина неизвестна"))
+    elseif match and match.partyScoreAverage then
+        ratingValue = math.floor(match.partyScoreAverage + .5)
+        ratingText = (L("приоритет %d, средний RIO %d, найдено %d/%d")):format(
+            match.applicationPriority or 0,
+            ratingValue,
             match.partyScoreKnown or 0,
             match.partyScoreMembers or memberCount)
     else
+        ratingValue = math.floor(UsableNumber(info.leaderOverallDungeonScore) and info.leaderOverallDungeonScore or 0)
         ratingText = (L("RIO лидера %d")):format(
-            math.floor(UsableNumber(info.leaderOverallDungeonScore) and info.leaderOverallDungeonScore or 0))
+            ratingValue)
     end
-    tooltip.meta:SetText(("%s   —   %s   —   %s"):format(
-        dungeonName or L("Подземелье"), leaderName or L("лидер неизвестен"), ratingText))
+    tooltip.meta:SetText(("%s - %s%s"):format(
+        dungeonName or L("Подземелье"), leaderName or L("лидер неизвестен"),
+        match and (" - " .. (L("найдено %d/%d")):format(match.partyScoreKnown or 0,
+            match.partyScoreMembers or memberCount)) or ""))
+    ratingValue = ratingValue or 0
+    tooltip.rioValue:SetText(tostring(ratingValue))
+    local ratingHex = PartyRatingColorCode(ratingValue)
+    tooltip.rioValue:SetTextColor(
+        tonumber(ratingHex:sub(1, 2), 16) / 255,
+        tonumber(ratingHex:sub(3, 4), 16) / 255,
+        tonumber(ratingHex:sub(5, 6), 16) / 255, 1)
 
     for index, header in ipairs(tooltip.columnHeaders) do
         local column = columns[index]
@@ -928,7 +1146,11 @@ end
 
 function GroupSearchUI:GetUpgradeSearchLevel(welcome)
     local levels = self:GetUpgradeSearchLevels(welcome)
-    return levels[1]
+    -- One protected Search call can contain only one text target. For mixed
+    -- personal records choose the middle requested level: it avoids a broad
+    -- list full of irrelevant low keys without biasing the query toward the
+    -- rarest maximum. Selecting one dungeon still yields its exact next level.
+    return levels[math.max(1, math.ceil(#levels / 2))]
 end
 
 local function CopyFilters(welcome, targetLevel)
@@ -942,13 +1164,57 @@ local function CopyFilters(welcome, targetLevel)
         end
     end
     copy.searchTargetLevel = targetLevel
+    copy.searchExactLevel = targetLevel
     return copy
 end
 
-local function FinishBlizzardSearch(welcome, token, message)
+local function ExactSearchTarget(welcome)
+    local filters = welcome.groupFilters or {}
+    local minimum, maximum = tonumber(filters.keyMin), tonumber(filters.keyMax)
+    if minimum and maximum and minimum == maximum and minimum >= 2 then return minimum end
+    if filters.scoreUpgrade then
+        return GroupSearchUI:GetUpgradeSearchLevel(welcome)
+    end
+end
+
+local FinishBlizzardSearch
+
+local function NativeSearchBox()
+    return LFGListFrame and LFGListFrame.SearchPanel and LFGListFrame.SearchPanel.SearchBox
+end
+
+local function ReadNativeSearchText()
+    local box = NativeSearchBox()
+    if not box or type(box.GetText) ~= "function" then return end
+    local ok, value = pcall(box.GetText, box)
+    if not ok then return end
+    return JP.SafeStringOrEmpty(value)
+end
+
+-- Диапазон N-N — штатная возможность защищённого поля Blizzard. MythicBoost
+-- не рекламирует и не заполняет её, но если пользователь сам отправил такой
+-- запрос, молча принимает его как точный уровень текущей выдачи.
+local function NativeExactLevel()
+    local text = ReadNativeSearchText()
+    if not text then return end
+    local from, to = text:match("^%s*(%d+)%s*%-%s*(%d+)%s*$")
+    from, to = tonumber(from), tonumber(to)
+    if from and from == to and from >= 2 then return from end
+end
+
+function GroupSearchUI:CaptureNativeExactSearch(welcome)
+    local level = NativeExactLevel()
+    self.manualExactLevel = level
+    if level then self.lastSearchTarget = level end
+    if welcome and welcome.groupFilters then welcome.groupFilters.searchExactLevel = level end
+    JP:RequestRefresh(.1)
+end
+
+FinishBlizzardSearch = function(welcome, token, message)
     if token and GroupSearchUI.searchToken ~= token then return end
     GroupSearchUI.searchPending = false
     GroupSearchUI.searchAwaitingResults = false
+    GroupSearchUI.awaitingNativeExact = false
     GroupSearchUI.waitingForActivities = false
     if welcome.scan then
         welcome.scan:Enable()
@@ -980,13 +1246,22 @@ local function FinishBlizzardSearch(welcome, token, message)
             if a.score ~= b.score then return a.score > b.score end
             return (a.age or math.huge) < (b.age or math.huge)
         end)
+        local excluded = {}
+        for searchResultID, match in pairs(GroupSearchUI.batchExcluded or {}) do
+            if not GroupSearchUI.batchMatches[searchResultID] then excluded[#excluded + 1] = match end
+        end
+        table.sort(excluded, function(a, b)
+            return (a.sourceOrder or math.huge) < (b.sourceOrder or math.huge)
+        end)
         GroupSearchUI.completedBatch = {
             matches = merged,
+            excluded = excluded,
             scanned = GroupSearchUI.batchScanned or 0,
             rejected = GroupSearchUI.batchRejected or {},
         }
     end
     GroupSearchUI.batchMatches = nil
+    GroupSearchUI.batchExcluded = nil
     GroupSearchUI.batchRejected = nil
     GroupSearchUI.searchQueue = nil
     -- Кэш профилей здесь НЕ чистим: сразу за этим идёт перерисовка, которая
@@ -997,7 +1272,7 @@ end
 
 function GroupSearchUI:CaptureCurrentSearch(welcome)
     local targetLevel = self.currentSearchTarget
-    local matches, _, scanned, rejected = JP.AutoMatch:Scan(
+    local matches, _, scanned, rejected, excluded = JP.AutoMatch:Scan(
         CopyFilters(welcome, targetLevel), {
             bestByMap = welcome.bestByMap,
             bestByActivity = welcome.bestByActivity,
@@ -1006,7 +1281,13 @@ function GroupSearchUI:CaptureCurrentSearch(welcome)
     for reason, count in pairs(rejected or {}) do
         self.batchRejected[reason] = (self.batchRejected[reason] or 0) + count
     end
-    for _, match in ipairs(matches or {}) do self.batchMatches[match.searchResultID] = match end
+    for _, match in ipairs(matches or {}) do
+        self.batchMatches[match.searchResultID] = match
+        self.batchExcluded[match.searchResultID] = nil
+    end
+    for _, match in ipairs(excluded or {}) do
+        if not self.batchMatches[match.searchResultID] then self.batchExcluded[match.searchResultID] = match end
+    end
 end
 
 function GroupSearchUI:ScheduleCurrentSearch(welcome, token)
@@ -1020,6 +1301,7 @@ function GroupSearchUI:ScheduleCurrentSearch(welcome, token)
     self.waitingForActivities = false
     self.searchQueue = nil
     self.batchMatches = nil
+    self.batchExcluded = nil
     self.batchRejected = nil
     self.searchFilterSnapshot = nil
     welcome.scan:SetText((L("Подожди %dс")):format(math.max(1, math.ceil(delay))))
@@ -1070,8 +1352,9 @@ local function ActivityGroupsByDungeon()
     end
 
     local count = 0
-    for _, mapID in ipairs(C_ChallengeMode.GetMapTable and C_ChallengeMode.GetMapTable() or {}) do
-        local mapName = C_ChallengeMode.GetMapUIInfo(mapID)
+    for _, mapID in ipairs(JP.API.GetChallengeMapIDs()) do
+        local mapInfo = JP.API.GetChallengeMap(mapID)
+        local mapName = mapInfo and mapInfo.name
         if type(mapName) == "string" and mapName ~= "" then
             local lowered = mapName:lower()
             for groupName, groupID in pairs(byName) do
@@ -1151,11 +1434,7 @@ function GroupSearchUI:RunDirectSearch(welcome, token)
     self.searchAwaitingResults = true
     local ok = false
 
-    -- SearchBox стандартного LFG защищён, поэтому SetText("+11") делать
-    -- нельзя. Зато C_LFGList.Search принимает advancedFilter и отдельный
-    -- activityIDsFilter: передаём выбранные карточки прямо в запрос, не
-    -- открывая и не меняя стандартный Blizzard-фрейм.
-    -- Сборка фильтра тоже обязана быть защищена: если список активностей ещё
+    -- Сборка фильтра обязана быть защищена: если список активностей ещё
     -- не готов или API конкретной сборки вернул неожиданные данные, кнопка не
     -- должна навечно оставаться в состоянии «Поиск...».
     local built, advancedFilter, activityIDs = pcall(self.BuildServerFilter, self, welcome)
@@ -1172,8 +1451,17 @@ function GroupSearchUI:RunDirectSearch(welcome, token)
     -- is emitted, leaving our request to expire on the timeout below.
     local searchFilter = filterEnum.Recommended or 1
     local preferredFilters = filterEnum.PvE or 4
+    -- The fifth argument is a cross-faction boolean, not search text. The
+    -- regular MythicBoost button always performs its normal broad Blizzard
+    -- refresh; a manually entered N-N belongs only to the native search which
+    -- produced it and must not leak into this independent method.
+    self.manualExactLevel = nil
+    if welcome.groupFilters then welcome.groupFilters.searchExactLevel = nil end
+    if C_LFGList.ClearSearchTextFields then pcall(C_LFGList.ClearSearchTextFields) end
+    local searchCrossFactionListings = nil
     ok = pcall(C_LFGList.Search, 2, searchFilter, preferredFilters,
-        languages, nil, advancedFilter, activityIDs)
+        languages, searchCrossFactionListings, advancedFilter, activityIDs)
+    JP:Log(L("точный поиск: %s"), targetLevel and (("%d-%d"):format(targetLevel, targetLevel)) or L("без уровня"))
     if not ok then
         FinishBlizzardSearch(welcome, token, L("Blizzard не разрешил выполнить поиск сейчас."))
         return
@@ -1201,7 +1489,7 @@ end
 -- SEARCH_RESULTS_RECEIVED, либо только как UPDATE_SEARCH_RESULTS. Второе
 -- событие может сработать до того, как таблицы результатов заполнятся, поэтому
 -- даём клиенту небольшое время и схлопываем повторные события одного шага.
-function GroupSearchUI:QueueSearchResults(welcome)
+function GroupSearchUI:QueueSearchResults(welcome, event)
     if not self.searchPending or not self.searchAwaitingResults then return end
     local token, step = self.searchToken, self.searchStep
     if self.captureScheduledStep == step then return end
@@ -1232,14 +1520,18 @@ function GroupSearchUI:RequestBlizzardSearch(welcome)
     self.searchToken = (self.searchToken or 0) + 1
     local token = self.searchToken
     self.searchPending = true
+    welcome.offset = 0
+    if welcome.scrollBar then welcome.scrollBar:SetValue(0) end
     -- Сбрасываем профили в начале поиска, а не в конце: к моменту отрисовки
     -- кэш должен уже наполняться, иначе перебор реалмов идёт дважды.
     self:ClearProfileCache()
-    -- Серверный перебор строк "+11", "+12" запрещён защищённым SearchBox.
-    -- Один широкий запрос не дублирует те же 100 результатов и не ловит taint.
-    self.searchQueue = { false }
+    -- Blizzard разрешает только один защищённый Search на аппаратный клик.
+    -- Для разных личных рекордов берём центральную цель: локальная проверка
+    -- затем оставляет любой подтверждённый ключ выше рекорда конкретного данжа.
+    self.searchQueue = { ExactSearchTarget(welcome) or false }
     self.searchIndex = 1
     self.batchMatches = {}
+    self.batchExcluded = {}
     self.batchRejected = {}
     self.batchScanned = 0
     self.searchFilterSnapshot = {}
@@ -1273,7 +1565,7 @@ local function GetDungeonData()
     end
 
     local available = {}
-    for _, mapID in ipairs(C_ChallengeMode.GetMapTable and C_ChallengeMode.GetMapTable() or {}) do available[mapID] = true end
+    for _, mapID in ipairs(JP.API.GetChallengeMapIDs()) do available[mapID] = true end
     local ordered = {}
     for _, mapID in ipairs(SEASON_ORDER) do
         if available[mapID] or byMap[mapID] then ordered[#ordered + 1] = mapID; available[mapID] = nil end
@@ -1284,7 +1576,9 @@ local function GetDungeonData()
     local result = {}
     for _, mapID in ipairs(ordered) do
         if #result >= 8 then break end
-        local name, _, _, icon, background, instanceMapID = C_ChallengeMode.GetMapUIInfo(mapID)
+        local mapInfo = JP.API.GetChallengeMap(mapID) or {}
+        local name, icon, background = mapInfo.name, mapInfo.icon, mapInfo.background
+        local instanceMapID = mapInfo.instanceMapID
         local run = byMap[mapID]
         local rioDungeon = run and run.dungeon
         if rioDungeon and type(rioDungeon.instance_map_ids) == "table" then
@@ -1706,22 +2000,8 @@ end
 ---------------------------------------------------------------------------
 
 function GroupSearchUI:GetApplicationState(searchResultID)
-    if not searchResultID or type(C_LFGList.GetApplicationInfo) ~= "function" then
-        return "none", false, false
-    end
-    local ok, _, status, pendingStatus, duration = pcall(C_LFGList.GetApplicationInfo, searchResultID)
-    if not ok or issecretvalue(status) or issecretvalue(pendingStatus) then
-        return "none", false, false
-    end
-
-    status = type(status) == "string" and status or "none"
-    -- pendingStatus означает переход между состояниями. В этот момент Blizzard
-    -- не принимает повторный Apply/Cancel, поэтому кнопку временно блокируем.
-    local pending = pendingStatus and pendingStatus ~= "none"
-    local cancellable = status == "applied" and not pending
-    local active = status == "applied" or status == "invited" or pending
-    duration = type(duration) == "number" and not issecretvalue(duration) and duration or nil
-    return status, cancellable, active, pending, duration
+    local state = JP.API.GetApplicationState(searchResultID)
+    return state.status, state.cancellable, state.active, state.pending, state.duration
 end
 
 function GroupSearchUI:IsApplicationListed(searchResultID)
@@ -1729,12 +2009,104 @@ function GroupSearchUI:IsApplicationListed(searchResultID)
     return active
 end
 
+-- Жадный портфель из пяти заявок. После каждого выбора похожие объявления
+-- получают штраф, поэтому все слоты не тратятся на один данж/уровень. Уже
+-- поданная сильная заявка получает небольшой бонус, чтобы план не дёргался.
+function GroupSearchUI:OptimizeApplicationPlan(matches)
+    local visibleIDs, activeOutside = {}, 0
+    for _, match in ipairs(matches or {}) do
+        match.applicationPlanOrder, match.applicationPlanScore = nil, nil
+        local _, _, active = self:GetApplicationState(match.searchResultID)
+        match.applicationActive = active
+        if type(match.searchResultID) == "number" and not issecretvalue(match.searchResultID) then
+            visibleIDs[match.searchResultID] = true
+        end
+    end
+    local applications = JP.API.GetApplicationIDs()
+    if applications then
+        for _, resultID in ipairs(applications) do
+            if JP.UsableNumber(resultID)
+                and not visibleIDs[resultID] and self:IsApplicationListed(resultID) then
+                activeOutside = activeOutside + 1
+            end
+        end
+    end
+    local selected, mapUse, levelUse = {}, {}, {}
+    local visibleCapacity = math.max(0, APPLICATION_CAP - activeOutside)
+    for slot = 1, math.min(visibleCapacity, #(matches or {})) do
+        local bestMatch, bestScore
+        for _, match in ipairs(matches) do
+            if not match.applicationPlanOrder then
+                local mapKey = match.mapID or match.dungeon or "?"
+                local levelKey = match.targetLevel or match.keyLevel or 0
+                local score = (match.applicationPriority or 0)
+                    - (mapUse[mapKey] or 0) * 12
+                    - (levelUse[levelKey] or 0) * 5
+                    + (match.applicationActive and 4 or 0)
+                if not bestScore or score > bestScore then bestMatch, bestScore = match, score end
+            end
+        end
+        if not bestMatch then break end
+        bestMatch.applicationPlanOrder, bestMatch.applicationPlanScore = slot, bestScore
+        selected[#selected + 1] = bestMatch
+        local mapKey = bestMatch.mapID or bestMatch.dungeon or "?"
+        local levelKey = bestMatch.targetLevel or bestMatch.keyLevel or 0
+        mapUse[mapKey] = (mapUse[mapKey] or 0) + 1
+        levelUse[levelKey] = (levelUse[levelKey] or 0) + 1
+    end
+    self.applicationPlanCount = #selected
+
+    local replacement, weakestActive
+    for _, match in ipairs(matches or {}) do
+        if match.applicationPlanOrder and not match.applicationActive and not replacement then replacement = match end
+        if match.applicationActive and not match.applicationPlanOrder
+            and (not weakestActive or (match.applicationPriority or 0) < (weakestActive.applicationPriority or 0)) then
+            weakestActive = match
+        end
+    end
+    if replacement and weakestActive then
+        self.applicationSuggestion = (L("Замени заявку %s (%d) на %s (%d)")):format(
+            weakestActive.dungeon or "—", weakestActive.applicationPriority or 0,
+            replacement.dungeon or "—", replacement.applicationPriority or 0)
+    elseif activeOutside > 0 then
+        self.applicationSuggestion = (L("План: %d здесь + %d активных вне текущего поиска")):format(
+            #selected, activeOutside)
+    else
+        self.applicationSuggestion = (L("План: %d лучших заявок с разными рисками")):format(#selected)
+    end
+
+    table.sort(matches, function(a, b)
+        if a.applicationPlanOrder and b.applicationPlanOrder then return a.applicationPlanOrder < b.applicationPlanOrder end
+        if a.applicationPlanOrder ~= b.applicationPlanOrder then return a.applicationPlanOrder ~= nil end
+        return (a.applicationPriority or 0) > (b.applicationPriority or 0)
+    end)
+end
+
 function GroupSearchUI:UpdateApplicationButton(button)
     local match = button and button.match
     local resultID = match and match.searchResultID
     if not resultID then return end
 
+    if match.rejected and match.actionable == false then
+        button:SetText(L("Недоступно"))
+        button:Disable()
+        button:SetAlpha(.35)
+        button.applicationActive = false
+        return
+    end
+
     local status, cancellable, active, pending, duration = self:GetApplicationState(resultID)
+    local searchSettings = JP.Settings and JP.Settings("search", {
+        showRejectedResults = true,
+        allowRejectedApplications = true,
+    })
+    if match.rejected and searchSettings and searchSettings.allowRejectedApplications == false and not cancellable then
+        button:SetText(L("Только просмотр"))
+        button:Disable()
+        button:SetAlpha(.35)
+        button.applicationActive = false
+        return
+    end
     if button.cancelRequestedAt and (not active or GetTime() - button.cancelRequestedAt >= 2) then
         button.cancelRequestedAt = nil
     end
@@ -1770,7 +2142,10 @@ function GroupSearchUI:UpdateApplicationButton(button)
         button:SetAlpha(1)
         button.applicationActive = false
     end
+    if match.rejected then button:SetAlpha(.58) end
 end
+
+local ApplicationCoachTooltip
 
 local function CreateResultRow(parent, index)
     local row = CreateFrame("Frame", nil, parent, "BackdropTemplate")
@@ -1778,6 +2153,18 @@ local function CreateResultRow(parent, index)
     row:EnableMouse(true)
     row.baseColor = index % 2 == 0 and C.rowAlt or C.row
     UI.Backdrop(row, row.baseColor, C.lineSoft)
+
+    row.sectionLabel = UI.Text(row, "GameFontNormalSmall", "", { .46, .50, .56, 1 })
+    row.sectionLabel:SetPoint("CENTER", 0, 0)
+    row.sectionLine = UI.Line(row, { .22, .25, .29, .8 })
+    row.sectionLine:SetPoint("LEFT", 8, 0)
+    row.sectionLine:SetPoint("RIGHT", row.sectionLabel, "LEFT", -10, 0)
+    row.sectionLineRight = UI.Line(row, { .22, .25, .29, .8 })
+    row.sectionLineRight:SetPoint("LEFT", row.sectionLabel, "RIGHT", 10, 0)
+    row.sectionLineRight:SetPoint("RIGHT", -8, 0)
+    row.sectionLine:Hide()
+    row.sectionLineRight:Hide()
+    row.sectionLabel:Hide()
 
     row.keyBox = CreateFrame("Frame", nil, row, "BackdropTemplate")
     row.keyBox:SetSize(COL.keyWidth, COL.keyWidth)
@@ -1790,12 +2177,27 @@ local function CreateResultRow(parent, index)
     row.keyIcon:SetTexCoord(.10, .90, .22, .78)
     row.keyIcon:SetDesaturated(true)
     row.keyIcon:SetAlpha(.22)
-    row.key = UI.Text(row.keyBox, "GameFontNormalLarge", "", C.green)
-    row.key:SetPoint("CENTER", 0, 0)
-    local keyFont = row.key:GetFont()
-    if keyFont then row.key:SetFont(keyFont, 22, "THICKOUTLINE") end
-    row.key:SetShadowColor(0, 0, 0, 1)
-    row.key:SetShadowOffset(2, -2)
+    -- Midnight may mask a FontString as "..." when its text was assembled
+    -- from a protected search result. Pre-create every realistic key label
+    -- from literal addon-local numbers before any result is read, then only
+    -- switch visibility. SetText is never called during result rendering.
+    row.keyLabels = {}
+    local function KeyLabel(value)
+        local label = UI.Text(row.keyBox, "GameFontNormalLarge", value, C.green)
+        label:SetPoint("CENTER", 0, 0)
+        label:SetSize(COL.keyWidth + 8, 30)
+        label:SetJustifyH("CENTER")
+        label:SetJustifyV("MIDDLE")
+        local keyFont = label:GetFont()
+        if keyFont then label:SetFont(keyFont, 20, "THICKOUTLINE") end
+        label:SetShadowColor(0, 0, 0, 1)
+        label:SetShadowOffset(2, -2)
+        label:Hide()
+        return label
+    end
+    row.keyFallback = KeyLabel("+")
+    for level = 2, 40 do row.keyLabels[level] = KeyLabel("+" .. level) end
+    row.key = row.keyFallback
 
     row.roles = UI.Text(row, "GameFontHighlight", "")
     row.roles:SetPoint("RIGHT", -COL.rolesRight, 0)
@@ -1833,8 +2235,10 @@ local function CreateResultRow(parent, index)
     row.apply = UI.Button(row, L("Заявка"), COL.applyWidth, 26, true)
     row.apply:SetPoint("RIGHT", -COL.applyRight, 0)
     row.apply:HookScript("OnEnter", function(self)
+        local coach = ApplicationCoachTooltip(self.match)
         UI.Tooltip(self, L("Заявка в группу"),
-            L("Клик — подать сразу с ролью текущей специализации.\nShift+клик — открыть роли и написать комментарий."))
+            L("Клик — подать сразу с ролью текущей специализации.\nShift+клик — открыть роли и написать комментарий.")
+                .. (coach and ("\n\n" .. coach) or ""))
     end)
     row.apply:HookScript("OnLeave", GameTooltip_Hide)
     row.apply:SetScript("OnClick", function(self)
@@ -1868,10 +2272,12 @@ local function CreateResultRow(parent, index)
     end)
 
     local function Enter()
+        if row.isSection then return end
         row:SetBackdropColor(UI.Unpack(C.rowHover))
         ShowGroupTooltip(row)
     end
     local function Leave()
+        if row.isSection then return end
         row:SetBackdropColor(UI.Unpack(row.baseColor))
         HideGroupTooltip()
     end
@@ -1884,42 +2290,121 @@ local function CreateResultRow(parent, index)
     return row
 end
 
+local function SetResultFieldsShown(row, shown)
+    row.keyBox:SetShown(shown)
+    row.roles:SetShown(shown)
+    row.dungeon:SetShown(shown)
+    row.detail:SetShown(shown)
+    row.score:SetShown(shown)
+    row.leader:SetShown(shown)
+    row.age:SetShown(shown)
+    row.apply:SetShown(shown)
+end
+
+local function ApplicationCoachText(match)
+    if not match then return nil end
+    local state = match.applicationState
+    local labels = {
+        ready = L("ПОДХОДИТ"), risky = L("РИСК"),
+        applied = L("ПОДАНА"), invited = L("ПРИГЛАШЕНИЕ"),
+    }
+    return labels[state]
+end
+
+ApplicationCoachTooltip = function(match)
+    if not match then return end
+    local lines = {}
+    local reasons = type(match.applicationReasons) == "table" and match.applicationReasons or {}
+    local unknowns = type(match.applicationUnknowns) == "table" and match.applicationUnknowns or {}
+    for _, value in ipairs(reasons) do if type(value) == "string" and value ~= "" then lines[#lines + 1] = value end end
+    for _, value in ipairs(unknowns) do if type(value) == "string" and value ~= "" then lines[#lines + 1] = (L("Неизвестно: %s")):format(value) end end
+    local summary = ApplicationCoachText(match)
+    if summary then lines[#lines + 1] = summary end
+    if #lines == 0 then return end
+    return table.concat(lines, "\n")
+end
+
+-- Never render a key level taken from a Blizzard search-result table. In
+-- Midnight such a value can stay protected even after a type/secret check and
+-- FontString then replaces it with literal "...". Build the display only from
+-- the player's local filter state and locally stored personal bests.
+local function LocalDisplayKeyLevel(welcome, match)
+    local filters = welcome and welcome.groupFilters or {}
+    if filters.scoreUpgrade then
+        local mapID = match and UsableNumber(match.mapID) and match.mapID or nil
+        local best = mapID and JP:GetBestLevel(mapID, 0) or nil
+        if UsableNumber(best) and best > 0 then return math.floor(best + .5) + 1 end
+    end
+
+    local minimum = tonumber(filters.keyMin)
+    local maximum = tonumber(filters.keyMax)
+    if minimum and maximum and minimum >= 2 and minimum == maximum then
+        return math.floor(minimum + .5)
+    end
+
+    local searched = GroupSearchUI.lastSearchTarget
+    if UsableNumber(searched) and searched >= 2 then return math.floor(searched + .5) end
+end
+
 function GroupSearchUI:RenderRows(welcome)
     local matches = welcome.matches or {}
     local offset = welcome.offset or 0
     for index, row in ipairs(welcome.rows) do
         local match = matches[offset + index]
         if match and row.layoutVisible ~= false then
-            local exactLevelKnown = match.keyLevel and not match.keyApprox
-            local displayedLevel = (match.targetLevel and not exactLevelKnown) and match.targetLevel
-                or match.keyLevel or match.targetLevel
-            local raises = displayedLevel and displayedLevel > match.bestLevel
-            -- «~» означает оценку по результату лидера: точный уровень ключа
-            -- Blizzard в Midnight аддонам не отдаёт, заголовок приходит токеном.
-            row.key:SetText(displayedLevel and (((match.keyApprox and not match.targetLevel) and "~" or "+") .. displayedLevel) or "—")
+            if match.isSection then
+                row.isSection = true
+                row.match, row.searchResultID, row.dungeonName = nil, nil, nil
+                row.lastResultID = nil
+                row.apply.cancelRequestedAt = nil
+                row.apply.match = nil
+                SetResultFieldsShown(row, false)
+                row.sectionLabel:SetText(match.sectionLabel or L("НЕ ПРОШЛИ ФИЛЬТРЫ"))
+                row.sectionLabel:Show()
+                row.sectionLine:Show()
+                row.sectionLineRight:Show()
+                row:SetBackdropColor(.025, .030, .036, .72)
+                row:SetBackdropBorderColor(.12, .14, .17, .55)
+                row:Show()
+            else
+            row.isSection = false
+            row.sectionLabel:Hide()
+            row.sectionLine:Hide()
+            row.sectionLineRight:Hide()
+            SetResultFieldsShown(row, true)
+            row.baseColor = match.rejected and { .040, .045, .052, .76 }
+                or (index % 2 == 0 and C.rowAlt or C.row)
+            row:SetBackdropColor(UI.Unpack(row.baseColor))
+            row:SetBackdropBorderColor(UI.Unpack(match.rejected and { .12, .14, .17, .70 } or C.lineSoft))
+            local displayedLevel = LocalDisplayKeyLevel(welcome, match)
+            -- Only literal local text reaches the FontString. When there is no
+            -- honest local number, a single plus is clearer than protected
+            -- dots and does not pretend that the listing level is known.
+            if row.key then row.key:Hide() end
+            row.key = displayedLevel and row.keyLabels[displayedLevel] or row.keyFallback
+            if not row.key then row.key = row.keyFallback end
+            row.key:Show()
             local keyTexture = DungeonKeyTexture(match.mapID)
             row.keyIcon:SetTexture(keyTexture or "Interface\\Icons\\INV_Relics_Hourglass")
             row.keyIcon:SetTexCoord(keyTexture and .07 or .10, keyTexture and .93 or .90,
                 keyTexture and .07 or .22, keyTexture and .93 or .78)
-            row.keyIcon:SetDesaturated(not keyTexture)
-            row.keyIcon:SetAlpha(keyTexture and .92 or .22)
-            if match.targetLevel and not exactLevelKnown then
+            row.keyIcon:SetDesaturated(match.rejected or not keyTexture)
+            row.keyIcon:SetAlpha(match.rejected and .26 or (keyTexture and .92 or .22))
+            if match.rejected then
+                row.key:SetTextColor(.42, .45, .49, 1)
+                row.keyBox:SetBackdropBorderColor(.16, .18, .21, .75)
+            elseif displayedLevel then
                 -- В режиме повышения показываем именно требуемый уровень
                 -- выбранного данжа. Это цель, а не выдуманный уровень группы.
                 row.key:SetTextColor(UI.Unpack(C.accent))
                 row.keyBox:SetBackdropBorderColor(.10, .42, .58, 1)
-            elseif match.keyLevel and match.keyApprox then
-                row.key:SetTextColor(UI.Unpack(raises and C.green or C.amber))
-                row.keyBox:SetBackdropBorderColor(.30, .26, .14, 1)
-            elseif match.keyLevel then
-                row.key:SetTextColor(UI.Unpack(raises and C.green or C.text))
-                row.keyBox:SetBackdropBorderColor(raises and .16 or .18, raises and .44 or .22, raises and .32 or .28, 1)
             else
                 row.key:SetTextColor(UI.Unpack(C.faint))
                 row.keyBox:SetBackdropBorderColor(.16, .19, .24, 1)
             end
 
             row.dungeon:SetText(match.dungeon)
+            row.dungeon:SetTextColor(UI.Unpack(match.rejected and { .48, .51, .55, 1 } or C.text))
 
             -- Имена в LFG иногда догружаются позже основной карточки. Берём
             -- свежие данные перед каждой отрисовкой, а не держим первый nil.
@@ -1939,22 +2424,23 @@ function GroupSearchUI:RenderRows(welcome)
                 if #refreshed > 0 then match.memberInfo = refreshed end
             end
 
-            local parts, hidden = {}, 0
+            local parts = {}
             for _, member in ipairs(type(match.memberInfo) == "table" and match.memberInfo or {}) do
                 local displayName = member.name
                 if not displayName and member.isLeader and match.leaderName then
                     displayName = match.leaderName:match("^([^%-]+)")
                 end
                 if displayName then
-                    parts[#parts + 1] = ("%s |c%s%s|r"):format(
-                        UI.ClassIcon(member.classFilename, 16),
-                        UI.ClassColorCode(member.classFilename),
-                        displayName)
-                else
-                    hidden = hidden + 1
+                    if match.rejected then
+                        parts[#parts + 1] = displayName
+                    else
+                        parts[#parts + 1] = ("%s |c%s%s|r"):format(
+                            UI.ClassIcon(member.classFilename, 16),
+                            UI.ClassColorCode(member.classFilename),
+                            displayName)
+                    end
                 end
             end
-            if hidden > 0 then parts[#parts + 1] = (L("|cff657181+%d скрыт.|r")):format(hidden) end
             local names = table.concat(parts, "  ")
             -- Заголовок группы почти всегда просто «+15» — уровень уже стоит
             -- в отдельной колонке, поэтому убираем его из описания.
@@ -1969,32 +2455,66 @@ function GroupSearchUI:RenderRows(welcome)
                 local stripped = comment:gsub("^%s*[%+＋]?%s*%d%d?%s*", "")
                 comment = stripped ~= "" and stripped or nil
             end
-            if comment and names ~= "" then
-                row.detail:SetText(("|cffa9b4c2%s|r   |cff4c545e—|r   %s"):format(comment, names))
+            if match.rejected then
+                local secondary = comment or names
+                if secondary then secondary = secondary:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end
+                row.detail:SetText(("|cff777f89%s: %s|r%s"):format(
+                    L("НЕ ПРОШЛО"), match.rejectionReason or L("причина неизвестна"),
+                    secondary and ("   |cff555d66—|r   |cff666e78" .. secondary .. "|r") or ""))
             else
-                row.detail:SetText(comment and ("|cffa9b4c2" .. comment .. "|r") or names)
+                -- The optimizer score and its unknown-state marker are
+                -- internal ranking inputs, not player-facing facts. Showing
+                -- `[ЦЕЛЬ ?] 55` consumed the only readable line without
+                -- explaining a decision. Keep using the score for sorting and
+                -- show only information the player can act on.
+                local detailParts = {}
+                if comment then detailParts[#detailParts + 1] = "|cffa9b4c2" .. comment .. "|r" end
+                if names ~= "" then detailParts[#detailParts + 1] = names end
+                row.detail:SetText(table.concat(detailParts, "   |cff4c545e—|r   "))
             end
 
-            row.roles:SetText(("%s %s %s %s"):format(
-                match.hasTank and UI.RoleIcon("TANK", 16) or "|cff3d434c—|r",
-                match.hasHealer and UI.RoleIcon("HEALER", 16) or "|cff3d434c—|r",
-                match.hasBloodlust and L("|cff28b8f5БЛ|r") or L("|cff3d434cБЛ|r"),
-                match.hasBattleRes and L("|cff43d17aБР|r") or L("|cff3d434cБР|r")))
+            if match.rejected then
+                row.roles:SetText((L("|cff59616b%s  %s  БЛ%s  БР%s|r")):format(
+                    match.hasTank and L("Т") or "—", match.hasHealer and L("Л") or "—",
+                    match.hasBloodlust and "+" or "—", match.hasBattleRes and "+" or "—"))
+            else
+                row.roles:SetText(("%s %s %s %s"):format(
+                    match.hasTank and UI.RoleIcon("TANK", 16) or "|cff3d434c—|r",
+                    match.hasHealer and UI.RoleIcon("HEALER", 16) or "|cff3d434c—|r",
+                    match.hasBloodlust and L("|cff28b8f5БЛ|r") or L("|cff3d434cБЛ|r"),
+                    match.hasBattleRes and L("|cff43d17aБР|r") or L("|cff3d434cБР|r")))
+            end
 
             local partyAverage = match.partyScoreAverage or match.score or 0
-            row.score:SetText(("|cff%s[%d]|r"):format(PartyRatingColorCode(partyAverage), math.floor(partyAverage + .5)))
+            row.score:SetText(match.rejected and ("|cff59616b[%d]|r"):format(math.floor(partyAverage + .5))
+                or ("|cff%s[%d]|r"):format(PartyRatingColorCode(partyAverage), math.floor(partyAverage + .5)))
             row.leader:SetText(match.leaderName or "—")
             row.age:SetText(match.age and SecondsToTime(match.age, false, false, 1) or "—")
+            row.leader:SetTextColor(UI.Unpack(match.rejected and { .38, .41, .45, 1 } or C.muted))
+            row.age:SetTextColor(UI.Unpack(match.rejected and { .36, .39, .43, 1 } or { .62, .70, .80, 1 }))
 
             row.dungeonName = match.dungeon
             row.searchResultID = match.searchResultID
             row.match = match
+            if row.lastResultID ~= match.searchResultID then
+                row.apply.cancelRequestedAt = nil
+                row.apply.updateElapsed = 0
+                row.lastResultID = match.searchResultID
+            end
             row.apply.match = match
             GroupSearchUI:UpdateApplicationButton(row.apply)
             row:Show()
+            end
         else
+            row.isSection = false
+            row.sectionLabel:Hide()
+            row.sectionLine:Hide()
+            row.sectionLineRight:Hide()
+            SetResultFieldsShown(row, true)
             row.searchResultID = nil
             row.match = nil
+            row.lastResultID = nil
+            row.apply.cancelRequestedAt = nil
             row.apply.match = nil
             row:Hide()
         end
@@ -2107,9 +2627,9 @@ local function BuildFilterPanel(welcome, body)
     -- Счётчик ключей лидера берётся только из Raider.IO. Без него любой порог
     -- выше нуля отсекает вообще все группы, поэтому не ставим эту ловушку по
     -- умолчанию.
-    local defaultRuns = MythicBoostDB.minimumKeystoneRuns or 20
-    if not (RaiderIO and type(RaiderIO.GetProfile) == "function") then defaultRuns = 0 end
-    NumberField(panel, welcome, L("Ключей +10 от"), "runsMin", defaultRuns, y); y = y - 30
+    -- A leader-run threshold is useful when explicitly chosen, but it must not
+    -- grow from the player's own completions or silently reject fresh groups.
+    NumberField(panel, welcome, L("Ключей +10 от"), "runsMin", 0, y); y = y - 30
 
     SectionLabel(panel, L("ОТБОР"), y); y = y - 22
 
@@ -2140,6 +2660,10 @@ local function BuildFilterPanel(welcome, body)
     welcome.notDeclined = UI.CheckBox(panel, L("Скрыть отказавших"), welcome.groupFilters.notDeclined,
         function(checked) welcome.groupFilters.notDeclined = checked; welcome:Refresh() end)
     welcome.notDeclined:SetPoint("TOPLEFT", 14, y); welcome.notDeclined:SetWidth(FILTERS_WIDTH - 28)
+    y = y - 23
+    welcome.experiencedParty = FilterCheck("experiencedParty", L("Все проходили этот +ключ"),
+        L("Только с подтверждённым опытом"),
+        L("Оставляет группы, где каждый текущий участник уже закрывал это подземелье на искомом уровне или выше. Неизвестные профили не считаются подтверждением."))
 
     -- Диапазон ключа не имеет смысла в режиме «ровно следующий ключ»,
     -- поэтому поля гаснут вместе с состоянием флажка.
@@ -2180,7 +2704,7 @@ local function BuildFilterPanel(welcome, body)
     welcome.createOwnKey = UI.Button(summary, L("Собрать свой ключ"), 190, 22, true)
     welcome.createOwnKey:SetPoint("BOTTOMLEFT", 10, 7)
     welcome.createOwnKey:SetPoint("BOTTOMRIGHT", -10, 7)
-    welcome.createOwnKey:SetScript("OnClick", OpenOwnKeystoneListingForm)
+    welcome.createOwnKey:SetScript("OnClick", function() GroupSearchUI:OpenListingAction() end)
     welcome.createOwnKey:HookScript("OnEnter", function(self)
         UI.Tooltip(self, L("Собрать свой ключ"),
             L("Открыть «Подземелья и рейды» — там создаётся и меняется само объявление."),
@@ -2191,7 +2715,7 @@ local function BuildFilterPanel(welcome, body)
     local reset = UI.Button(panel, L("Сбросить"), 100, 26)
     reset:SetPoint("BOTTOMLEFT", 12, 12)
     reset:SetScript("OnClick", function()
-        local defaults = { keyMin = "", keyMax = "", scoreMin = 0, scoreMax = "", runsMin = 20 }
+        local defaults = { keyMin = "", keyMax = "", scoreMin = 0, scoreMax = "", runsMin = 0 }
         for key, value in pairs(defaults) do
             welcome.groupFilters[key] = value
             if welcome.filterFields[key] then welcome.filterFields[key]:SetText(tostring(value)) end
@@ -2201,6 +2725,7 @@ local function BuildFilterPanel(welcome, body)
         local checkDefaults = {
             roleFit = true, requireTank = true, requireHealer = false,
             bloodlustFit = false, battleResFit = false, notDeclined = true,
+            experiencedParty = false,
         }
         for key, value in pairs(checkDefaults) do welcome.groupFilters[key] = value end
         MythicBoostDB.autoMatch.requireTank = true
@@ -2210,6 +2735,7 @@ local function BuildFilterPanel(welcome, body)
         welcome.bloodlust:SetChecked(false)
         welcome.battleRes:SetChecked(false)
         welcome.notDeclined:SetChecked(true)
+        if welcome.experiencedParty then welcome.experiencedParty:SetChecked(false) end
         welcome.scoreUpgrade:SetChecked(false)
         UpdateUpgradeMode(false)
         GroupSearchUI:RefreshDungeonCards(welcome)
@@ -2295,7 +2821,7 @@ local function BuildResultsPanel(welcome, body)
 
     -- Панель инструментов отдельной строкой над заголовками колонок:
     -- раньше кнопка «Обновить» наезжала на подпись «ВОЗРАСТ».
-    local heading = UI.Text(results, "GameFontNormalSmall", L("ПОДХОДЯЩИЕ ГРУППЫ"), C.muted)
+    local heading = UI.Text(results, "GameFontNormalSmall", L("ГРУППЫ"), C.muted)
     heading:SetPoint("TOPLEFT", 12, -12)
 
     welcome.resultsCount = UI.Text(results, "GameFontHighlightSmall", "", C.accent)
@@ -2409,7 +2935,8 @@ function GroupSearchUI:RefreshOwnComposition(welcome)
     if welcome.ownKey then
         local mapID = C_MythicPlus and C_MythicPlus.GetOwnedKeystoneChallengeMapID and C_MythicPlus.GetOwnedKeystoneChallengeMapID()
         local level = C_MythicPlus and C_MythicPlus.GetOwnedKeystoneLevel and C_MythicPlus.GetOwnedKeystoneLevel()
-        local mapName = mapID and SafeString(C_ChallengeMode.GetMapUIInfo(mapID))
+        local mapInfo = mapID and JP.API.GetChallengeMap(mapID)
+        local mapName = mapInfo and mapInfo.name
         if mapName and UsableNumber(level) then
             welcome.ownKey:SetText((L("|cff8a939fтвой ключ|r  |cff43d17a+%d|r  %s")):format(level, mapName))
         else
@@ -2422,8 +2949,8 @@ function GroupSearchUI:RefreshOwnComposition(welcome)
         local active = C_LFGList.HasActiveEntryInfo and C_LFGList.HasActiveEntryInfo()
         local leader = not (IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME))
             or not UnitIsGroupLeader or UnitIsGroupLeader("player", LE_PARTY_CATEGORY_HOME)
-        welcome.createOwnKey:SetEnabled(level ~= nil and not active and leader)
-        welcome.createOwnKey:SetText(active and L("Группа уже создана") or L("Собрать свой ключ"))
+        welcome.createOwnKey:SetEnabled(level ~= nil and leader)
+        welcome.createOwnKey:SetText(active and L("Открыть объявление") or L("Создать объявление"))
     end
 
     if welcome.ownScore then
@@ -2451,6 +2978,7 @@ function GroupSearchUI:Build(welcome, body)
     end
     if welcome.groupFilters.battleResFit == nil then welcome.groupFilters.battleResFit = false end
     if welcome.groupFilters.notDeclined == nil then welcome.groupFilters.notDeclined = true end
+    if welcome.groupFilters.experiencedParty == nil then welcome.groupFilters.experiencedParty = false end
     welcome.filterFields = {}
 
     BuildFilterPanel(welcome, body)
@@ -2472,9 +3000,12 @@ function GroupSearchUI:Build(welcome, body)
     welcome.searchEvents:SetScript("OnEvent", function(_, event)
         if event == "LFG_LIST_AVAILABILITY_UPDATE" and GroupSearchUI.searchPending and GroupSearchUI.waitingForActivities then
             GroupSearchUI:ScheduleCurrentSearch(welcome, GroupSearchUI.searchToken)
-        elseif (event == "LFG_LIST_SEARCH_RESULTS_RECEIVED" or event == "LFG_LIST_UPDATE_SEARCH_RESULTS")
-            and GroupSearchUI.searchPending then
-            GroupSearchUI:QueueSearchResults(welcome)
+        elseif event == "LFG_LIST_SEARCH_RESULTS_RECEIVED" or event == "LFG_LIST_UPDATE_SEARCH_RESULTS" then
+            if GroupSearchUI.searchPending then
+                GroupSearchUI:QueueSearchResults(welcome, event)
+            else
+                GroupSearchUI:CaptureNativeExactSearch(welcome)
+            end
         elseif event == "LFG_LIST_SEARCH_FAILED" and GroupSearchUI.searchPending then
             FinishBlizzardSearch(welcome, GroupSearchUI.searchToken, L("Поиск Blizzard завершился ошибкой."))
         else
@@ -2486,6 +3017,7 @@ function GroupSearchUI:Build(welcome, body)
         -- У выбранных подземелий разные следующие уровни. Один общий target
         -- оставлял только данжи с минимальной целью и скрывал остальные.
         self.groupFilters.searchTargetLevel = nil
+        self.groupFilters.searchExactLevel = GroupSearchUI.manualExactLevel
         return self.groupFilters
     end
 

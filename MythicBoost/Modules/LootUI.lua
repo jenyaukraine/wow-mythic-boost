@@ -16,7 +16,7 @@ local MAX_HISTORY_ROWS = 6
 local HISTORY_ROW_HEIGHT = 24
 local HISTORY_LIFETIME = 22
 local BLIZZARD_LOOT_EVENTS = { "LOOT_OPENED", "LOOT_CLOSED", "LOOT_SLOT_CLEARED" }
-local SETTINGS_DEFAULTS = { enabled = true, atCursor = true, showRolls = true, showHistory = true }
+local SETTINGS_DEFAULTS = { enabled = false, atCursor = true, showRolls = true, showHistory = true }
 
 local function Settings()
     return JP.Settings("lootUI", SETTINGS_DEFAULTS) or {}
@@ -71,7 +71,7 @@ local function ItemMeta(link, currencyID, quest, slotType)
         detail = itemSubType or itemType or L("Предмет")
     end
     if equipText and type(itemLevel) == "number" and itemLevel > 1 then
-        detail = detail .. "  •  " .. itemLevel
+        detail = detail .. "  -  " .. itemLevel
     end
 
     local bindLabel = bindType == (LE_ITEM_BIND_ON_ACQUIRE or 1) and L("БоП") or ""
@@ -189,7 +189,7 @@ function LootUI:Refresh()
     end
     self.frame.counter:SetFormattedText("%d", #slots)
     if #slots > MAX_ROWS then
-        self.frame.page:SetFormattedText(L("%d–%d / %d  •  колесо мыши"),
+        self.frame.page:SetFormattedText(L("%d-%d / %d  -  колесо мыши"),
             self.scrollOffset + 1, math.min(#slots, self.scrollOffset + MAX_ROWS), #slots)
         self.frame.page:Show()
     else

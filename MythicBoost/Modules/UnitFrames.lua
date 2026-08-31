@@ -234,7 +234,32 @@ local function Settings()
     local db = JP.db or MythicBoostDB
     if type(db) ~= "table" then return {} end
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
-    if db.unitFrames.unlocked == nil then db.unitFrames.unlocked = false end
+    local settings = db.unitFrames
+    local defaults = {
+        unlocked = false, scale = 1, opacity = 1,
+        showHealthText = true, showPowerText = true,
+        animatedPortrait = true, showBadges = true, badgesUnlocked = false, badgeShape = 1,
+        alwaysShowTarget = false,
+        showPlayerAuras = true, showTargetAuras = true,
+        aurasAbove = false,
+        showResourcePips = true, showEmptyResources = true,
+        resourceHeight = 10, resourceGap = 2, resourceOpacity = 1,
+    }
+    for key, value in pairs(defaults) do
+        if settings[key] == nil then settings[key] = value end
+    end
+    local function Clamp(key, minimum, maximum)
+        local value = settings[key]
+        if not UI.UsableNumber(value) then value = defaults[key] end
+        value = math.max(minimum, math.min(maximum, value))
+        settings[key] = value
+    end
+    Clamp("scale", .75, 2.00)
+    Clamp("badgeShape", 1, 3)
+    Clamp("opacity", .55, 1)
+    Clamp("resourceHeight", 6, 16)
+    Clamp("resourceGap", 0, 6)
+    Clamp("resourceOpacity", .30, 1)
     -- Revision 5 adopts the balanced lower layout. Only absent positions and
     -- the exact previous defaults are migrated; manually placed frames stay
     -- where the player left them.
@@ -253,7 +278,27 @@ local function Settings()
         end
         db.unitFrames.positionRevision = 5
     end
-    return db.unitFrames
+    return settings
+end
+
+local APPEARANCE_KEYS = {
+    "scale", "opacity", "showHealthText", "showPowerText", "animatedPortrait", "showBadges",
+    "badgesUnlocked", "badgeShape",
+    "alwaysShowTarget",
+    "showPlayerAuras", "showTargetAuras", "showResourcePips", "showEmptyResources",
+    "aurasAbove", "resourceHeight", "resourceGap", "resourceOpacity",
+}
+
+-- Database values change as soon as a settings control is clicked. During
+-- combat, however, the secure unit-button tree must continue using the last
+-- fully applied configuration until PLAYER_REGEN_ENABLED runs the queued job.
+local function ActiveSettings()
+    return UnitFrames.appliedSettings or Settings()
+end
+
+local function IsUnlocked()
+    if UnitFrames.appliedUnlocked ~= nil then return UnitFrames.appliedUnlocked end
+    return Settings().unlocked == true
 end
 
 function UnitFrames:AfterCombat(key, action)
@@ -479,6 +524,12 @@ end
 local function UpdateResourcePips(display)
     local row = display and display.resourceRow
     if not row then return end
+    local settings = ActiveSettings()
+    if settings.showResourcePips == false then
+        row:Hide()
+        for _, pip in ipairs(row.pips) do pip:Hide() end
+        return
+    end
     local kind = PlayerResourceType()
     if not kind then row:Hide(); return end
 
@@ -509,12 +560,17 @@ local function UpdateResourcePips(display)
     if type(charged) == "table" then
         for _, index in ipairs(charged) do chargedSet[index] = true end
     end
-    local gap = 2
+    local gap = settings.resourceGap
+    local height = settings.resourceHeight
+    local showEmpty = settings.showEmptyResources ~= false
+    row:SetHeight(height)
+    row:SetAlpha(settings.resourceOpacity)
     local size = (SIZE.panelWidth - (maximum - 1) * gap) / maximum
+    local anyVisible = false
     for index, pip in ipairs(row.pips) do
         if index <= maximum then
             pip:ClearAllPoints()
-            pip:SetSize(size, 10)
+            pip:SetSize(size, height)
             pip:SetPoint("LEFT", row, "LEFT", (index - 1) * (size + gap), 0)
             local active = kind == POWER.Runes and ready[index] or index <= current
             local r, g, b = color[1], color[2], color[3]
@@ -528,15 +584,31 @@ local function UpdateResourcePips(display)
                 SetPipTexture(pip.fill, .055, .075, .09, .96)
                 pip.shine:SetAlpha(.08)
             end
-            pip:Show()
+            pip:SetShown(active or showEmpty)
+            anyVisible = anyVisible or active or showEmpty
         else pip:Hide() end
     end
-    row:Show()
+    row:SetShown(anyVisible)
+end
+
+local function ReadUnitName(unit, fallback)
+    -- У encounter-юнитов один API иногда возвращает secret value, хотя
+    -- другой всё ещё отдаёт обычную строку. Не оставляем пустую шапку цели.
+    for _, getter in ipairs({ UnitName, GetUnitName, UnitNameUnmodified }) do
+        if type(getter) == "function" then
+            local ok, name = pcall(getter, unit)
+            if ok and type(name) == "string" and not issecretvalue(name) and name ~= "" then
+                return name
+            end
+        end
+    end
+    return fallback or ""
 end
 
 local function UpdateIdentity(display)
-    local name = UnitName(display.unit)
-    display.name:SetText(type(name) == "string" and not issecretvalue(name) and name or "")
+    local name = ReadUnitName(display.unit, display.cachedName)
+    if name ~= "" then display.cachedName = name end
+    display.name:SetText(name)
     local level = UnitLevel(display.unit)
     display.level:SetText(UI.UsableNumber(level) and tostring(level) or "")
     local _, class = UnitClass(display.unit)
@@ -795,6 +867,14 @@ end
 
 local function RefreshAuras(display)
     if not display.debuffRow then return end
+    local settings = ActiveSettings()
+    local enabled = display.unit == "player" and settings.showPlayerAuras ~= false
+        or display.unit == "target" and settings.showTargetAuras ~= false
+    if not enabled then
+        LayoutRow(display.debuffRow, {})
+        LayoutRow(display.buffRow, {})
+        return
+    end
     local debuffs, buffs = {}, {}
     for _, data in pairs(display.cache) do
         if data then
@@ -816,7 +896,27 @@ local function RefreshAuras(display)
         row:SetPoint(display.mirror and "TOPRIGHT" or "TOPLEFT", anchor,
             display.mirror and "BOTTOMRIGHT" or "BOTTOMLEFT", edgeInset, y)
     end
-    if display.unit == "player" then
+    local function AnchorRowAbove(row, anchor, y)
+        row:ClearAllPoints()
+        local edgeInset = 0
+        row:SetPoint(display.mirror and "BOTTOMRIGHT" or "BOTTOMLEFT", anchor,
+            display.mirror and "TOPRIGHT" or "TOPLEFT", edgeInset, y)
+    end
+    if settings.aurasAbove == true then
+        if display.unit == "player" then
+            -- Сегменты ресурса уже занимают верхнюю грань. Если они видимы,
+            -- начинаем ауры над ними, а не рисуем два слоя друг поверх друга.
+            local base = display.resourceRow and display.resourceRow:IsShown()
+                and display.resourceRow or display.holder
+            AnchorRowAbove(display.buffRow, base, 4)
+            AnchorRowAbove(display.debuffRow, #buffs > 0 and display.buffRow or base,
+                #buffs > 0 and SIZE.auraGap or 4)
+        else
+            AnchorRowAbove(display.debuffRow, display.holder, 4)
+            AnchorRowAbove(display.buffRow, #debuffs > 0 and display.debuffRow or display.holder,
+                #debuffs > 0 and SIZE.auraGap or 4)
+        end
+    elseif display.unit == "player" then
         -- Resource points now live above the frame, so auras always sit flush
         -- beneath its lower edge regardless of the active class mechanic.
         local firstAnchor = display.holder
@@ -835,17 +935,61 @@ end
 -- Construction and secure click layer
 ---------------------------------------------------------------------------
 
-function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly)
+local function CreateBadgeLayer(panel, size, layer, sublevel)
+    local texture = panel:CreateTexture(nil, layer, nil, sublevel)
+    texture:SetSize(size, size)
+    texture:SetPoint("CENTER")
+    texture:SetColorTexture(1, 1, 1, 1)
+    texture:SetSnapToPixelGrid(false)
+    texture:SetTexelSnappingBias(0)
+    local mask = panel:CreateMaskTexture()
+    mask:SetTexture("Interface\\Masks\\CircleMaskScalable",
+        "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    if not mask:GetTexture() then
+        mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask",
+            "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    end
+    mask:SetSize(size, size)
+    mask:SetPoint("CENTER")
+    texture:AddMaskTexture(mask)
+    panel.__mbBadgeLayers = panel.__mbBadgeLayers or {}
+    panel.__mbBadgeLayers[#panel.__mbBadgeLayers + 1] = {
+        texture = texture, mask = mask, size = size, masked = true,
+    }
+    return texture
+end
+
+local function ApplyBadgeShape(panel, shape)
+    shape = math.max(1, math.min(3, tonumber(shape) or 1))
+    if not panel or panel.__mbBadgeShape == shape then return end
+    panel.__mbBadgeShape = shape
+    for _, layer in ipairs(panel.__mbBadgeLayers or {}) do
+        local texture, mask = layer.texture, layer.mask
+        if layer.masked and type(texture.RemoveMaskTexture) == "function" then
+            texture:RemoveMaskTexture(mask); layer.masked = false
+        end
+        texture:SetRotation(shape == 3 and math.rad(45) or 0)
+        local size = shape == 3 and layer.size * .72 or layer.size
+        texture:SetSize(size, size)
+        mask:SetSize(size, size)
+        if shape == 1 then texture:AddMaskTexture(mask); layer.masked = true end
+    end
+end
+
+function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
+    options = options or {}
     local display = { unit = unit, mirror = mirror, cache = {}, ownBuffsOnly = ownBuffsOnly }
-    local holder = CreateFrame("Frame", nil, self.container)
+    local holder = CreateFrame("Frame", nil, options.parent or self.container)
     holder:SetSize(SIZE.width, SIZE.height)
     holder:SetMovable(true)
     display.holder = holder
 
-    local saved, default = Settings()[unit], DEFAULT_POSITION[unit]
-    if type(saved) == "table" and UI.UsableNumber(saved.x) and UI.UsableNumber(saved.y) then
-        holder:SetPoint(saved.point or default[1], UIParent, saved.point or default[1], saved.x, saved.y)
-    else holder:SetPoint(default[1], UIParent, default[1], default[2], default[3]) end
+    if not options.preview then
+        local saved, default = Settings()[unit], DEFAULT_POSITION[unit]
+        if type(saved) == "table" and UI.UsableNumber(saved.x) and UI.UsableNumber(saved.y) then
+            holder:SetPoint(saved.point or default[1], UIParent, saved.point or default[1], saved.x, saved.y)
+        else holder:SetPoint(default[1], UIParent, default[1], default[2], default[3]) end
+    end
 
     -- The animated 3D head remains the visual anchor, but is now flush with a
     -- compact body instead of sitting between several unrelated bevels.
@@ -881,29 +1025,13 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly)
     levelPanel:SetSize(28, 28)
     levelPanel:SetPoint("CENTER", display.portrait.ring,
         mirror and "TOPRIGHT" or "TOPLEFT", mirror and -1 or 1, -1)
+    display.classBadgeDefault = {
+        "CENTER", display.portrait.ring, mirror and "TOPRIGHT" or "TOPLEFT", mirror and -1 or 1, -1,
+    }
     levelPanel:SetFrameLevel(display.portrait.ring:GetFrameLevel() + 9)
-    local function ClassCircle(size, layer, sublevel)
-        local tex = levelPanel:CreateTexture(nil, layer, nil, sublevel)
-        tex:SetSize(size, size)
-        tex:SetPoint("CENTER")
-        tex:SetColorTexture(1, 1, 1, 1)
-        tex:SetSnapToPixelGrid(false)
-        tex:SetTexelSnappingBias(0)
-        local mask = levelPanel:CreateMaskTexture()
-        mask:SetTexture("Interface\\Masks\\CircleMaskScalable",
-            "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        if not mask:GetTexture() then
-            mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask",
-                "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        end
-        mask:SetSize(size, size)
-        mask:SetPoint("CENTER")
-        tex:AddMaskTexture(mask)
-        return tex
-    end
-    ClassCircle(28, "BACKGROUND", 0):SetVertexColor(C.edge[1], C.edge[2], C.edge[3], .92)
-    ClassCircle(24, "BACKGROUND", 2):SetVertexColor(.012, .020, .028, .98)
-    local classGloss = ClassCircle(22, "ARTWORK", 1)
+    CreateBadgeLayer(levelPanel, 28, "BACKGROUND", 0):SetVertexColor(C.edge[1], C.edge[2], C.edge[3], .92)
+    CreateBadgeLayer(levelPanel, 24, "BACKGROUND", 2):SetVertexColor(.012, .020, .028, .98)
+    local classGloss = CreateBadgeLayer(levelPanel, 22, "ARTWORK", 1)
     classGloss:SetBlendMode("ADD")
     classGloss:SetGradient("VERTICAL",
         CreateColor(1, 1, 1, 0),
@@ -924,32 +1052,12 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly)
     -- portrait and the lower frame edge meet.
     classPanel:SetPoint("CENTER", display.portrait.ring,
         mirror and "BOTTOMRIGHT" or "BOTTOMLEFT", mirror and -1 or 1, 1)
+    display.levelBadgeDefault = {
+        "CENTER", display.portrait.ring, mirror and "BOTTOMRIGHT" or "BOTTOMLEFT", mirror and -1 or 1, 1,
+    }
     classPanel:SetFrameLevel(display.portrait.ring:GetFrameLevel() + 8)
-    local function LevelCircle(size, layer, sublevel)
-        local tex = classPanel:CreateTexture(nil, layer, nil, sublevel)
-        tex:SetSize(size, size)
-        tex:SetPoint("CENTER")
-        tex:SetColorTexture(1, 1, 1, 1)
-        tex:SetSnapToPixelGrid(false)
-        tex:SetTexelSnappingBias(0)
-        local mask = classPanel:CreateMaskTexture()
-        mask:SetTexture("Interface\\Masks\\CircleMaskScalable",
-            "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        -- Существование ФАЙЛА текстуры проверяется только так: GetAtlasInfo
-        -- знает атласы, но не файлы. Несуществующий путь не даёт ошибки — он
-        -- молча оставляет текстуру пустой, маска не применяется, и круг
-        -- остаётся квадратом. Именно это и было видно на значке уровня.
-        if not mask:GetTexture() then
-            mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask",
-                "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        end
-        mask:SetSize(size, size)
-        mask:SetPoint("CENTER")
-        tex:AddMaskTexture(mask)
-        return tex
-    end
-    LevelCircle(20, "BACKGROUND", 0):SetVertexColor(C.edge[1], C.edge[2], C.edge[3], .80)
-    LevelCircle(16, "BACKGROUND", 2):SetVertexColor(.015, .020, .026, .96)
+    CreateBadgeLayer(classPanel, 20, "BACKGROUND", 0):SetVertexColor(C.edge[1], C.edge[2], C.edge[3], .80)
+    CreateBadgeLayer(classPanel, 16, "BACKGROUND", 2):SetVertexColor(.015, .020, .026, .96)
 
     display.level = UI.Text(classPanel, "GameFontNormalSmall", "", C.amber)
     display.level:SetPoint("CENTER", 0, 0)
@@ -1008,8 +1116,68 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly)
             display.buffRow = BuildAuraRow(display, SIZE.maxBuffs, display.debuffRow, -SIZE.auraGap)
         end
     end
-    self.displays[unit] = display
+    if not options.preview then self:ConfigureBadgeDisplay(display) end
+    if not options.preview then self.displays[unit] = display end
     return display
+end
+
+local function NormalizeBadgePosition(panel, holder)
+    local centerX, centerY = panel:GetCenter()
+    local left, bottom = holder:GetLeft(), holder:GetBottom()
+    if not centerX or not centerY or not left or not bottom then return end
+    local panelScale = panel:GetEffectiveScale() or 1
+    local holderScale = holder:GetEffectiveScale() or 1
+    local x = (centerX * panelScale - left * holderScale) / math.max(.01, holderScale)
+    local y = (centerY * panelScale - bottom * holderScale) / math.max(.01, holderScale)
+    panel:ClearAllPoints()
+    panel:SetPoint("CENTER", holder, "BOTTOMLEFT", x, y)
+    return x, y
+end
+
+function UnitFrames:ConfigureBadgeDisplay(display)
+    local settings = Settings()
+    settings.badgePositions = type(settings.badgePositions) == "table" and settings.badgePositions or {}
+    local positions = settings.badgePositions[display.unit]
+    local badges = {
+        class = { panel = display.levelPanel, default = display.classBadgeDefault },
+        level = { panel = display.classPanel, default = display.levelBadgeDefault },
+    }
+    for key, badge in pairs(badges) do
+        local panel, saved = badge.panel, type(positions) == "table" and positions[key] or nil
+        panel:ClearAllPoints()
+        if type(saved) == "table" and UI.UsableNumber(saved.x) and UI.UsableNumber(saved.y) then
+            panel:SetPoint("CENTER", display.holder, "BOTTOMLEFT", saved.x, saved.y)
+        else
+            panel:SetPoint(unpack(badge.default))
+        end
+        ApplyBadgeShape(panel, settings.badgeShape)
+        panel:SetMovable(true)
+        panel:RegisterForDrag("LeftButton")
+        panel:EnableMouse(settings.badgesUnlocked == true)
+        if not panel.__mbBadgeDragBound then
+            panel.__mbBadgeDragBound = true
+            panel:SetScript("OnDragStart", function(owner)
+                if not InCombatLockdown() and Settings().badgesUnlocked == true then owner:StartMoving() end
+            end)
+            panel:SetScript("OnDragStop", function(owner)
+                if InCombatLockdown() then return end
+                owner:StopMovingOrSizing()
+                local x, y = NormalizeBadgePosition(owner, display.holder)
+                if x and y then
+                    local active = Settings()
+                    active.badgePositions = type(active.badgePositions) == "table" and active.badgePositions or {}
+                    active.badgePositions[display.unit] = active.badgePositions[display.unit] or {}
+                    active.badgePositions[display.unit][key] = { x = x, y = y }
+                end
+            end)
+        end
+    end
+end
+
+function UnitFrames:ResetBadgePositions()
+    local settings = Settings()
+    settings.badgePositions = {}
+    for _, display in pairs(self.displays or {}) do self:ConfigureBadgeDisplay(display) end
 end
 
 local function UnitTooltip(button)
@@ -1022,6 +1190,68 @@ local function UnitTooltipHide(button)
     GameTooltip_Hide()
     local display = UnitFrames.displays[button.unit]
     if display then display.hovered = false; UpdateState(display) end
+end
+
+-- Edit Mode remains the owner of Blizzard action bars.  We only read their
+-- final on-screen rectangle when a capsule drag ends and offer one magnetic
+-- landing position on either side.  Nothing is polled or forced afterwards,
+-- so moving the action bars later never starts a tug-of-war between addons.
+local ACTION_BUTTON_PREFIXES = {
+    "ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton",
+    "MultiBarLeftButton", "MultiBarRightButton", "MultiBar5Button",
+    "MultiBar6Button", "MultiBar7Button",
+}
+
+local function ScreenRect(frame)
+    if not frame or type(frame.GetLeft) ~= "function" or not frame:IsVisible() then return end
+    local left, right, bottom, top = frame:GetLeft(), frame:GetRight(), frame:GetBottom(), frame:GetTop()
+    if not left or not right or not bottom or not top then return end
+    local uiScale = UIParent:GetEffectiveScale() or 1
+    local scale = type(frame.GetEffectiveScale) == "function" and frame:GetEffectiveScale() or uiScale
+    local factor = scale / math.max(.01, uiScale)
+    return left * factor, right * factor, bottom * factor, top * factor
+end
+
+local function ActionClusterRect()
+    local left, right, bottom, top
+    for _, prefix in ipairs(ACTION_BUTTON_PREFIXES) do
+        for index = 1, 12 do
+            local x1, x2, y1, y2 = ScreenRect(_G[prefix .. index])
+            if x1 then
+                left = left and math.min(left, x1) or x1
+                right = right and math.max(right, x2) or x2
+                bottom = bottom and math.min(bottom, y1) or y1
+                top = top and math.max(top, y2) or y2
+            end
+        end
+    end
+    return left, right, bottom, top
+end
+
+function UnitFrames:MagnetizeToActionBars(display)
+    local clusterLeft, clusterRight, clusterBottom, clusterTop = ActionClusterRect()
+    local frameLeft, frameRight, frameBottom, frameTop = ScreenRect(display and display.holder)
+    if not clusterLeft or not frameLeft then return false end
+
+    local horizontalDistance = display.unit == "player"
+        and math.abs(frameRight - clusterLeft) or math.abs(frameLeft - clusterRight)
+    local frameCenter = (frameBottom + frameTop) * .5
+    local clusterCenter = (clusterBottom + clusterTop) * .5
+    -- The vertical allowance is deliberately generous: the visible action
+    -- cluster may have one, two or three rows, while the capsule has a fixed
+    -- height.  Horizontal proximity is what expresses the snap intention.
+    if horizontalDistance > 44 or math.abs(frameCenter - clusterCenter) > 92 then return false end
+
+    local holder = display.holder
+    local visibleWidth = frameRight - frameLeft
+    local visibleHeight = frameTop - frameBottom
+    local x = display.unit == "player" and (clusterLeft - visibleWidth - 2) or (clusterRight + 2)
+    local y = clusterBottom + ((clusterTop - clusterBottom) - visibleHeight) * .5
+    local uiScale = UIParent:GetEffectiveScale() or 1
+    local holderScale = (holder:GetEffectiveScale() or uiScale) / math.max(.01, uiScale)
+    holder:ClearAllPoints()
+    holder:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / holderScale, y / holderScale)
+    return true
 end
 
 function UnitFrames:BuildButton(display, name)
@@ -1038,17 +1268,20 @@ function UnitFrames:BuildButton(display, name)
     button:SetScript("OnEnter", UnitTooltip); button:SetScript("OnLeave", UnitTooltipHide)
     button:RegisterForDrag("LeftButton")
     button:SetScript("OnDragStart", function()
-        if Settings().unlocked and not InCombatLockdown() then display.holder:StartMoving() end
+        if IsUnlocked() and not InCombatLockdown() then display.holder:StartMoving() end
     end)
     button:SetScript("OnDragStop", function()
-        if not Settings().unlocked or InCombatLockdown() then return end
+        if not IsUnlocked() or InCombatLockdown() then return end
         display.holder:StopMovingOrSizing()
+        self:MagnetizeToActionBars(display)
         local point, _, _, x, y = display.holder:GetPoint()
         Settings()[display.unit] = { point = point, x = x, y = y }
     end)
     ClickCastFrames = ClickCastFrames or {}; ClickCastFrames[button] = true
     RegisterUnitWatch(button)
     display.button = button
+    if display.levelPanel then display.levelPanel:SetFrameLevel(button:GetFrameLevel() + 2) end
+    if display.classPanel then display.classPanel:SetFrameLevel(button:GetFrameLevel() + 2) end
 end
 
 function UnitFrames:Hider()
@@ -1078,11 +1311,11 @@ function UnitFrames:RestoreBlizzard()
     return true
 end
 
-local function ShowMovePlaceholder(display)
-    display.holder:Show()
+local function ShowTargetPlaceholder(display, moving)
+    if not InCombatLockdown() then display.holder:Show() end
     display.portrait:SetUnit(nil)
     display.portrait:SetStateAlpha(.82)
-    display.name:SetText(L("ЦЕЛЬ"))
+    display.name:SetText(moving and L("ЦЕЛЬ") or L("ЦЕЛИ НЕТ"))
     display.group:SetText("")
     display.level:SetText("")
     if display.classIcon then display.classIcon:SetText("") end
@@ -1103,29 +1336,362 @@ local function ShowMovePlaceholder(display)
         LayoutRow(display.debuffRow, {})
         LayoutRow(display.buffRow, {})
     end
-    if display.moveOverlay then display.moveOverlay:Show() end
+    if display.moveOverlay then display.moveOverlay:SetShown(moving == true) end
 end
 
 function UnitFrames:RefreshDisplay(display, full)
     local exists = UnitExists(display.unit)
     if IsBoolean(exists, false) then
-        if display.unit == "target" and Settings().unlocked then
-            ShowMovePlaceholder(display)
+        local keepTarget = display.unit == "target" and ActiveSettings().alwaysShowTarget == true
+        if display.unit == "target" and (IsUnlocked() or keepTarget) then
+            ShowTargetPlaceholder(display, IsUnlocked())
             return
         end
-        display.holder:Hide()
-        if display.resourceRow then display.resourceRow:Hide() end
+        -- В holder живёт SecureUnitButton. Show/Hide его родителя в бою
+        -- вызывает ADDON_ACTION_BLOCKED при обычной смене цели. Сам holder
+        -- всегда подготовлен заранее, а отсутствие юнита обозначаем alpha=0;
+        -- RegisterUnitWatch отдельно отключает защищённую область клика.
+        display.holder:SetAlpha(0)
+        if display.resourceRow and not InCombatLockdown() then display.resourceRow:Hide() end
         wipe(display.cache)
-        if display.debuffRow then LayoutRow(display.debuffRow, {}); LayoutRow(display.buffRow, {}) end
+        if display.debuffRow and not InCombatLockdown() then
+            LayoutRow(display.debuffRow, {}); LayoutRow(display.buffRow, {})
+        end
         return
     end
-    display.holder:Show()
+    if not InCombatLockdown() then display.holder:Show() end
+    display.holder:SetAlpha(1)
     UpdateIdentity(display); UpdateHealth(display); UpdatePower(display); UpdateResourcePips(display); UpdateState(display)
-    if full and display.debuffRow then ReadAuras(display); RefreshAuras(display) end
+    if full and display.debuffRow then
+        local settings = ActiveSettings()
+        local aurasEnabled = display.unit == "player" and settings.showPlayerAuras ~= false
+            or display.unit == "target" and settings.showTargetAuras ~= false
+        if aurasEnabled then ReadAuras(display) else wipe(display.cache) end
+        RefreshAuras(display)
+    end
 end
 
 function UnitFrames:RefreshAll()
     for _, display in pairs(self.displays) do self:RefreshDisplay(display, true) end
+end
+
+function UnitFrames:ApplySettings()
+    if InCombatLockdown() then
+        return self:AfterCombat("appearance", function(module) module:ApplySettings() end)
+    end
+    local source = Settings()
+    local settings = {}
+    for _, key in ipairs(APPEARANCE_KEYS) do settings[key] = source[key] end
+    settings.enabled, settings.hideBlizzard = source.enabled, source.hideBlizzard
+    self.appliedSettings = settings
+    for _, display in pairs(self.displays or {}) do
+        display.holder:SetScale(settings.scale)
+        display.holder:SetAlpha(settings.opacity)
+        display.healthValue:SetShown(settings.showHealthText ~= false)
+        display.powerValue:SetShown(settings.showPowerText ~= false)
+        if display.portrait and display.portrait.SetAnimated then
+            display.portrait:SetAnimated(settings.animatedPortrait ~= false)
+        end
+        if display.levelPanel then display.levelPanel:SetShown(settings.showBadges ~= false) end
+        if display.classPanel then display.classPanel:SetShown(settings.showBadges ~= false) end
+        self:ConfigureBadgeDisplay(display)
+        UpdateResourcePips(display)
+        if display.debuffRow then
+            local aurasEnabled = display.unit == "player" and settings.showPlayerAuras ~= false
+                or display.unit == "target" and settings.showTargetAuras ~= false
+            if aurasEnabled then ReadAuras(display) else wipe(display.cache) end
+            RefreshAuras(display)
+        end
+    end
+    if settings.enabled ~= false and settings.hideBlizzard ~= false then self:HideBlizzard()
+    else self:RestoreBlizzard() end
+    return true
+end
+
+---------------------------------------------------------------------------
+-- Anonymous screenshot showcase
+---------------------------------------------------------------------------
+
+local DEMO_PRESETS = {
+    {
+        title = L("1 - ОБЩИЙ ВИД"),
+        caption = L("Игрок и цель в спокойном боевом состоянии"),
+        player = {
+            name = "Astraforge", class = "PALADIN", portrait = "Interface\\Icons\\Spell_Holy_AuraOfLight",
+            health = 8420, healthMax = 10000, healthText = "8.42K/10.0K", healthColor = { .08, .78, .12 },
+            power = 71, powerMax = 100, powerText = "71/100", powerColor = { .95, .76, .08 },
+            resource = { current = 3, maximum = 5, color = { 1.00, .77, .08 } },
+            buffs = {
+                { icon = "Interface\\Icons\\Spell_Holy_WordFortitude", duration = 126, stacks = 1 },
+                { icon = "Interface\\Icons\\Spell_Holy_DevotionAura", duration = 42, stacks = 1 },
+            },
+        },
+        target = {
+            name = "Voidwarden", class = "WARRIOR", portrait = "Interface\\Icons\\Ability_Warrior_DefensiveStance",
+            health = 7680, healthMax = 12000, healthText = "7.68K/12.0K", healthColor = { .77, .18, .12 },
+            power = 38, powerMax = 100, powerText = "38/100", powerColor = { .82, .18, .12 },
+            debuffs = {
+                { icon = "Interface\\Icons\\Spell_Holy_SealOfVengeance", duration = 18, stacks = 3 },
+                { icon = "Interface\\Icons\\Ability_Creature_Disease_03", duration = 9, stacks = 1 },
+            },
+        },
+    },
+    {
+        title = L("2 - ТАНК ПОД ДАВЛЕНИЕМ"),
+        caption = L("Низкое здоровье, защитные эффекты и руны"),
+        player = {
+            name = "Ironbloom", class = "DEATHKNIGHT", portrait = "Interface\\Icons\\Spell_DeathKnight_FrostPresence",
+            health = 3740, healthMax = 10000, healthText = "3.74K/10.0K", healthColor = { .90, .23, .10 },
+            power = 84, powerMax = 100, powerText = "84/100", powerColor = { .18, .72, 1.00 },
+            resource = { current = 4, maximum = 6, color = { .22, .72, 1.00 } },
+            buffs = {
+                { icon = "Interface\\Icons\\Spell_DeathKnight_IceBoundFortitude", duration = 7, stacks = 1 },
+                { icon = "Interface\\Icons\\Spell_DeathKnight_AntiMagicZone", duration = 4, stacks = 1 },
+            },
+            debuffs = {
+                { icon = "Interface\\Icons\\Ability_Creature_Poison_05", duration = 11, stacks = 2 },
+            },
+        },
+        target = {
+            name = "Dread Colossus", class = "WARRIOR", portrait = "Interface\\Icons\\Achievement_Boss_General_Nazgrim",
+            health = 9180, healthMax = 15000, healthText = "9.18K/15.0K", healthColor = { .72, .14, .10 },
+            power = 62, powerMax = 100, powerText = "62/100", powerColor = { .78, .16, .10 },
+            buffs = { { icon = "Interface\\Icons\\Spell_Shadow_UnholyFrenzy", duration = 14, stacks = 1 } },
+            debuffs = { { icon = "Interface\\Icons\\Spell_DeathKnight_BloodPlague", duration = 21, stacks = 1 } },
+        },
+    },
+    {
+        title = L("3 - ЛЕКАРЬ И ОПАСНАЯ ЦЕЛЬ"),
+        caption = L("Мана, критическое здоровье цели и эффект для рассеивания"),
+        player = {
+            name = "Lumenweave", class = "PRIEST", portrait = "Interface\\Icons\\Spell_Holy_GreaterHeal",
+            health = 9340, healthMax = 10000, healthText = "9.34K/10.0K", healthColor = { .08, .78, .12 },
+            power = 6340, powerMax = 10000, powerText = "6.34K/10.0K", powerColor = { .18, .42, .92 },
+            buffs = {
+                { icon = "Interface\\Icons\\Spell_Holy_PowerWordShield", duration = 12, stacks = 1 },
+                { icon = "Interface\\Icons\\Spell_Holy_Renew", duration = 8, stacks = 1 },
+            },
+        },
+        target = {
+            name = "Ashen Ravager", class = "MAGE", portrait = "Interface\\Icons\\Spell_Fire_Fire",
+            health = 2240, healthMax = 10000, healthText = "2.24K/10.0K", healthColor = { .94, .18, .08 },
+            power = 73, powerMax = 100, powerText = "73/100", powerColor = { .55, .22, .88 },
+            buffs = { { icon = "Interface\\Icons\\Spell_Shadow_Possession", duration = 10, stacks = 1 } },
+            debuffs = {
+                { icon = "Interface\\Icons\\Spell_Holy_Dizzy", duration = 5, stacks = 1 },
+                { icon = "Interface\\Icons\\Spell_Nature_NullifyDisease", duration = 13, stacks = 1 },
+            },
+        },
+    },
+    {
+        title = L("4 - КОМБО И ДЕБАФФЫ"),
+        caption = L("Семь комбо-поинтов и плотная строка эффектов"),
+        player = {
+            name = "Nightquill", class = "ROGUE", portrait = "Interface\\Icons\\Ability_Stealth",
+            health = 8860, healthMax = 10000, healthText = "8.86K/10.0K", healthColor = { .08, .78, .12 },
+            power = 58, powerMax = 100, powerText = "58/100", powerColor = { .95, .86, .18 },
+            resource = { current = 5, maximum = 7, color = { 1.00, .33, .13 } },
+            buffs = {
+                { icon = "Interface\\Icons\\Ability_Rogue_Sprint", duration = 6, stacks = 1 },
+                { icon = "Interface\\Icons\\Ability_Rogue_SliceDice", duration = 24, stacks = 1 },
+            },
+        },
+        target = {
+            name = "Runebound Horror", class = "WARLOCK", portrait = "Interface\\Icons\\Spell_Shadow_SummonVoidWalker",
+            health = 6210, healthMax = 10000, healthText = "6.21K/10.0K", healthColor = { .74, .12, .16 },
+            power = 46, powerMax = 100, powerText = "46/100", powerColor = { .58, .22, .86 },
+            debuffs = {
+                { icon = "Interface\\Icons\\Ability_Rogue_Rupture", duration = 17, stacks = 1 },
+                { icon = "Interface\\Icons\\Ability_Rogue_DeadlyBrew", duration = 9, stacks = 5 },
+                { icon = "Interface\\Icons\\Ability_Rogue_FindWeakness", duration = 4, stacks = 1 },
+            },
+        },
+    },
+    {
+        title = L("5 - ЧИСТЫЙ МИНИМАЛ"),
+        caption = L("Капсулы без лишних эффектов — для обложки и сравнения"),
+        player = {
+            name = "Dawnkeeper", class = "DRUID", portrait = "Interface\\Icons\\Ability_Druid_Maul",
+            health = 10000, healthMax = 10000, healthText = "10.0K/10.0K", healthColor = { .08, .78, .12 },
+            power = 100, powerMax = 100, powerText = "100/100", powerColor = { .96, .54, .12 },
+        },
+        target = {
+            name = "Training Construct", class = "WARRIOR", portrait = "Interface\\Icons\\INV_Gizmo_GoblinBoomBox_01",
+            health = 10000, healthMax = 10000, healthText = "10.0K/10.0K", healthColor = { .68, .16, .12 },
+            power = 0, powerMax = 0, powerText = "", powerColor = { .40, .40, .40 },
+        },
+    },
+}
+
+local function DemoResourcePips(display, data, settings)
+    local row = display.resourceRow
+    if not row then return end
+    if not data or settings.showResourcePips == false then
+        row:Hide()
+        for _, pip in ipairs(row.pips) do pip:Hide() end
+        return
+    end
+    local maximum = math.max(1, math.min(8, data.maximum or 5))
+    local current = math.max(0, math.min(maximum, data.current or 0))
+    local gap, height = settings.resourceGap, settings.resourceHeight
+    local size = (SIZE.panelWidth - (maximum - 1) * gap) / maximum
+    local color = data.color or { .18, .76, 1 }
+    local showEmpty = settings.showEmptyResources ~= false
+    row:SetHeight(height); row:SetAlpha(settings.resourceOpacity)
+    for index, pip in ipairs(row.pips) do
+        if index <= maximum then
+            pip:ClearAllPoints(); pip:SetSize(size, height)
+            pip:SetPoint("LEFT", row, "LEFT", (index - 1) * (size + gap), 0)
+            local active = index <= current
+            if active then
+                pip.ring:SetColorTexture(color[1] * .72, color[2] * .72, color[3] * .72, 1)
+                SetPipTexture(pip.fill, color[1], color[2], color[3], 1)
+                pip.shine:SetAlpha(.62)
+            else
+                pip.ring:SetColorTexture(.13, .24, .30, .92)
+                SetPipTexture(pip.fill, .055, .075, .09, .96)
+                pip.shine:SetAlpha(.08)
+            end
+            pip:SetShown(active or showEmpty)
+        else pip:Hide() end
+    end
+    row:SetShown(current > 0 or showEmpty)
+end
+
+local function DemoAuras(display, data)
+    wipe(display.cache)
+    local now, nextID = GetTime(), 900000
+    local function Add(list, harmful)
+        for _, aura in ipairs(list or {}) do
+            nextID = nextID + 1
+            display.cache[nextID] = {
+                auraInstanceID = nextID,
+                icon = aura.icon,
+                applications = aura.stacks or 1,
+                duration = aura.duration or 30,
+                expirationTime = now + (aura.duration or 30),
+                timeMod = 1,
+                isHarmful = harmful,
+                isHelpful = not harmful,
+                isFromPlayerOrPlayerPet = true,
+            }
+        end
+    end
+    Add(data.buffs, false); Add(data.debuffs, true)
+    RefreshAuras(display)
+end
+
+local function DemoDisplay(display, data, settings)
+    display.holder:SetScale(settings.scale)
+    display.holder:SetAlpha(settings.opacity)
+    display.holder:Show()
+    display.name:SetText(data.name)
+    display.group:SetText(data.group or "G1")
+    display.level:SetText("80")
+    display.classIcon:SetText(UI.ClassIcon(data.class, 20))
+    display.levelPanel:SetShown(settings.showBadges ~= false)
+    display.classPanel:SetShown(settings.showBadges ~= false)
+    display.portrait:SetAnimated(false)
+    display.portrait.face:SetTexture(data.portrait)
+    display.portrait.face:SetTexCoord(.08, .92, .08, .92)
+    display.portrait.face:SetVertexColor(1, 1, 1, 1)
+    display.portrait.face:Show(); display.portrait.model:Hide()
+    display.portrait:SetStateAlpha(1)
+
+    display.health:SetMinMaxValues(0, data.healthMax)
+    display.health:SetValue(data.health)
+    display.healthValue:SetText(data.healthText)
+    display.healthValue:SetShown(settings.showHealthText ~= false)
+    MatteBarColor(display.health, data.healthColor[1], data.healthColor[2], data.healthColor[3])
+    if data.powerMax and data.powerMax > 0 then
+        display.power.holder:Show(); LayoutStats(display, true)
+        display.power:SetMinMaxValues(0, data.powerMax); display.power:SetValue(data.power)
+        display.powerValue:SetText(data.powerText)
+        display.powerValue:SetShown(settings.showPowerText ~= false)
+        MatteBarColor(display.power, data.powerColor[1], data.powerColor[2], data.powerColor[3])
+    else
+        display.power.holder:Hide(); LayoutStats(display, false)
+    end
+    if display.highlight then display.highlight:Hide() end
+    if display.moveOverlay then display.moveOverlay:Hide() end
+    DemoResourcePips(display, data.resource, settings)
+    DemoAuras(display, data)
+end
+
+function UnitFrames:BuildScreenshotStage()
+    if self.screenshotStage then return self.screenshotStage end
+    local stage = CreateFrame("Frame", "MythicBoostScreenshotDemo", UIParent, "BackdropTemplate")
+    stage:SetAllPoints(UIParent)
+    stage:SetFrameStrata("FULLSCREEN_DIALOG")
+    stage:SetFrameLevel(500)
+    stage:EnableMouse(true)
+    UI.Backdrop(stage, { .006, .010, .016, 1 }, { .12, .40, .52, 1 }, 1)
+
+    local glow = stage:CreateTexture(nil, "BACKGROUND")
+    glow:SetPoint("CENTER", 0, 20); glow:SetSize(900, 430)
+    glow:SetColorTexture(.025, .055, .075, .96)
+    glow:SetGradient("VERTICAL", CreateColor(.006, .010, .016, 0), CreateColor(.06, .16, .22, .62))
+
+    local brand = UI.Text(stage, "GameFontNormalHuge", "MYTHICBOOST - UNIT FRAMES", C.accent)
+    brand:SetPoint("TOP", 0, -64)
+    stage.presetTitle = UI.Text(stage, "GameFontNormalLarge", "", C.text)
+    stage.presetTitle:SetPoint("TOP", brand, "BOTTOM", 0, -18)
+    stage.presetCaption = UI.Text(stage, "GameFontHighlightSmall", "", C.muted)
+    stage.presetCaption:SetPoint("TOP", stage.presetTitle, "BOTTOM", 0, -8)
+
+    local anonymous = UI.Text(stage, "GameFontNormalSmall",
+        L("ДЕМО - ВЫМЫШЛЕННЫЕ ИМЕНА - ЛИЧНЫЕ ДАННЫЕ СКРЫТЫ"), C.green)
+    anonymous:SetPoint("BOTTOM", 0, 38)
+    local hint = UI.Text(stage, "GameFontHighlightSmall",
+        L("Выбери сцену кнопками 1-5 - Esc закрывает демо"), C.muted)
+    hint:SetPoint("BOTTOM", anonymous, "TOP", 0, 8)
+
+    local close = UI.CloseButton(stage)
+    close:SetPoint("TOPRIGHT", -30, -28)
+    close:SetFrameLevel(stage:GetFrameLevel() + 50)
+    close:SetScript("OnClick", function() UnitFrames:HideScreenshotDemo() end)
+
+    stage.player = self:BuildDisplay("player", false, true, false, { parent = stage, preview = true })
+    stage.target = self:BuildDisplay("target", true, true, true, { parent = stage, preview = true })
+    stage.player.holder:SetPoint("CENTER", stage, "CENTER", -170, 38)
+    stage.target.holder:SetPoint("CENTER", stage, "CENTER", 170, 38)
+    stage.player.holder:SetFrameLevel(stage:GetFrameLevel() + 10)
+    stage.target.holder:SetFrameLevel(stage:GetFrameLevel() + 10)
+
+    stage.buttons = {}
+    for index = 1, #DEMO_PRESETS do
+        local button = UI.Button(stage, tostring(index), 38, 28, true)
+        button:SetPoint("BOTTOM", stage, "BOTTOM", (index - 3) * 48, 82)
+        button:SetFrameLevel(stage:GetFrameLevel() + 50)
+        button:SetScript("OnClick", function() UnitFrames:ShowScreenshotDemo(index) end)
+        stage.buttons[index] = button
+    end
+    if UISpecialFrames then table.insert(UISpecialFrames, stage:GetName()) end
+    stage:SetScript("OnHide", function() UnitFrames.screenshotPreset = nil end)
+    stage:Hide()
+    self.screenshotStage = stage
+    return stage
+end
+
+function UnitFrames:ShowScreenshotDemo(index)
+    index = math.max(1, math.min(#DEMO_PRESETS, tonumber(index) or 1))
+    local stage, preset = self:BuildScreenshotStage(), DEMO_PRESETS[index]
+    if GameTooltip then GameTooltip:Hide() end
+    local settings = Settings()
+    stage.presetTitle:SetText(L(preset.title))
+    stage.presetCaption:SetText(L(preset.caption))
+    for buttonIndex, button in ipairs(stage.buttons) do
+        button:SetText(buttonIndex == index and ("[" .. buttonIndex .. "]") or tostring(buttonIndex))
+    end
+    DemoDisplay(stage.player, preset.player, settings)
+    DemoDisplay(stage.target, preset.target, settings)
+    stage:Show()
+    self.screenshotPreset = index
+end
+
+function UnitFrames:HideScreenshotDemo()
+    if self.screenshotStage then self.screenshotStage:Hide() end
+    self.screenshotPreset = nil
 end
 
 function UnitFrames:ResetPositions()
@@ -1137,6 +1703,7 @@ function UnitFrames:ResetPositions()
         display.holder:SetPoint(position[1], UIParent, position[1], position[2], position[3])
         settings[unit] = { point = position[1], x = position[2], y = position[3] }
     end
+    self:ResetBadgePositions()
     return true
 end
 
@@ -1146,8 +1713,9 @@ function UnitFrames:SetUnlocked(unlocked)
         self.pendingUnlock = Settings().unlocked
         return false
     end
+    self.appliedUnlocked = Settings().unlocked
     for _, display in pairs(self.displays or {}) do
-        if display.moveOverlay then display.moveOverlay:SetShown(Settings().unlocked) end
+        if display.moveOverlay then display.moveOverlay:SetShown(self.appliedUnlocked) end
     end
     self:RefreshAll()
     self.pendingUnlock = nil
@@ -1175,6 +1743,9 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         local pending = self.pending; self.pending = {}
         for _, action in pairs(pending) do action(self) end
         if self.pendingUnlock ~= nil then self:SetUnlocked(self.pendingUnlock) end
+        for _, display in pairs(self.displays or {}) do
+            if display.portrait then display.portrait:SetUnit(display.unit, true) end
+        end
     elseif event == "PLAYER_ENTERING_WORLD" then
         self:RefreshDispelSet(); self:RefreshAll()
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
@@ -1184,6 +1755,9 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         if self.displays.target then RefreshAuras(self.displays.target) end
     elseif event == "UPDATE_SHAPESHIFT_FORM" or event == "RUNE_POWER_UPDATE" then
         UpdateResourcePips(self.displays.player)
+        if event == "UPDATE_SHAPESHIFT_FORM" and self.displays.player.portrait then
+            self.displays.player.portrait:SetUnit("player", true)
+        end
         if event == "UPDATE_SHAPESHIFT_FORM" and self.displays.player.debuffRow then
             RefreshAuras(self.displays.player)
         end
@@ -1193,7 +1767,12 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         local display = unit and self.displays[unit]
         if not display then return end
         if event == "UNIT_AURA" then
-            if display.debuffRow and ApplyAuraUpdate(display, updateInfo) then RefreshAuras(display) end
+            local settings = ActiveSettings()
+            local aurasEnabled = display.unit == "player" and settings.showPlayerAuras ~= false
+                or display.unit == "target" and settings.showTargetAuras ~= false
+            if display.debuffRow and aurasEnabled and ApplyAuraUpdate(display, updateInfo) then
+                RefreshAuras(display)
+            end
         elseif event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then UpdateHealth(display); UpdateState(display)
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER"
             or event == "UNIT_POWER_POINT_CHARGE" then
@@ -1202,7 +1781,8 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
                 UpdateResourcePips(display)
                 if event == "UNIT_DISPLAYPOWER" and display.debuffRow then RefreshAuras(display) end
             end
-        elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then display.portrait:SetUnit(display.unit)
+        elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
+            display.portrait:SetUnit(display.unit, true)
         else UpdateIdentity(display); UpdateState(display) end
     end
 end
@@ -1225,8 +1805,7 @@ function UnitFrames:Enable()
     if not C_EventUtils or not C_EventUtils.IsEventValid or C_EventUtils.IsEventValid("UNIT_POWER_POINT_CHARGE") then
         events:RegisterUnitEvent("UNIT_POWER_POINT_CHARGE", "player")
     end
-    self.container:Show(); self:RefreshAll(); self:SetUnlocked(Settings().unlocked)
-    if Settings().hideBlizzard ~= false then self:AfterCombat("hideBlizzard", function(module) module:HideBlizzard() end) end
+    self.container:Show(); self:ApplySettings(); self:RefreshAll(); self:SetUnlocked(Settings().unlocked)
     if JP.MinimalUI and JP.MinimalUI.Apply then C_Timer.After(0, function() JP.MinimalUI:Apply() end) end
 end
 

@@ -2,6 +2,7 @@ local _, JP = ...
 local L = JP.L
 local FrameSwitch = {}
 local UI = JP.UI
+local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon"
 
 -- MythicBoost больше не перехватывает штатную кнопку «Поиск группы».
 -- Она всегда открывает Blizzard Group Finder, а переход в наше окно живёт
@@ -43,7 +44,6 @@ end
 
 function FrameSwitch:SetReplacing()
     if MythicBoostDB then MythicBoostDB.replaceGroupFinder = false end
-    if self.button then self.button:SetText("MB") end
     JP:Print(L("Штатная кнопка «Поиск группы» не подменяется. MythicBoost открывается кнопкой внутри окна Blizzard."))
 end
 
@@ -51,19 +51,19 @@ end
 -- в наше окно одним кликом.
 local function EnsureButton(module)
     if module.button or not PVEFrame then return end
-    local button = UI.Button(PVEFrame, "MB", 38, 22, true)
+    local button = UI.IconButton(PVEFrame, ICON, 28)
     -- Keep it flush with the right end of the secondary header row. The
     -- close button occupies the row above, so this does not overlap it.
-    button:SetPoint("TOPRIGHT", -8, -26)
+    button:SetPoint("TOPRIGHT", -8, -23)
     button:SetFrameStrata("HIGH")
     button:SetScript("OnClick", function()
         if InCombatLockdown() then
             OpenOurs()
             return
         end
-        if PVEFrame and PVEFrame:IsShown() and type(HideUIPanel) == "function" then
-            pcall(HideUIPanel, PVEFrame)
-        end
+        -- MythicBoost — вспомогательное окно поверх штатного поиска. Не
+        -- закрываем PVEFrame: пользователь должен вернуться ровно к тому
+        -- списку или форме, поверх которой открыл аддон.
         OpenOurs()
     end)
     button:HookScript("OnEnter", function(self)

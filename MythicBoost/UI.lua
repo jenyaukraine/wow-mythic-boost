@@ -292,6 +292,58 @@ function UI.Button(parent, label, width, height, primary)
     return button
 end
 
+-- Компактная кнопка для фирменных и контекстных действий. В отличие от
+-- текстовой UI.Button она остаётся читаемой в штатных окнах Blizzard, где под
+-- подпись обычно нет места, и не зависит от букв «MB» в игровом шрифте.
+local function IconButtonVisual(button)
+    local enabled = button:IsEnabled()
+    local hovered = button.hovered and enabled
+    button:SetBackdropColor(.018, .030, .044, enabled and (hovered and .96 or .82) or .48)
+    button:SetBackdropBorderColor(
+        enabled and (hovered and .24 or .12) or .16,
+        enabled and (hovered and .92 or .54) or .20,
+        enabled and (hovered and 1.00 or .70) or .24,
+        enabled and (hovered and 1 or .88) or .60)
+    button.icon:SetAlpha(enabled and (hovered and 1 or .92) or .38)
+    button.glow:SetAlpha(hovered and .24 or 0)
+end
+
+function UI.IconButton(parent, texturePath, size)
+    local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    button:SetSize(size or 28, size or 28)
+    UI.Backdrop(button, { .018, .030, .044, .82 }, { .12, .54, .70, .88 })
+
+    button.glow = button:CreateTexture(nil, "BACKGROUND")
+    button.glow:SetPoint("TOPLEFT", 1, -1)
+    button.glow:SetPoint("BOTTOMRIGHT", -1, 1)
+    button.glow:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
+    button.glow:SetBlendMode("ADD")
+
+    button.icon = button:CreateTexture(nil, "ARTWORK")
+    button.icon:SetPoint("TOPLEFT", 2, -2)
+    button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    button.icon:SetTexture(texturePath)
+
+    button:SetScript("OnEnter", function(self) self.hovered = true; IconButtonVisual(self) end)
+    button:SetScript("OnLeave", function(self) self.hovered = false; IconButtonVisual(self) end)
+    button:SetScript("OnEnable", IconButtonVisual)
+    button:SetScript("OnDisable", IconButtonVisual)
+    button:SetScript("OnMouseDown", function(self)
+        if self:IsEnabled() then
+            self.icon:ClearAllPoints()
+            self.icon:SetPoint("TOPLEFT", 3, -3)
+            self.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+        end
+    end)
+    button:SetScript("OnMouseUp", function(self)
+        self.icon:ClearAllPoints()
+        self.icon:SetPoint("TOPLEFT", 2, -2)
+        self.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    end)
+    IconButtonVisual(button)
+    return button
+end
+
 function UI.CloseButton(parent)
     local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
     button:SetSize(24, 24)
@@ -377,6 +429,8 @@ function UI.CheckBox(parent, label, checked, onToggle)
     check:SetChecked(checked and true or false)
     check:SetScript("OnEnter", function(self) self.hovered = true; CheckVisual(self) end)
     check:SetScript("OnLeave", function(self) self.hovered = false; CheckVisual(self) end)
+    check:SetScript("OnEnable", CheckVisual)
+    check:SetScript("OnDisable", CheckVisual)
     check:SetScript("OnClick", function(self)
         if SOUNDKIT then PlaySound(self:GetChecked() and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF) end
         CheckVisual(self)
@@ -544,10 +598,26 @@ function UI.Portrait(parent, size, thickness)
         -- SetPortraitZoom(1) — тот же путь, которым пользуется современный
         -- Z-Perl. Camera 0 в Midnight у некоторых обликов показывает всё тело.
         pcall(self.SetPortraitZoom, self, 1)
+        -- SetUnit может успешно вернуться до фактической загрузки модели.
+        -- До этого момента оставляем 2D-портрет видимым, иначе на NPC вместо
+        -- лица получается чёрный круг. Переключаемся на 3D только здесь.
+        if portrait.animated ~= false and portrait.unit then
+            portrait.modelPending = nil
+            portrait.face:Hide()
+            self:Show()
+        end
     end)
     portrait.ring, portrait.face, portrait.model = ring, face, model
 
-    function portrait:SetUnit(unit)
+    function portrait:SetUnit(unit, force)
+        -- Identity refreshes are frequent (name, faction, range and health can
+        -- arrive in one event burst). Re-clearing a PlayerModel for every one
+        -- of them prevents OnModelLoaded from ever winning the race in combat,
+        -- leaving the 2D fallback permanently visible. A stable unit now keeps
+        -- its model; actual portrait/model events request a forced rebuild.
+        if not force and self.unit == unit and self.modelPending then return end
+        if not force and self.unit == unit and self.model:IsShown() then return end
+        self.unit = unit
         self.face:SetVertexColor(1, 1, 1, 1)
         local exists = unit and UnitExists(unit)
         local missing = type(exists) == "boolean" and not issecretvalue(exists) and not exists
@@ -560,24 +630,32 @@ function UI.Portrait(parent, size, thickness)
             self.face:SetVertexColor(.09, .11, .14, 1)
         end
 
-        if unit and not missing then
+        if unit and not missing and self.animated ~= false then
             pcall(self.model.ClearModel, self.model)
+            self.model:Hide()
+            self.face:Show()
+            self.modelPending = true
             local modelOK = pcall(self.model.SetUnit, self.model, unit)
             if modelOK then
                 pcall(self.model.SetPortraitZoom, self.model, 1)
-                -- 2D SetPortraitTexture имеет круглую альфа-маску. Она должна
-                -- быть видна только как fallback, а не просвечивать под 3D.
-                self.face:Hide()
-                self.model:Show()
             else
+                self.modelPending = nil
                 self.model:Hide()
                 self.face:Show()
             end
         else
+            self.modelPending = nil
             pcall(self.model.ClearModel, self.model)
             self.model:Hide()
             self.face:Show()
         end
+    end
+
+    function portrait:SetAnimated(enabled)
+        local value = enabled and true or false
+        if self.animated == value then return end
+        self.animated = value
+        self:SetUnit(self.unit, true)
     end
 
     function portrait:SetStateAlpha(alpha)

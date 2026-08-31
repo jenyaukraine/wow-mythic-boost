@@ -26,7 +26,7 @@ local UI, C = JP.UI, JP.UI.colors
 
 local PREFIX = "RCLC"
 local COMPRESS = { level = 3 }
-local SETTINGS_DEFAULTS = { enabled = true }
+local SETTINGS_DEFAULTS = { enabled = false }
 
 -- Значения ответов из их Core/Defaults.lua: массивная часть таблицы responses.
 local RESPONSE = { NEED = 1, GREED = 2, MINOR = 3, PASS = "PASS" }

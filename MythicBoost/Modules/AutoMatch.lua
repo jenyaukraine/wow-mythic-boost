@@ -89,8 +89,9 @@ local challengeMapsByName
 local function ChallengeMapsByName()
     if challengeMapsByName then return challengeMapsByName end
     local maps, count = {}, 0
-    for _, mapID in ipairs(C_ChallengeMode.GetMapTable and C_ChallengeMode.GetMapTable() or {}) do
-        local name = C_ChallengeMode.GetMapUIInfo(mapID)
+    for _, mapID in ipairs(JP.API.GetChallengeMapIDs()) do
+        local mapInfo = JP.API.GetChallengeMap(mapID)
+        local name = mapInfo and mapInfo.name
         if type(name) == "string" and name ~= "" then
             maps[name:lower()] = mapID
             count = count + 1
@@ -261,10 +262,7 @@ local function DungeonSelected(filters, mapID)
 end
 
 local function IsDeclined(searchResultID)
-    if not C_LFGList.GetApplicationInfo then return false end
-    local _, status, pending = C_LFGList.GetApplicationInfo(searchResultID)
-    status, pending = SafeString(status), SafeString(pending)
-    return status == "declined" or pending == "declined" or status == "declined_full" or status == "declined_delisted"
+    return JP.API.GetApplicationState(searchResultID).declined
 end
 
 -- Уровень ключа объявления аддонам в Midnight недоступен.
@@ -301,7 +299,6 @@ local REASON = {
     delisted = L("объявление уже снято"),
     full = L("группа уже полная"),
     belowBest = L("ключ ниже твоего рекорда"),
-    notUpgrade = L("ключ не поднимает рейтинг"),
     keyUnknown = L("уровень ключа не распознан"),
     recordUnknown = L("не найден твой рекорд подземелья"),
     roleFit = L("нет места под роли твоей пати"),
@@ -315,14 +312,53 @@ local REASON = {
     score = L("рейтинг лидера вне диапазона"),
     runsUnknown = L("нет данных Raider.IO о лидере"),
     runs = L("мало ключей +10 у лидера"),
+    readError = L("ошибка чтения результата"),
 }
+
+local function Reject(match, reason, actionable)
+    match.rejected = true
+    match.rejectionReason = reason
+    match.actionable = actionable ~= false
+    return nil, reason, match
+end
+
+-- Deterministic, read-only coaching signal. This deliberately describes the
+-- application, but never predicts an invite and never participates in Apply.
+local function ApplyCoach(match)
+    local reasons, unknowns = {}, {}
+    if match.keyLevel then
+        if match.bestLevel and match.keyLevel > match.bestLevel then
+            reasons[#reasons + 1] = "above_personal_best"
+        else
+            reasons[#reasons + 1] = "at_or_below_personal_best"
+        end
+    else
+        unknowns[#unknowns + 1] = "key_level"
+    end
+    if match.keyApprox then unknowns[#unknowns + 1] = "key_level_approximate" end
+    if not match.hasTank then reasons[#reasons + 1] = "tank_missing" end
+    if not match.hasHealer then reasons[#reasons + 1] = "healer_missing" end
+    if match.age then
+        if match.age <= 120 then reasons[#reasons + 1] = "fresh_listing" end
+    else
+        unknowns[#unknowns + 1] = "listing_age"
+    end
+    if not match.score or match.score <= 0 then unknowns[#unknowns + 1] = "leader_score" end
+    match.reasons = reasons
+    match.unknowns = unknowns
+    return match
+end
 
 local function BuildMatch(searchResultID, filters, runtime, party)
     local info = C_LFGList.GetSearchResultInfo(searchResultID)
-    if not info or SafeBoolean(info.isDelisted) then return nil, REASON.delisted end
-    local members = UsableNumber(info.numMembers) and info.numMembers or 0
-    if members >= 5 then return nil, REASON.full end
+    if not info then
+        return Reject({
+            searchResultID = searchResultID, dungeon = L("Недоступная группа"),
+            members = 0, score = 0, bestLevel = 0,
+        }, REASON.delisted, false)
+    end
     filters = filters or {}
+    local members = UsableNumber(info.numMembers) and info.numMembers or 0
 
     local activityID = GetActivityID(info)
     local activity = activityID and C_LFGList.GetActivityInfoTable(activityID)
@@ -338,67 +374,28 @@ local function BuildMatch(searchResultID, filters, runtime, party)
     -- Заголовок разбираем только на случай, если Blizzard вернёт открытый
     -- текст; штатный источник — результат лидера, см. LeaderRunLevel.
     local keyApprox = false
+    local leaderBestLevel = LeaderRunLevel(info, mapID)
     if not keyLevel then
-        keyLevel = LeaderRunLevel(info, mapID)
+        keyLevel = leaderBestLevel
         keyApprox = keyLevel ~= nil
     end
+    -- searchExactLevel — только серверная цель запроса. Она не раскрывает
+    -- защищённое имя объявления, поэтому не превращаем её в подтверждённый
+    -- уровень строки. Если текст скрыт, keyLevel остаётся approximation лидера
+    -- (либо nil), а UI показывает targetLevel отдельно как цель поиска.
 
     local score = UsableNumber(info.leaderOverallDungeonScore) and info.leaderOverallDungeonScore or 0
     local leaderRuns = LeaderRunCount(info.leaderName)
     local age = UsableNumber(info.age) and info.age or nil
     local hasTank, hasHealer, hasBloodlust, hasBattleRes, counts, memberInfo = Composition(searchResultID, members)
 
-    -- Сначала отбираем подземелье: activityID остаётся обычным числом даже
-    -- тогда, когда Blizzard защищает пользовательское название объявления.
-    if not DungeonSelected(filters, mapID) then return nil, REASON.dungeon end
-
-    -- Ключ ниже личного рекорда рейтинг не поднимет — такие группы прячем,
-    -- когда клиент действительно разрешил прочитать уровень.
-    -- LeaderRunLevel() is only the leader's best result for this dungeon. It
-    -- is useful as a hint in the row, but it is NOT the level advertised by
-    -- the group. Never use that approximation as a hard filter.
-    if keyLevel and not keyApprox and keyLevel < bestLevel then return nil, REASON.belowBest end
-    -- В Midnight name/comment являются protected strings. Стандартный фрейм
-    -- умеет их рисовать, но Lua не имеет права вызвать на них match(). Поэтому
-    -- известный уровень проверяем строго, а скрытый не превращаем в ложный
-    -- отсев всех 100 результатов. В строке он будет явно показан как цель.
-    local targetLevel
-    if filters.scoreUpgrade then
-        if not bestLevel or bestLevel <= 0 then return nil, REASON.recordUnknown end
-        targetLevel = bestLevel + 1
-        if filters.searchTargetLevel and targetLevel ~= filters.searchTargetLevel then
-            return nil, REASON.notUpgrade
-        end
-        if keyLevel and not keyApprox and keyLevel ~= targetLevel then return nil, REASON.notUpgrade end
-    end
-    if filters.roleFit ~= false and not PartyFits(counts, party) then return nil, REASON.roleFit end
-    if filters.requireTank and not hasTank then return nil, REASON.tank end
-    if filters.requireHealer and not hasHealer then return nil, REASON.healer end
-    if filters.bloodlustFit and not party.hasBloodlust
-        and not UtilityFits(counts, party, hasBloodlust, { HEALER = true, DAMAGER = true }) then
-        return nil, REASON.bloodlust
-    end
-    if filters.battleResFit and not party.hasBattleRes
-        and not UtilityFits(counts, party, hasBattleRes, { TANK = true, HEALER = true, DAMAGER = true }) then
-        return nil, REASON.battleRes
-    end
-    if filters.notDeclined and IsDeclined(searchResultID) then return nil, REASON.declined end
-    -- Уровень ключа в заголовке может быть скрыт клиентом. Неизвестный
-    -- уровень оставляем видимым, вместо того чтобы выкинуть годную группу.
-    if not filters.scoreUpgrade and not InRange(keyLevel, filters.keyMin, filters.keyMax, true) then return nil, REASON.keyRange end
-    if not InRange(score, filters.scoreMin, filters.scoreMax, false) then return nil, REASON.score end
-    if tonumber(filters.runsMin) then
-        -- Отсутствие профиля и слабый профиль — разные причины: иначе выдача
-        -- молча пустеет там, где на самом деле просто нет данных.
-        if leaderRuns == nil then return nil, REASON.runsUnknown end
-        if not InRange(leaderRuns, filters.runsMin, nil, false) then return nil, REASON.runs end
-    end
-    return {
+    local challengeMapInfo = mapID and JP.API.GetChallengeMap(mapID)
+    local match = {
         searchResultID = searchResultID,
         activityID = activityID,
         mapID = mapID,
         dungeon = (activity and SafeString(activity.fullName or activity.shortName))
-            or (mapID and C_ChallengeMode.GetMapUIInfo(mapID))
+            or (challengeMapInfo and challengeMapInfo.name)
             or L("Подземелье"),
         title = title,
         comment = comment,
@@ -406,11 +403,10 @@ local function BuildMatch(searchResultID, filters, runtime, party)
         leaderDungeonScoreInfo = info.leaderDungeonScoreInfo,
         keyLevel = keyLevel,
         keyApprox = keyApprox,
-        targetLevel = targetLevel,
-        keyLevelProtected = filters.scoreUpgrade and (not keyLevel or keyApprox) or false,
         bestLevel = bestLevel,
         score = score,
         leaderRuns = leaderRuns,
+        leaderBestLevel = leaderBestLevel,
         age = age,
         members = members,
         memberInfo = memberInfo,
@@ -418,15 +414,84 @@ local function BuildMatch(searchResultID, filters, runtime, party)
         hasHealer = hasHealer,
         hasBloodlust = hasBloodlust,
         hasBattleRes = hasBattleRes,
+        roleCounts = counts,
+        actionable = true,
     }
+
+    if SafeBoolean(info.isDelisted) then return Reject(match, REASON.delisted, false) end
+    if members >= 5 then return Reject(match, REASON.full, false) end
+
+    -- Сначала отбираем подземелье: activityID остаётся обычным числом даже
+    -- тогда, когда Blizzard защищает пользовательское название объявления.
+    if not DungeonSelected(filters, mapID) then return Reject(match, REASON.dungeon) end
+
+    -- Ключ ниже личного рекорда рейтинг не поднимет — такие группы прячем,
+    -- когда клиент действительно разрешил прочитать уровень.
+    -- LeaderRunLevel() is only the leader's best result for this dungeon. It
+    -- is useful as a hint in the row, but it is NOT the level advertised by
+    -- the group. Never use that approximation as a hard filter.
+    if keyLevel and not keyApprox and keyLevel <= bestLevel then return Reject(match, REASON.belowBest) end
+    -- В Midnight name/comment являются protected strings. Стандартный фрейм
+    -- умеет их рисовать, но Lua не имеет права вызвать на них match(). Поэтому
+    -- известный уровень проверяем строго, а скрытый не превращаем в ложный
+    -- отсев всех 100 результатов. В строке он будет явно показан как цель.
+    local targetLevel
+    if filters.scoreUpgrade then
+        if not bestLevel or bestLevel <= 0 then return Reject(match, REASON.recordUnknown) end
+        targetLevel = bestLevel + 1
+        match.targetLevel = targetLevel
+        -- searchTargetLevel is merely the one +N that the protected Blizzard
+        -- search accepted from the hardware click. Different dungeons have
+        -- different personal targets, and Blizzard also returns neighbouring
+        -- levels. Comparing a dungeon's target with that shared query falsely
+        -- rejected every unreadable listing in a mixed eight-dungeon search.
+        -- Only a confirmed listing level at/below best is rejected above.
+        -- Точная цель помогает сузить серверный поиск, но не является
+        -- верхней границей. Любой подтверждённый ключ выше личного рекорда
+        -- действительно повышает рейтинг и должен оставаться в выдаче.
+    elseif UsableNumber(filters.searchExactLevel) and filters.searchExactLevel >= 2 then
+        -- Это цель серверного запроса, а не раскрытый текст объявления. UI
+        -- показывает её как цель, сохраняя keyApprox для честной пометки данных.
+        targetLevel = filters.searchExactLevel
+        match.targetLevel = targetLevel
+    end
+    match.keyLevelProtected = targetLevel and (not keyLevel or keyApprox) or false
+    if targetLevel then
+        match.targetSource = filters.scoreUpgrade and "upgrade" or "search_exact"
+    end
+    if filters.roleFit ~= false and not PartyFits(counts, party) then return Reject(match, REASON.roleFit) end
+    if filters.requireTank and not hasTank then return Reject(match, REASON.tank) end
+    if filters.requireHealer and not hasHealer then return Reject(match, REASON.healer) end
+    if filters.bloodlustFit and not party.hasBloodlust
+        and not UtilityFits(counts, party, hasBloodlust, { HEALER = true, DAMAGER = true }) then
+        return Reject(match, REASON.bloodlust)
+    end
+    if filters.battleResFit and not party.hasBattleRes
+        and not UtilityFits(counts, party, hasBattleRes, { TANK = true, HEALER = true, DAMAGER = true }) then
+        return Reject(match, REASON.battleRes)
+    end
+    if filters.notDeclined and IsDeclined(searchResultID) then return Reject(match, REASON.declined, false) end
+    -- Уровень ключа в заголовке может быть скрыт клиентом. Неизвестный
+    -- уровень оставляем видимым, вместо того чтобы выкинуть годную группу.
+    if not filters.scoreUpgrade and not InRange(keyApprox and nil or keyLevel, filters.keyMin, filters.keyMax, true) then
+        return Reject(match, REASON.keyRange)
+    end
+    if not InRange(score, filters.scoreMin, filters.scoreMax, false) then return Reject(match, REASON.score) end
+    if tonumber(filters.runsMin) then
+        -- Отсутствие профиля и слабый профиль — разные причины: иначе выдача
+        -- молча пустеет там, где на самом деле просто нет данных.
+        if leaderRuns == nil then return Reject(match, REASON.runsUnknown) end
+        if not InRange(leaderRuns, filters.runsMin, nil, false) then return Reject(match, REASON.runs) end
+    end
+    return ApplyCoach(match)
 end
 
 function AutoMatch:Scan(filters, runtime)
-    local matches = {}
-    if not C_LFGList or not C_LFGList.GetSearchResults then return matches, L("Поиск групп недоступен.") end
+    local matches, excluded = {}, {}
+    if not C_LFGList or not C_LFGList.GetSearchResults then return matches, L("Поиск групп недоступен."), nil, nil, excluded end
     local _, resultIDs = C_LFGList.GetSearchResults()
     if type(resultIDs) ~= "table" or #resultIDs == 0 then
-        return matches, L("Нажми «Обновить» — MythicBoost сам запросит группы у Blizzard.")
+        return matches, L("Нажми «Обновить» — MythicBoost сам запросит группы у Blizzard."), nil, nil, excluded
     end
 
     ResetCache()
@@ -445,12 +510,30 @@ function AutoMatch:Scan(filters, runtime)
         end
     end
     local rejected = {}
-    for _, searchResultID in ipairs(resultIDs) do
-        local match, reason = BuildMatch(searchResultID, filters, runtime, party)
+    for sourceOrder, searchResultID in ipairs(resultIDs) do
+        local ok, match, reason, rejectedMatch = pcall(BuildMatch, searchResultID, filters, runtime, party)
+        if not ok then
+            JP:Log(L("строка поиска %s не разобрана: %s"), tostring(searchResultID), tostring(match))
+            reason = REASON.readError
+            match = nil
+            rejectedMatch = {
+                searchResultID = searchResultID, dungeon = L("Недоступная группа"),
+                members = 0, score = 0, bestLevel = 0,
+                rejected = true, rejectionReason = reason, actionable = true,
+            }
+        end
         if match then
+            match.sourceOrder = sourceOrder
             matches[#matches + 1] = match
         elseif reason then
             rejected[reason] = (rejected[reason] or 0) + 1
+            rejectedMatch = rejectedMatch or {
+                searchResultID = searchResultID, dungeon = L("Недоступная группа"),
+                members = 0, score = 0, bestLevel = 0,
+                rejected = true, rejectionReason = reason, actionable = false,
+            }
+            rejectedMatch.sourceOrder = sourceOrder
+            excluded[#excluded + 1] = rejectedMatch
         end
     end
     ResetCache()
@@ -471,7 +554,8 @@ function AutoMatch:Scan(filters, runtime)
         if a.score ~= b.score then return a.score > b.score end
         return (a.age or math.huge) < (b.age or math.huge)
     end)
-    return matches, nil, total, rejected
+    table.sort(excluded, function(a, b) return (a.sourceOrder or math.huge) < (b.sourceOrder or math.huge) end)
+    return matches, nil, total, rejected, excluded
 end
 
 function AutoMatch:Apply(match, editBeforeApply)
@@ -496,15 +580,6 @@ function AutoMatch:Apply(match, editBeforeApply)
         end
         local ok = pcall(LFGListApplicationDialog_Show, LFGListApplicationDialog, searchResultID)
         if ok then
-            -- MythicBoost сам находится на strata DIALOG. Штатное окно в
-            -- некоторых раскладках оказывалось под ним и выглядело обрезанным.
-            -- Поднимаем только этот подтверждающий диалог поверх основного UI.
-            if LFGListApplicationDialog.SetFrameStrata then
-                pcall(LFGListApplicationDialog.SetFrameStrata, LFGListApplicationDialog, "FULLSCREEN_DIALOG")
-            end
-            if LFGListApplicationDialog.SetFrameLevel then
-                pcall(LFGListApplicationDialog.SetFrameLevel, LFGListApplicationDialog, 100)
-            end
             if editBeforeApply then
                 local description = _G.LFGListApplicationDialogDescription
                 local editBox = description and description.EditBox
@@ -540,17 +615,17 @@ function AutoMatch:Cancel(match)
         JP:Print(L("Отмена заявки сейчас недоступна."))
         return false
     end
-    local okInfo, _, status, pendingStatus = pcall(C_LFGList.GetApplicationInfo, searchResultID)
-    if not okInfo or issecretvalue(status) or issecretvalue(pendingStatus) then
+    local state = JP.API.GetApplicationState(searchResultID)
+    if not state.readable then
         JP:Print(L("Blizzard пока не отдал состояние заявки."))
         return false
     end
-    if pendingStatus then
+    if state.pending then
         JP:Print(L("Заявка ещё обрабатывается. Повтори отмену через секунду."))
         return false
     end
-    if status ~= "applied" then
-        JP:Print(status == "invited" and L("На эту группу уже пришло приглашение.") or L("Активной заявки уже нет."))
+    if state.status ~= "applied" then
+        JP:Print(state.status == "invited" and L("На эту группу уже пришло приглашение.") or L("Активной заявки уже нет."))
         return false
     end
 
