@@ -10,84 +10,14 @@ local FALLBACK_ROUND_MASK = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 -- HUD elements should sit directly on the game world. A previous revision put
 -- an opaque near-black rectangle behind every skinned frame, which made the
 -- interface look like a collection of unrelated boxes.
-local PANEL_BG = { 0, 0, 0, 0 }
 -- Контур — из общих токенов UI.colors. Фон здесь намеренно
 -- прозрачный и таким остаётся: эти панели ложатся на миникарту и чат,
 -- и любая заливка там закрывает содержимое.
 local PANEL_EDGE = { JP.UI.colors.surfaceEdge[1], JP.UI.colors.surfaceEdge[2], JP.UI.colors.surfaceEdge[3], .82 }
 
-local function SyncPanelLayer(panel, target)
-    if not panel or not target then return end
-    if type(target.GetFrameStrata) == "function" then panel:SetFrameStrata(target:GetFrameStrata()) end
-    if type(target.GetFrameLevel) == "function" then panel:SetFrameLevel(math.max(0, target:GetFrameLevel() - 1)) end
-end
-
 -- Одна визуальная система для всего HUD. Панель живёт рядом с целевым
 -- окном на UIParent, поэтому не перекрывается собственными фонами Details,
 -- чата или Blizzard UI и при этом следует за окном при его перемещении.
-function MinimalUI:EnsurePanel(target, key, options)
-    if not target or type(target.SetPoint) ~= "function" then return end
-    key = key or "default"
-    options = options or {}
-    self.unifiedPanels = self.unifiedPanels or UI.WeakKeys()
-    local bucket = self.unifiedPanels[target]
-    if not bucket then bucket = {}; self.unifiedPanels[target] = bucket end
-    local panel = bucket[key]
-    if not panel then
-        panel = CreateFrame("Frame", nil, target:GetParent() or UIParent, "BackdropTemplate")
-        panel:EnableMouse(false)
-        panel:SetClampedToScreen(false)
-        panel:SetBackdrop({
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = 1,
-        })
-        panel:SetBackdropColor(unpack(PANEL_BG))
-        panel:SetBackdropBorderColor(unpack(PANEL_EDGE))
-        panel.accent = panel:CreateTexture(nil, "OVERLAY")
-        panel.accent:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .92)
-        panel.accent:SetPoint("TOPLEFT", 1, -1)
-        panel.accent:SetPoint("TOPRIGHT", -1, -1)
-        panel.accent:SetHeight(options.accentHeight or 1)
-        bucket[key] = panel
-
-        if not target.__mbUnifiedPanelHooks then
-            target.__mbUnifiedPanelHooks = true
-            target:HookScript("OnShow", function(owner)
-                if MythicBoostDB and MythicBoostDB.minimalUI then
-                    for _, ownedPanel in pairs((self.unifiedPanels or {})[owner] or {}) do
-                        SyncPanelLayer(ownedPanel, owner)
-                        ownedPanel:Show()
-                    end
-                end
-            end)
-            target:HookScript("OnHide", function(owner)
-                for _, ownedPanel in pairs((self.unifiedPanels or {})[owner] or {}) do ownedPanel:Hide() end
-            end)
-        end
-    end
-
-    local left = options.left or options.padding or 3
-    local right = options.right or options.padding or 3
-    local top = options.top or options.padding or 3
-    local bottom = options.bottom or options.padding or 3
-    panel:ClearAllPoints()
-    panel:SetPoint("TOPLEFT", target, "TOPLEFT", -left, top)
-    panel:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", right, -bottom)
-    -- Intentionally ignore the old per-widget bgAlpha values. They are kept in
-    -- callers for compatibility, but Minimal UI panels are border-only now.
-    panel:SetBackdropColor(PANEL_BG[1], PANEL_BG[2], PANEL_BG[3], PANEL_BG[4])
-    SyncPanelLayer(panel, target)
-    local visible = type(target.IsVisible) == "function" and target:IsVisible() or target:IsShown()
-    panel:SetShown(MythicBoostDB and MythicBoostDB.minimalUI == true and visible)
-    return panel
-end
-
-function MinimalUI:HideUnifiedPanels()
-    for _, bucket in pairs(self.unifiedPanels or {}) do
-        for _, panel in pairs(bucket) do panel:Hide() end
-    end
-end
-
 local function IsObject(value)
     return value and type(value.IsShown) == "function" and type(value.SetShown) == "function"
 end
@@ -830,8 +760,6 @@ function MinimalUI:StyleMinimap(enabled)
         end
         -- The minimap already has its own one-pixel border. A second enclosing
         -- panel only creates a pointless rectangle around it.
-        local panel = self.unifiedPanels and self.unifiedPanels[Minimap] and self.unifiedPanels[Minimap].minimap
-        if panel then panel:Hide() end
 
         if not self.mouseWheelHooked then
             self.mouseWheelHooked = true
@@ -864,8 +792,6 @@ function MinimalUI:StyleMinimap(enabled)
         if self.minimapBorder then self.minimapBorder:Hide() end
         if self.minimapZoneLayout then StyleMinimapZoneLabel(self, false) end
         RestoreMinimapVisibility(self)
-        local panel = self.unifiedPanels and self.unifiedPanels[Minimap] and self.unifiedPanels[Minimap].minimap
-        if panel then panel:Hide() end
     end
 end
 
@@ -992,8 +918,6 @@ function MinimalUI:StyleObjectiveTracker(enabled)
     end
 
     -- Панель и линия старой реализации не возвращаются ни в каком режиме.
-    local panel = self.unifiedPanels and self.unifiedPanels[tracker] and self.unifiedPanels[tracker].tracker
-    if panel then panel:Hide() end
     if self.questLine then self.questLine:Hide() end
 
     -- Only the tracker scale and minimap-relative position above are custom.
@@ -1244,41 +1168,6 @@ local function IsEmptyActionButton(button)
     return icon and not icon:GetTexture()
 end
 
-local function ClusterActionButtons()
-    -- ExtraActionButton and ZoneAbilityFrame have custom size, animations and
-    -- secure owners. Mixing them into the regular grid is what used to distort
-    -- its scale, so only homogeneous bar buttons are packed here.
-    local buttons = {}
-    for _, prefix in ipairs(ACTION_BUTTON_PREFIXES) do
-        for index = 1, 12 do
-            local button = _G[prefix .. index]
-            if button then buttons[#buttons + 1] = button end
-        end
-    end
-    return buttons
-end
-
-local function RestoreClusterButton(button, state)
-    if not button or not state then return end
-    button:ClearAllPoints()
-    for _, point in ipairs(state.points or {}) do button:SetPoint(unpack(point)) end
-    if state.scale then button:SetScale(state.scale) end
-end
-
-local function CaptureClusterFrame(frame)
-    local state = { scale = frame:GetScale(), alpha = frame:GetAlpha(), points = {} }
-    for index = 1, frame:GetNumPoints() do state.points[index] = { frame:GetPoint(index) } end
-    return state
-end
-
-local function RestoreClusterFrame(frame, state)
-    if not frame or not state then return end
-    frame:ClearAllPoints()
-    for _, point in ipairs(state.points or {}) do frame:SetPoint(unpack(point)) end
-    if state.scale then frame:SetScale(state.scale) end
-    if state.alpha then frame:SetAlpha(state.alpha) end
-end
-
 local function CooldownViewerHasActiveIcon(viewer)
     if not viewer or type(viewer.GetChildren) ~= "function" then return false end
     for _, child in ipairs({ viewer:GetChildren() }) do
@@ -1522,121 +1411,6 @@ function MinimalUI:StyleCooldownEffectBars(enabled)
     end)
 end
 
-function MinimalUI:LayoutActionCluster(enabled)
-    if InCombatLockdown() then return end
-    -- Кластер выключен намеренно, и это не временная заглушка.
-    --
-    -- Он стаскивал В ОДНУ сетку внизу экрана вообще все кнопки: панели
-    -- действий, стойки друида, панель питомца и PossessButton. Тем самым он
-    -- переопределял раскладку Edit Mode — что бы игрок ни выставил руками,
-    -- следующее же событие перекладывало это по-своему. А поскольку
-    -- перестановка защищённых кнопок в бою заблокирована, проходы, начатые
-    -- в бою, применялись частично и оставляли отдельные панели на чужих
-    -- местах. Положение и масштаб панелей теперь целиком за Edit Mode.
-    --
-    -- Ветка `not enabled` ниже намеренно оставлена рабочей: она возвращает
-    -- всё, что кластер успел сдвинуть за текущую сессию, и прячет якорь.
-    -- Чтобы вернуть кластер, достаточно убрать одну строку ниже.
-    enabled = false
-    self.actionClusterState = self.actionClusterState or UI.WeakKeys()
-
-    if not enabled then
-        for button, state in pairs(self.actionClusterState) do RestoreClusterButton(button, state) end
-        wipe(self.actionClusterState)
-        for viewer, state in pairs(self.cooldownViewerLayouts or {}) do
-            RestoreClusterFrame(viewer, state)
-        end
-        wipe(self.cooldownViewerLayouts or {})
-        if self.actionClusterAnchor then self.actionClusterAnchor:Hide() end
-        return
-    end
-
-    local mainButton = _G.ActionButton1
-    if not mainButton then return end
-    if not self.actionClusterAnchor then
-        local anchor = CreateFrame("Frame", "MythicBoostActionCluster", UIParent)
-        anchor:SetSize(369, 28)
-        anchor:EnableMouse(false)
-        self.actionClusterAnchor = anchor
-    end
-    local anchor = self.actionClusterAnchor
-    anchor:ClearAllPoints()
-    anchor:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 18)
-    anchor:Show()
-
-    local visible = {}
-    for _, button in ipairs(ClusterActionButtons()) do
-        local state = self.actionClusterState[button]
-        if not state then
-            state = { scale = button:GetScale(), points = {} }
-            for index = 1, button:GetNumPoints() do state.points[index] = { button:GetPoint(index) } end
-            self.actionClusterState[button] = state
-        else
-            RestoreClusterButton(button, state)
-        end
-        if button:IsVisible() then visible[#visible + 1] = button end
-    end
-
-    -- targetSize — сторона кнопки на экране в единицах UIParent. Штатная
-    -- кнопка Blizzard — 45; ниже 30 перестают читаться подписи бинда.
-    local columns, targetSize = 12, 36
-    local columnGap, rowGap = 4, 5
-    local rowCount = math.max(1, math.ceil(#visible / columns))
-    local widestRow = math.min(columns, math.max(1, #visible))
-    local clusterWidth = widestRow * targetSize + math.max(0, widestRow - 1) * columnGap
-    local clusterHeight = rowCount * targetSize + math.max(0, rowCount - 1) * rowGap
-    anchor:SetSize(clusterWidth, clusterHeight)
-    local uiScale = type(UIParent.GetEffectiveScale) == "function" and UIParent:GetEffectiveScale() or 1
-    for index, button in ipairs(visible) do
-        local column = (index - 1) % columns
-        local row = math.floor((index - 1) / columns)
-        local rowStart = row * columns + 1
-        local rowItems = math.min(columns, #visible - rowStart + 1)
-        local rowWidth = rowItems * targetSize + math.max(0, rowItems - 1) * columnGap
-        local rowOffset = (clusterWidth - rowWidth) * .5
-        local width = button:GetWidth() or targetSize
-        local parent = button:GetParent()
-        local parentScale = parent and type(parent.GetEffectiveScale) == "function"
-            and parent:GetEffectiveScale() or uiScale
-        local scale = width > 0 and (targetSize / width) * (uiScale / math.max(.01, parentScale)) or 1
-        local appliedScale = math.max(.35, math.min(2, scale))
-        button:ClearAllPoints()
-        button:SetScale(appliedScale)
-        -- Смещения SetPoint измеряются в системе координат САМОЙ кнопки, а она
-        -- уменьшена до targetSize. Шаг сетки посчитан в единицах UIParent,
-        -- поэтому без обратного пересчёта на экране он выходит меньше ширины
-        -- кнопки, и соседние кнопки наезжают друг на друга. Делим именно на
-        -- appliedScale, а не на сырой scale: после клампа кнопка стоит в другом
-        -- масштабе, чем тот, из которого считался шаг.
-        local unit = uiScale / math.max(.01, appliedScale * parentScale)
-        button:SetPoint("BOTTOMLEFT", anchor, "BOTTOMLEFT",
-            (rowOffset + column * (targetSize + columnGap)) * unit,
-            (row * (targetSize + rowGap)) * unit)
-    end
-
-    -- Blizzard's Cooldown Manager is a separate Edit Mode family. Anchor its
-    -- visible viewers to the same dynamic container so action rows can never
-    -- grow underneath them or drift to another part of the screen.
-    self.cooldownViewerLayouts = self.cooldownViewerLayouts or UI.WeakKeys()
-    local viewerOffset = 9
-    local editMode = _G.EditModeManagerFrame and _G.EditModeManagerFrame:IsShown()
-    for _, name in ipairs(COOLDOWN_VIEWER_NAMES) do
-        local viewer = _G[name]
-        if viewer and type(viewer.GetNumPoints) == "function" then
-            if not self.cooldownViewerLayouts[viewer] then
-                self.cooldownViewerLayouts[viewer] = CaptureClusterFrame(viewer)
-            end
-            local active = editMode or CooldownViewerHasActiveIcon(viewer)
-            viewer:SetAlpha(active and (self.cooldownViewerLayouts[viewer].alpha or 1) or 0)
-            if active and viewer:IsShown() then
-                viewer:ClearAllPoints()
-                viewer:SetPoint("BOTTOM", anchor, "TOP", 0, viewerOffset)
-                viewerOffset = viewerOffset + math.max(1, viewer:GetHeight() or 1) + 6
-            end
-        end
-    end
-end
-
 function MinimalUI:StyleActionButtons(enabled)
     -- Экшен-кнопки защищены в бою. Настройка уже сохранена, а визуальное
     -- применение/возврат выполнится на PLAYER_REGEN_ENABLED.
@@ -1797,10 +1571,6 @@ function MinimalUI:StyleActionButtons(enabled)
 
     -- Buttons retain their individual one-pixel borders; never draw a large
     -- rectangle around the whole action bar.
-    for _, bucket in pairs(self.unifiedPanels or {}) do
-        if bucket.actionbar then bucket.actionbar:Hide() end
-    end
-    self:LayoutActionCluster(enabled)
 end
 
 -- То же самое для строк Details: градиент один и тот же на все полосы.
@@ -1844,8 +1614,6 @@ function MinimalUI:StyleDetails(enabled)
                 if type(instance.StatusBarColor) == "function" then
                     pcall(instance.StatusBarColor, instance, nil, nil, nil, 0, true)
                 end
-                local panel = self.unifiedPanels and self.unifiedPanels[base] and self.unifiedPanels[base].details
-                if panel then panel:Hide() end
                 for _, row in ipairs(instance.barras or {}) do
                     if row.textura and type(row.textura.SetStatusBarTexture) == "function" then
                         if not row.__mbTexture then
@@ -1897,8 +1665,6 @@ function MinimalUI:StyleDetails(enabled)
                 if type(instance.StatusBarColor) == "function" then
                     pcall(instance.StatusBarColor, instance, nil, nil, nil, state.statusAlpha or 1, true)
                 end
-                local panel = self.unifiedPanels and self.unifiedPanels[base] and self.unifiedPanels[base].details
-                if panel then panel:Hide() end
                 for _, row in ipairs(instance.barras or {}) do
                     if row.textura and row.__mbTexture then row.textura:SetStatusBarTexture(row.__mbTexture) end
                     if row.__mbGloss then row.__mbGloss:Hide() end
@@ -1985,10 +1751,15 @@ function MinimalUI:Apply()
         and MythicBoostDB.convenience.hideBags ~= false
     if not enabled then
         RestoreVisibility(self)
-        self:HideUnifiedPanels()
     end
     self:StyleMinimap(minimapEnabled)
     self:StyleMicroMenu(enabled)
+    self:StyleObjectiveTracker(enabled)
+    local options = MythicBoostDB and MythicBoostDB.minimalUIOptions or {}
+    self:StyleActionBarRows(enabled and options.compactActionBars == true)
+    self:StyleStanceBar(enabled and options.hideStanceBar == true)
+    -- Micro-menu placement is the tracker's anchor; bind it once more after
+    -- the final micro pass so objective rows never retain a stale position.
     self:StyleObjectiveTracker(enabled)
     self:StyleActionButtons(enabled)
     self:StyleCooldownEffectBars(enabled)
@@ -2034,6 +1805,53 @@ end
 function MinimalUI:SetEnabled(enabled)
     MythicBoostDB.minimalUI = enabled and true or false
     self:Apply()
+end
+
+-- Keep the three Blizzard action-bar roots in a compact vertical stack.  Only
+-- the protected root frames are moved; their secure child buttons retain all
+-- native ownership and state-driver behaviour.
+function MinimalUI:StyleActionBarRows(enabled)
+    if InCombatLockdown() then return end
+    local roots = { _G.MainActionBar, _G.MultiBarBottomLeft, _G.MultiBarBottomRight }
+    self.actionBarRowLayouts = self.actionBarRowLayouts or UI.WeakKeys()
+    for _, bar in ipairs(roots) do
+        if bar and type(bar.GetNumPoints) == "function" and type(bar.SetPoint) == "function" then
+            if not self.actionBarRowLayouts[bar] then
+                self.actionBarRowLayouts[bar] = CaptureFrameLayout(bar)
+            end
+            if enabled and bar:IsShown() then
+                local index = 1
+                for i, candidate in ipairs(roots) do if candidate == bar then index = i end end
+                bar:ClearAllPoints()
+                bar:SetPoint("CENTER", UIParent, "CENTER", 0, (2 - index) * 42)
+            elseif not enabled then
+                RestoreFrameLayout(bar, self.actionBarRowLayouts[bar])
+            end
+        end
+    end
+    if not enabled then wipe(self.actionBarRowLayouts) end
+end
+
+function MinimalUI:StyleStanceBar(enabled)
+    if InCombatLockdown() then return end
+    local frames = { _G.StanceBar, _G.StanceBarFrame }
+    self.stanceBarLayouts = self.stanceBarLayouts or UI.WeakKeys()
+    for _, frame in ipairs(frames) do
+        if frame and type(frame.SetShown) == "function" then
+            if not self.stanceBarLayouts[frame] then
+                self.stanceBarLayouts[frame] = { shown = frame:IsShown(), alpha = frame:GetAlpha() }
+            end
+            local state = self.stanceBarLayouts[frame]
+            if enabled then
+                frame:Hide()
+                frame:SetAlpha(0)
+            else
+                frame:SetAlpha(state.alpha or 1)
+                frame:SetShown(state.shown)
+            end
+        end
+    end
+    if not enabled then wipe(self.stanceBarLayouts) end
 end
 
 function MinimalUI:SetMinimapEnabled(enabled)

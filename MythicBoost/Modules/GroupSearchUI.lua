@@ -196,14 +196,6 @@ local function ProfileForName(name, classFilename)
     return profile
 end
 
-local function ProfileRuns(name, classFilename)
-    local profile = ProfileForName(name, classFilename)
-    local keystone = profile and profile.mythicKeystoneProfile
-    local runs = keystone and keystone.sortedDungeons
-    if type(runs) ~= "table" or #runs == 0 then return end
-    return runs
-end
-
 local function ProfileScore(profile)
     return UI.KeystoneScore(profile and profile.mythicKeystoneProfile)
 end
@@ -771,25 +763,10 @@ function GroupSearchUI:GetRunGradeColor(grade)
     return RUN_GRADE_COLOR[grade] or RUN_GRADE_COLOR.missing
 end
 
-function GroupSearchUI:GetBelowKeyColor()
-    return BELOW_KEY_COLOR
-end
-
 -- Уровень, относительно которого окрашивается таблица текущей пати.
 -- В первую очередь это явно введённый/последний запрошенный ключ. Собственный
 -- камень игрока может быть заметно выше и не должен делать всю таблицу красной
 -- во время поиска, например, +11.
-function GroupSearchUI:GetComparisonKeyLevel(welcome)
-    local filters = welcome and welcome.groupFilters
-    local keyMin = filters and tonumber(filters.keyMin)
-    local keyMax = filters and tonumber(filters.keyMax)
-    if keyMin and keyMin > 0 and (not keyMax or keyMax <= 0 or keyMin == keyMax) then return keyMin end
-    if self.lastSearchTarget and self.lastSearchTarget > 0 then return self.lastSearchTarget end
-    if self.currentSearchTarget and self.currentSearchTarget > 0 then return self.currentSearchTarget end
-    local own = C_MythicPlus and C_MythicPlus.GetOwnedKeystoneLevel and C_MythicPlus.GetOwnedKeystoneLevel()
-    return tonumber(own) or 0
-end
-
 local function BlizzardRunsByDungeon(scoreInfo, columns)
     local mapped = {}
     for index, entry in ipairs(SafeTable(scoreInfo) or {}) do
