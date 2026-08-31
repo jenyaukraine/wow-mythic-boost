@@ -66,7 +66,10 @@ if (Test-Path -LiteralPath $archivePath) {
 try {
     New-Item -ItemType Directory -Path $stagedAddon -Force | Out-Null
 
-    $releaseTocLines = Get-Content -LiteralPath $tocPath
+    # Windows PowerShell 5.1 treats UTF-8 without BOM as the active ANSI code
+    # page.  Reading the Russian metadata without an explicit encoding and
+    # writing it back as UTF-8 produced valid but mojibaked release TOCs.
+    $releaseTocLines = Get-Content -LiteralPath $tocPath -Encoding UTF8
     $tocEntries = $releaseTocLines | Where-Object {
         $_ -and -not $_.StartsWith("##")
     }

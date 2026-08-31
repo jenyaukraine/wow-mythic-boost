@@ -585,8 +585,8 @@ def test_run_history_can_invite_by_whisper():
     assert "Hi! I'd like to invite you to play some Mythic+ keys!" in source
     assert 'UI.Button(row, L("Позвать")' in source
     settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
-    assert 'Heading(interfacePage, L("РАСПОЛОЖЕНИЕ"), 28, -304, 764)' in settings
-    assert 'interfaceMove:SetPoint("TOPLEFT", 28, -338)' in settings
+    assert 'Heading(interfacePage, L("РАСПОЛОЖЕНИЕ"), 28, -372, 764)' in settings
+    assert 'interfaceMove:SetPoint("TOPLEFT", 28, -406)' in settings
 
 
 def test_settings_steppers_use_supported_glyphs():
@@ -661,6 +661,9 @@ def test_target_identity_and_portrait_have_fallbacks():
     assert "display.holder:SetAlpha(1)" in refresh
     assert 'if not InCombatLockdown() then display.holder:Show() end' in refresh
     assert "display.holder:Hide()" not in refresh
+    assert "function UnitFrames:QueuePortraitRefresh" in frames
+    assert "display.portraitRefreshToken ~= token" in frames
+    assert "self:QueuePortraitRefresh(display)" in frames
 
 
 def test_rotation_suggestion_stays_square():
@@ -709,8 +712,43 @@ def test_bottom_hud_uses_native_blizzard_frames_and_restores_them():
     assert "CaptureFrame(frame)" in dock and "RestoreFrame(frame, state" in dock
     assert "if InCombatLockdown() then self.pendingApply" in dock
     assert "layoutOnboardingRevision" in dock
+    assert "OnCancel = function() MythicBoostDB.layoutOnboardingRevision = 1 end" in dock
     assert 'L("Нижний HUD: чат, урон и исцеление")' in settings
     assert "db.minimalUIOptions.bottomDock = false" in core
+
+
+def test_compact_hud_controls_and_native_meter_skin():
+    source = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
+    assert 'bar:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 18)' in source
+    assert 'bar:SetPoint("BOTTOM", previous, "TOP", 0, 3)' in source
+    assert "function MinimalUI:StyleStanceBar" in source
+    assert 'L("Три ряда панелей способностей")' in settings
+    assert 'L("Скрывать панель стоек")' in settings
+    assert "function MinimalUI:StyleNativeDamageMeter" in source
+    assert 'name:find("DamageMeter", 1, true)' in source
+    assert "NativeMeterDecorations(frame, state)" in source
+    assert "self:StyleNativeDamageMeter(enabled)" in source
+    native = source.split("function MinimalUI:StyleNativeDamageMeter", 1)[1].split(
+        "local function CaptureFrameLayout", 1
+    )[0]
+    assert native.index("candidates[#candidates + 1] = frame") < native.index(
+        "self:SkinNativeDamageMeterFrame(candidate, true)"
+    )
+
+
+def test_unit_frame_badges_target_placeholder_and_aura_order():
+    frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
+    assert "function UnitFrames:ConfigureBadgeDisplay" in frames
+    assert "ApplyBadgeShape(panel, settings.badgeShape)" in frames
+    assert "Settings().badgesUnlocked == true" in frames
+    assert 'display.name:SetText(moving and L("ЦЕЛЬ") or L("ЦЕЛИ НЕТ"))' in frames
+    assert "ActiveSettings().alwaysShowTarget == true" in frames
+    aura_above = settings.index('L("Размещать ауры сверху")')
+    player_auras = settings.index('L("Показывать ауры игрока")')
+    target_auras = settings.index('L("Показывать ауры цели")')
+    assert aura_above < player_auras < target_auras
 
 
 def test_unit_frames_magnetize_to_blizzard_action_bars():
@@ -742,5 +780,7 @@ if __name__ == "__main__":
     test_rotation_suggestion_stays_square()
     test_brand_icon_and_upgrade_shortcut()
     test_bottom_hud_uses_native_blizzard_frames_and_restores_them()
+    test_compact_hud_controls_and_native_meter_skin()
+    test_unit_frame_badges_target_placeholder_and_aura_order()
     test_unit_frames_magnetize_to_blizzard_action_bars()
     print("MythicBoost executable smoke tests: all passed")

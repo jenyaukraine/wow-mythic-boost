@@ -1082,6 +1082,14 @@ function MinimalUI:StyleMicroMenu(enabled)
     end
     for index = count + 1, #(self.microMenuSlots or {}) do self.microMenuSlots[index]:Hide() end
     anchor:SetHeight(rows * rowHeight + (rows - 1) * gap)
+    -- The tracker anchors to this row. Blizzard can rebuild the micro menu
+    -- after our tracker pass, so re-apply once on the next frame using the
+    -- final measured height instead of leaving objectives far below the map.
+    if self.trackerLayout and C_Timer then
+        C_Timer.After(0, function()
+            if MythicBoostDB and MythicBoostDB.minimalUI then self:StyleObjectiveTracker(true) end
+        end)
+    end
 end
 
 local ACTION_BUTTON_PREFIXES = {
@@ -1679,6 +1687,129 @@ function MinimalUI:StyleDetails(enabled)
     end
 end
 
+-- Retail's built-in Damage Meter opens a separate breakdown window when a
+-- row is selected.  It is not a Details! instance, so it needs its own small
+-- chrome pass.  Keep every Blizzard row/tooltip/scroll handler intact and
+-- only replace the oversized black NineSlice/background with the same quiet
+-- surface and cyan edge used by the rest of MythicBoost.
+local function NativeDamageMeterFrame(frame)
+    if not frame or type(frame.GetName) ~= "function" then return false end
+    local name = frame:GetName()
+    if type(name) ~= "string" or not name:find("DamageMeter", 1, true) then return false end
+    if name:match("^DamageMeterSessionWindow%d+$") then return false end
+    if type(frame.GetWidth) ~= "function" or type(frame.GetHeight) ~= "function" then return false end
+    return (frame:GetWidth() or 0) >= 220 and (frame:GetHeight() or 0) >= 110
+end
+
+local function SaveAndMuteNativeMeterObject(state, object)
+    if not object or type(object.SetAlpha) ~= "function" or state.muted[object] ~= nil then return end
+    state.muted[object] = type(object.GetAlpha) == "function" and object:GetAlpha() or 1
+    object:SetAlpha(0)
+end
+
+local function NativeMeterDecorations(frame, state)
+    -- Across retail builds the same chrome moved between named fields and a
+    -- NineSlice child.  Named objects are safe to mute; large direct textures
+    -- are the fallback and cannot be row icons because those are small.
+    for _, key in ipairs({
+        "NineSlice", "Border", "Background", "Bg", "BG", "Inset", "InsetFrame",
+        "TopTileStreaks", "TitleBg", "TitleBackground",
+    }) do
+        SaveAndMuteNativeMeterObject(state, frame[key])
+    end
+    if type(frame.GetRegions) == "function" then
+        local frameWidth, frameHeight = frame:GetWidth() or 0, frame:GetHeight() or 0
+        for _, region in ipairs({ frame:GetRegions() }) do
+            if region and type(region.GetObjectType) == "function" and region:GetObjectType() == "Texture"
+                and type(region.GetWidth) == "function" and type(region.GetHeight) == "function"
+                and (region:GetWidth() or 0) >= frameWidth * .72
+                and (region:GetHeight() or 0) >= frameHeight * .55 then
+                SaveAndMuteNativeMeterObject(state, region)
+            end
+        end
+    end
+end
+
+function MinimalUI:SkinNativeDamageMeterFrame(frame, enabled)
+    if not NativeDamageMeterFrame(frame) then return end
+    self.nativeMeterState = self.nativeMeterState or UI.WeakKeys()
+    local state = self.nativeMeterState[frame]
+    if not state then
+        state = { muted = UI.WeakKeys() }
+        self.nativeMeterState[frame] = state
+
+        local fill = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+        fill:SetPoint("TOPLEFT", 2, -2)
+        fill:SetPoint("BOTTOMRIGHT", -2, 2)
+        fill:SetColorTexture(C.surface[1], C.surface[2], C.surface[3], .94)
+        state.fill = fill
+
+        local edge = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        edge:SetAllPoints()
+        edge:SetFrameLevel(frame:GetFrameLevel() + 1)
+        edge:EnableMouse(false)
+        edge:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        edge:SetBackdropBorderColor(C.surfaceEdge[1], C.surfaceEdge[2], C.surfaceEdge[3], .96)
+        state.edge = edge
+
+        local accent = frame:CreateTexture(nil, "BORDER", nil, 7)
+        accent:SetPoint("TOPLEFT", 2, -2)
+        accent:SetPoint("TOPRIGHT", -2, -2)
+        accent:SetHeight(2)
+        accent:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .88)
+        state.accent = accent
+    end
+
+    if enabled then
+        NativeMeterDecorations(frame, state)
+        state.fill:Show(); state.edge:Show(); state.accent:Show()
+        local scrollBar = frame.ScrollBar or frame.scrollBar
+        if scrollBar and type(scrollBar.SetAlpha) == "function" then
+            if state.scrollAlpha == nil then state.scrollAlpha = scrollBar:GetAlpha() end
+            scrollBar:SetAlpha(.72)
+        end
+    else
+        for object, alpha in pairs(state.muted) do
+            if object and type(object.SetAlpha) == "function" then object:SetAlpha(alpha) end
+        end
+        wipe(state.muted)
+        if state.fill then state.fill:Hide() end
+        if state.edge then state.edge:Hide() end
+        if state.accent then state.accent:Hide() end
+        local scrollBar = frame.ScrollBar or frame.scrollBar
+        if scrollBar and state.scrollAlpha ~= nil then scrollBar:SetAlpha(state.scrollAlpha) end
+        state.scrollAlpha = nil
+    end
+end
+
+function MinimalUI:StyleNativeDamageMeter(enabled)
+    if type(EnumerateFrames) ~= "function" then return end
+    -- Restore only objects we already own. Never enumerate while disabling.
+    if not enabled then
+        for frame in pairs(self.nativeMeterState or {}) do self:SkinNativeDamageMeterFrame(frame, false) end
+        return
+    end
+    if not _G.DamageMeter and not UI.IsAddOnLoaded("Blizzard_DamageMeter") then return end
+
+    -- EnumerateFrames walks a live linked list. Creating our edge frame from
+    -- inside that loop mutates the same list and can make the retail client
+    -- spin forever. Collect candidates first, then skin them after enumeration
+    -- has fully ended. A short throttle keeps the fallback discovery cheap.
+    local now = type(GetTime) == "function" and GetTime() or 0
+    if self.nativeMeterLastScan and now > 0 and now - self.nativeMeterLastScan < 10 then
+        for frame in pairs(self.nativeMeterState or {}) do self:SkinNativeDamageMeterFrame(frame, true) end
+        return
+    end
+    self.nativeMeterLastScan = now
+    local candidates = {}
+    local frame = EnumerateFrames()
+    while frame do
+        if NativeDamageMeterFrame(frame) then candidates[#candidates + 1] = frame end
+        frame = EnumerateFrames(frame)
+    end
+    for _, candidate in ipairs(candidates) do self:SkinNativeDamageMeterFrame(candidate, true) end
+end
+
 local function CaptureFrameLayout(frame)
     if not frame or type(frame.GetNumPoints) ~= "function" then return end
     local state = { scale = frame:GetScale(), points = {} }
@@ -1764,6 +1895,7 @@ function MinimalUI:Apply()
     self:StyleActionButtons(enabled)
     self:StyleCooldownEffectBars(enabled)
     self:StyleDetails(enabled)
+    self:StyleNativeDamageMeter(enabled)
     self:StylePlayerAuras(enabled)
     self:StyleBags(hideBags)
     if JP.MinimalChat then JP.MinimalChat:Apply() end
@@ -1793,6 +1925,7 @@ function MinimalUI:Apply()
             self:StyleMinimap(ownMinimap)
             self:StyleCooldownEffectBars(true)
             self:StyleDetails(true)
+            self:StyleNativeDamageMeter(true)
             self:StylePlayerAuras(true)
             self:StyleBags(MythicBoostDB.convenience and MythicBoostDB.convenience.hideBags ~= false)
         end)
@@ -1814,16 +1947,20 @@ function MinimalUI:StyleActionBarRows(enabled)
     if InCombatLockdown() then return end
     local roots = { _G.MainActionBar, _G.MultiBarBottomLeft, _G.MultiBarBottomRight }
     self.actionBarRowLayouts = self.actionBarRowLayouts or UI.WeakKeys()
+    local previous
     for _, bar in ipairs(roots) do
         if bar and type(bar.GetNumPoints) == "function" and type(bar.SetPoint) == "function" then
             if not self.actionBarRowLayouts[bar] then
                 self.actionBarRowLayouts[bar] = CaptureFrameLayout(bar)
             end
             if enabled and bar:IsShown() then
-                local index = 1
-                for i, candidate in ipairs(roots) do if candidate == bar then index = i end end
                 bar:ClearAllPoints()
-                bar:SetPoint("CENTER", UIParent, "CENTER", 0, (2 - index) * 42)
+                if previous then
+                    bar:SetPoint("BOTTOM", previous, "TOP", 0, 3)
+                else
+                    bar:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 18)
+                end
+                previous = bar
             elseif not enabled then
                 RestoreFrameLayout(bar, self.actionBarRowLayouts[bar])
             end

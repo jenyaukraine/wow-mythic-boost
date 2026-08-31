@@ -42,6 +42,8 @@ def main() -> None:
             if toc_name not in files:
                 fail("MythicBoost.toc is absent")
             toc = package.read(toc_name).decode("utf-8-sig")
+            if "Ð" in toc or "Ñ" in toc:
+                fail("TOC metadata contains UTF-8 mojibake")
             version_match = re.search(r"^## Version:\s*(\d+\.\d+\.\d+)\s*$", toc, re.MULTILINE)
             if not version_match:
                 fail("TOC version is absent or invalid")

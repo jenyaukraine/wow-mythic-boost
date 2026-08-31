@@ -1,4 +1,4 @@
-# MythicBoost 2.4.25 — production checklist
+# MythicBoost 2.4.27 — production checklist
 
 Этот список отделяет то, что проверяется автоматически, от действий, которые
 возможны только внутри актуального клиента World of Warcraft.
@@ -11,7 +11,7 @@ python .\Tools\CheckArchitecture.py
 python .\Tools\CheckLocalization.py
 python .\Tools\TestMythicBoost.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\BuildRelease.ps1
-python .\Tools\VerifyRelease.py .\dist\MythicBoost-2.4.25.zip
+python .\Tools\VerifyRelease.py .\dist\MythicBoost-2.4.27.zip
 ```
 
 Проход считается успешным, если совпадают версия TOC и changelog, все файлы
@@ -76,7 +76,7 @@ Blizzard frames, Quartz, XLoot, RCLootCouncil, BugGrabber/BugSack. При
 
 ## Финальная публикация
 
-- Снять пять анонимных showcase-кадров встроенным режимом версии 2.4.25 и
+- Снять пять анонимных showcase-кадров встроенным режимом версии 2.4.27 и
   выбрать из них обложку и четыре изображения для страницы CurseForge.
 - Приложить SHA-256 архива и короткие release notes из верхнего раздела
   `MythicBoost/CHANGELOG.md`.

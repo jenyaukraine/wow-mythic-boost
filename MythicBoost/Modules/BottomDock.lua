@@ -60,6 +60,9 @@ local function NativeMeterWindows()
             if window then windows[#windows + 1] = window end
         end)
     end
+    -- Older retail builds expose numbered globals even when the owner does
+    -- not provide ForEachSessionWindow.  Do not guess C_DamageMeter methods:
+    -- its session API returns combat data, not UI frame ownership.
     if #windows == 0 then
         for index = 1, 10 do
             local frame = _G["DamageMeterSessionWindow" .. index]
@@ -183,7 +186,10 @@ end
 function BottomDock:Dock(frame, area, topInset)
     if not frame then return end
     self:Remember(frame)
-    frame:SetParent(area)
+    -- Secure action/unit widgets must never be reparented while protected.
+    if InCombatLockdown() and type(frame.IsProtected) == "function" and frame:IsProtected() then return end
+    local ok = pcall(frame.SetParent, frame, area)
+    if not ok then return end
     frame:ClearAllPoints()
     frame:SetPoint("TOPLEFT", area, "TOPLEFT", 7, -(topInset or 34))
     frame:SetPoint("BOTTOMRIGHT", area, "BOTTOMRIGHT", -7, 7)
@@ -249,18 +255,20 @@ end
 
 function BottomDock:ShowOnboarding()
     if not MythicBoostDB or (MythicBoostDB.layoutOnboardingRevision or 0) >= 1 then return end
-    MythicBoostDB.layoutOnboardingRevision = 1
+    if not StaticPopupDialogs or type(StaticPopup_Show) ~= "function" then return end
     StaticPopupDialogs.MYTHICBOOST_COMPACT_HUD = {
         text = L("Применить компактный нижний HUD MythicBoost? Чат и штатные окна урона и исцеления будут собраны в одну панель. Всё можно отключить с полным возвратом раскладки Blizzard."),
         button1 = L("ПРИМЕНИТЬ"), button2 = L("ПОЗЖЕ"), timeout = 0, whileDead = true,
         hideOnEscape = true, preferredIndex = 3,
         OnAccept = function()
+            MythicBoostDB.layoutOnboardingRevision = 1
             MythicBoostDB.minimalUI = true
             Options().bottomDock = true
             Options().compactActionBars = true
             if JP.MinimalUI then JP.MinimalUI:SetEnabled(true) end
             BottomDock:Apply(true)
         end,
+        OnCancel = function() MythicBoostDB.layoutOnboardingRevision = 1 end,
     }
     StaticPopup_Show("MYTHICBOOST_COMPACT_HUD")
 end

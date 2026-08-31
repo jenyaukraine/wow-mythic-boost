@@ -1143,6 +1143,9 @@ function UnitFrames:ConfigureBadgeDisplay(display)
         level = { panel = display.classPanel, default = display.levelBadgeDefault },
     }
     for key, badge in pairs(badges) do
+        -- Lua 5.1 closes over the loop variable; capture a per-panel key so
+        -- dragging class and level badges cannot overwrite one another.
+        local badgeKey = key
         local panel, saved = badge.panel, type(positions) == "table" and positions[key] or nil
         panel:ClearAllPoints()
         if type(saved) == "table" and UI.UsableNumber(saved.x) and UI.UsableNumber(saved.y) then
@@ -1167,7 +1170,7 @@ function UnitFrames:ConfigureBadgeDisplay(display)
                     local active = Settings()
                     active.badgePositions = type(active.badgePositions) == "table" and active.badgePositions or {}
                     active.badgePositions[display.unit] = active.badgePositions[display.unit] or {}
-                    active.badgePositions[display.unit][key] = { x = x, y = y }
+                    active.badgePositions[display.unit][badgeKey] = { x = x, y = y }
                 end
             end)
         end
@@ -1738,13 +1741,35 @@ function UnitFrames:Create()
     end)
 end
 
+function UnitFrames:QueuePortraitRefresh(display)
+    if not display or not display.portrait then return end
+    display.portraitRefreshToken = (display.portraitRefreshToken or 0) + 1
+    local token = display.portraitRefreshToken
+    if not C_Timer or type(C_Timer.After) ~= "function" then
+        display.portrait:SetUnit(display.unit, true)
+        return
+    end
+    -- Model/portrait events commonly arrive in bursts inside a key. Rebuild
+    -- once after the burst: a real form/target change still refreshes, while
+    -- repeated ClearModel calls can no longer starve OnModelLoaded.
+    C_Timer.After(.05, function()
+        if display.portraitRefreshToken ~= token or not display.portrait then return end
+        display.portraitRefreshToken = nil
+        display.portrait:SetUnit(display.unit, true)
+    end)
+end
+
 function UnitFrames:OnEvent(event, unit, updateInfo)
     if event == "PLAYER_REGEN_ENABLED" then
         local pending = self.pending; self.pending = {}
         for _, action in pairs(pending) do action(self) end
         if self.pendingUnlock ~= nil then self:SetUnlocked(self.pendingUnlock) end
         for _, display in pairs(self.displays or {}) do
-            if display.portrait then display.portrait:SetUnit(display.unit, true) end
+            -- Do not clear/recreate PlayerModel during the combat transition;
+            -- this races OnModelLoaded and leaves the 2D fallback visible.
+            if display.portrait and display.portrait.unit ~= display.unit then
+                display.portrait:SetUnit(display.unit)
+            end
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
         self:RefreshDispelSet(); self:RefreshAll()
@@ -1756,13 +1781,14 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
     elseif event == "UPDATE_SHAPESHIFT_FORM" or event == "RUNE_POWER_UPDATE" then
         UpdateResourcePips(self.displays.player)
         if event == "UPDATE_SHAPESHIFT_FORM" and self.displays.player.portrait then
-            self.displays.player.portrait:SetUnit("player", true)
+            self:QueuePortraitRefresh(self.displays.player)
         end
         if event == "UPDATE_SHAPESHIFT_FORM" and self.displays.player.debuffRow then
             RefreshAuras(self.displays.player)
         end
     elseif event == "PLAYER_TARGET_CHANGED" then
         self:RefreshDisplay(self.displays.target, true)
+        self:QueuePortraitRefresh(self.displays.target)
     else
         local display = unit and self.displays[unit]
         if not display then return end
@@ -1782,7 +1808,7 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
                 if event == "UNIT_DISPLAYPOWER" and display.debuffRow then RefreshAuras(display) end
             end
         elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
-            display.portrait:SetUnit(display.unit, true)
+            self:QueuePortraitRefresh(display)
         else UpdateIdentity(display); UpdateState(display) end
     end
 end

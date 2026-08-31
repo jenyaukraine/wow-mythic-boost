@@ -156,6 +156,8 @@ function SettingsHub:RefreshDependencies()
     Enable("hideBags", MythicBoostDB.minimalUI == true)
     Enable("minimalUIMinimap", MythicBoostDB.minimalUI == true)
     Enable("minimalUIBottomDock", MythicBoostDB.minimalUI == true)
+    Enable("minimalUIActionBars", MythicBoostDB.minimalUI == true)
+    Enable("minimalUIStanceBar", MythicBoostDB.minimalUI == true)
     Enable("unitFramesHideBlizzard", MythicBoostDB.unitFrames and MythicBoostDB.unitFrames.enabled == true)
     local resources = MythicBoostDB.unitFrames and MythicBoostDB.unitFrames.showResourcePips ~= false
     Enable("frameEmptyResources", resources)
@@ -342,7 +344,9 @@ function SettingsHub:Build(_, parent)
         if JP.MinimalUI then JP.MinimalUI:SetEnabled(value) end
     end)
     self.checks.minimalUI:SetChecked(MythicBoostDB.minimalUI == true)
-    local minimalOptions = JP.Settings("minimalUIOptions", { minimap = true, bottomDock = false })
+    local minimalOptions = JP.Settings("minimalUIOptions", {
+        minimap = true, bottomDock = false, compactActionBars = false, hideStanceBar = false,
+    })
     self:AddStoredCheck(interfacePage, minimalOptions, "minimap",
         L("Оформлять миникарту MythicBoost"), 52, -152, function(value)
             if JP.MinimalUI then JP.MinimalUI:SetMinimapEnabled(value) end
@@ -351,7 +355,15 @@ function SettingsHub:Build(_, parent)
         L("Нижний HUD: чат, урон и исцеление"), 52, -186, function(value)
             if JP.BottomDock then JP.BottomDock:SetEnabled(value) end
         end, "minimalUIBottomDock")
-    self:AddCheck(interfacePage, "hideBags", L("Скрывать панель сумок"), 28, -220, function(value)
+    self:AddStoredCheck(interfacePage, minimalOptions, "compactActionBars",
+        L("Три ряда панелей способностей"), 52, -220, function()
+            if JP.MinimalUI then JP.MinimalUI:Apply() end
+        end, "minimalUIActionBars")
+    self:AddStoredCheck(interfacePage, minimalOptions, "hideStanceBar",
+        L("Скрывать панель стоек"), 52, -254, function()
+            if JP.MinimalUI then JP.MinimalUI:Apply() end
+        end, "minimalUIStanceBar")
+    self:AddCheck(interfacePage, "hideBags", L("Скрывать панель сумок"), 28, -288, function(value)
         if JP.MinimalUI then JP.MinimalUI:StyleBags(value) end
     end)
     local castBar = UI.CheckBox(interfacePage, L("Кастбар игрока в стиле Quartz"),
@@ -359,8 +371,8 @@ function SettingsHub:Build(_, parent)
             MythicBoostDB.castBar.enabled = value and true or false
             JP:ReloadModule("CastBar")
         end)
-    castBar:SetPoint("TOPLEFT", 28, -254)
-    castBar:SetPoint("TOPRIGHT", -28, -254)
+    castBar:SetPoint("TOPLEFT", 28, -322)
+    castBar:SetPoint("TOPRIGHT", -28, -322)
     self.checks.castBar = castBar
 
     -----------------------------------------------------------------------
@@ -576,13 +588,13 @@ function SettingsHub:Build(_, parent)
     lootHistory:SetPoint("TOPRIGHT", -28, -220)
     self.checks.lootHistory = lootHistory
 
-    Heading(interfacePage, L("РАСПОЛОЖЕНИЕ"), 28, -304, 764)
+    Heading(interfacePage, L("РАСПОЛОЖЕНИЕ"), 28, -372, 764)
     local interfaceMove = UI.CheckBox(interfacePage, L("Режим перемещения интерфейса"),
         MythicBoostDB.interfaceUnlocked == true, function(value)
             SettingsHub:SetInterfaceUnlocked(value)
         end)
-    interfaceMove:SetPoint("TOPLEFT", 28, -338)
-    interfaceMove:SetPoint("TOPRIGHT", -28, -338)
+    interfaceMove:SetPoint("TOPLEFT", 28, -406)
+    interfaceMove:SetPoint("TOPRIGHT", -28, -406)
     interfaceMove:HookScript("OnEnter", function(self)
         UI.Tooltip(self, L("Единый режим перемещения"),
             L("Разблокирует фреймы, кастбар, окно ключа и добычу, если она не привязана к курсору."),
@@ -710,6 +722,10 @@ function SettingsHub:Refresh()
             value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.minimap ~= false
         elseif key == "minimalUIBottomDock" then
             value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.bottomDock ~= false
+        elseif key == "minimalUIActionBars" then
+            value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.compactActionBars == true
+        elseif key == "minimalUIStanceBar" then
+            value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.hideStanceBar == true
         elseif key == "showRejectedResults" then value = MythicBoostDB.search and MythicBoostDB.search.showRejectedResults ~= false
         elseif key == "allowRejectedApplications" then value = MythicBoostDB.search and MythicBoostDB.search.allowRejectedApplications ~= false
         elseif key == "playerAnalysis" then value = MythicBoostDB.playerAnalysis and MythicBoostDB.playerAnalysis.enabled ~= false
