@@ -475,7 +475,7 @@ local function InitializeDatabase()
     db.positiveAuraTracker.sideGap = math.max(40, math.min(240, tonumber(db.positiveAuraTracker.sideGap) or 110))
     db.positiveAuraTracker.barSpacing = math.max(0, math.min(40, tonumber(db.positiveAuraTracker.barSpacing) or 12))
     db.positiveAuraTracker.colorPreset = math.max(1, math.min(6, tonumber(db.positiveAuraTracker.colorPreset) or 2))
-    db.positiveAuraTracker.texturePreset = math.max(1, math.min(2, tonumber(db.positiveAuraTracker.texturePreset) or 1))
+    db.positiveAuraTracker.texturePreset = math.max(1, math.min(3, tonumber(db.positiveAuraTracker.texturePreset) or 1))
     db.positiveAuraTracker.fontSize = math.max(12, math.min(48, tonumber(db.positiveAuraTracker.fontSize) or 24))
     db.positiveAuraTracker.pulseSpeed = math.max(.3, math.min(2, tonumber(db.positiveAuraTracker.pulseSpeed) or .8))
     db.rcLoot = type(db.rcLoot) == "table" and db.rcLoot or {}

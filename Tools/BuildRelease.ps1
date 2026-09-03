@@ -95,6 +95,7 @@ try {
         "Media\LootGlow.tga",
         "Media\AuraWingMask.tga",
         "Media\AuraLunarMask.tga",
+        "Media\AuraLunarOriginal.blp",
         "Media\XPerl_FrameBack.blp",
         "Media\XPerl_ThinEdge.blp"
     )

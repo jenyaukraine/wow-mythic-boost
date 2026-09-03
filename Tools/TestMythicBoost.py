@@ -1036,6 +1036,8 @@ def test_restricted_auras_use_targeted_friendly_lookup():
     assert 'Media\\AuraWingMask.tga' in (ROOT / "Tools/BuildRelease.ps1").read_text(encoding="utf-8")
     assert (ROOT / "MythicBoost/Media/AuraWingMask.tga").stat().st_size > 100_000
     assert (ROOT / "MythicBoost/Media/AuraLunarMask.tga").stat().st_size > 100_000
+    assert (ROOT / "MythicBoost/Media/AuraLunarOriginal.blp").stat().st_size > 40_000
+    assert 'Media\\AuraLunarOriginal.blp' in (ROOT / "Tools/BuildRelease.ps1").read_text(encoding="utf-8")
     assert not (ROOT / "MythicBoost/lunar.blp").exists()
     assert 'settings.barHeight * progress' in tracker
     assert 'icon.rightSide and 1 or 0' in tracker
@@ -1090,6 +1092,9 @@ def test_restricted_auras_use_targeted_friendly_lookup():
     assert len(rejected) == 1 and rejected[1] == "bad"
     assert "AuraLunarMask" in jp.PositiveAuraTracker.GetBarTexture(jp.PositiveAuraTracker)
     assert jp.PositiveAuraTracker.GetTextureName(jp.PositiveAuraTracker, 2) == "Вихрь"
+    assert jp.PositiveAuraTracker.GetTextureName(jp.PositiveAuraTracker, 3) == "Лунар"
+    jp.PositiveAuraTracker.SetTexturePreset(jp.PositiveAuraTracker, 3)
+    assert "AuraLunarOriginal" in jp.PositiveAuraTracker.GetBarTexture(jp.PositiveAuraTracker)
 
 
 if __name__ == "__main__":

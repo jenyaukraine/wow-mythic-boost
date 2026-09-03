@@ -615,7 +615,7 @@ function SettingsHub:Build(_, parent)
         end, "positiveAuraColor")
     PlaceAuraControl(auraColor, AURA_LEFT, -332)
     local auraTexture = self:AddStepper(auraPage, auraSettings, "texturePreset", L("Форма шкал"), false, -332,
-        1, 2, 1, function(value)
+        1, 3, 1, function(value)
             return JP.PositiveAuraTracker and JP.PositiveAuraTracker:GetTextureName(value) or tostring(value)
         end, function(value)
             if JP.PositiveAuraTracker then JP.PositiveAuraTracker:SetTexturePreset(value) end

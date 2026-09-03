@@ -30,9 +30,11 @@ local DEFAULTS = {
 
 local WING_TEXTURE = "Interface\\AddOns\\MythicBoost\\Media\\AuraWingMask"
 local LUNAR_TEXTURE = "Interface\\AddOns\\MythicBoost\\Media\\AuraLunarMask"
+local LUNAR_ORIGINAL_TEXTURE = "Interface\\AddOns\\MythicBoost\\Media\\AuraLunarOriginal"
 local TEXTURE_PRESETS = {
     { WING_TEXTURE, L("Крыло") },
     { LUNAR_TEXTURE, L("Вихрь") },
+    { LUNAR_ORIGINAL_TEXTURE, L("Лунар") },
 }
 local COLOR_PRESETS = {
     { 1.00, .78, .20, L("Золото") },
