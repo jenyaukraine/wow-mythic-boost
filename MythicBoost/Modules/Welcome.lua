@@ -3,7 +3,7 @@ local L = JP.L
 local Welcome = { rows = {} }
 local UI = JP.UI
 local C = UI.colors
-local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon"
+local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon.tga"
 
 local DEFAULT_WIDTH, DEFAULT_HEIGHT = 1320, 840
 -- Шесть вкладок требуют 12 + 6*146 = 888 пикселей, остальное отдаём под

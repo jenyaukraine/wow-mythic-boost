@@ -399,7 +399,12 @@ function PlayerTooltip:Create()
     -- module, which can happen after our ADDON_LOADED callback. A short,
     -- bounded retry catches that late construction without a permanent poll.
     if C_Timer and C_Timer.NewTicker then
-        self.raiderSkinTicker = C_Timer.NewTicker(.5, HookRaiderIOTooltips, 20)
+        local attemptsLeft = 20
+        self.raiderSkinTicker = C_Timer.NewTicker(.5, function()
+            HookRaiderIOTooltips()
+            attemptsLeft = attemptsLeft - 1
+            if attemptsLeft <= 0 then self.raiderSkinTicker = nil end
+        end, attemptsLeft)
     end
 
     HookSearchEntryTooltip(self)

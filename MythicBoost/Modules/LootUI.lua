@@ -7,16 +7,22 @@ local MAX_ROWS = 10
 -- XLoot держит строку высотой ровно в иконку плюс пара пикселей воздуха, а
 -- окно — узким: список добычи читают боковым зрением, и лишняя ширина только
 -- отнимает место у игрового экрана.
-local ROW_HEIGHT = 42
-local FRAME_WIDTH = 320
+local ROW_HEIGHT = 36
+local FRAME_WIDTH = 300
+local MAIN_FOOTER_HEIGHT = 20
 local MAX_ROLL_ROWS = 4
-local ROLL_ROW_HEIGHT = 64
-local ROLL_FRAME_WIDTH = 460
+local ROLL_HEADER_HEIGHT = 20
+local ROLL_ROW_HEIGHT = 50
+local ROLL_FRAME_WIDTH = 420
 local MAX_HISTORY_ROWS = 6
-local HISTORY_ROW_HEIGHT = 24
+local HISTORY_ROW_HEIGHT = 34
+local HISTORY_FOOTER_HEIGHT = 22
 local HISTORY_LIFETIME = 22
+local TEST_ROLL_ID = -2147483647
+local LOOT_GLASS_TEXTURE = "Interface\\AddOns\\MythicBoost\\Media\\LootGlass.tga"
+local LOOT_GLOW_TEXTURE = "Interface\\AddOns\\MythicBoost\\Media\\LootGlow.tga"
 local BLIZZARD_LOOT_EVENTS = { "LOOT_OPENED", "LOOT_CLOSED", "LOOT_SLOT_CLEARED" }
-local SETTINGS_DEFAULTS = { enabled = false, atCursor = true, showRolls = true, showHistory = true }
+local SETTINGS_DEFAULTS = { enabled = true, atCursor = true, showRolls = true, showHistory = true }
 
 local function Settings()
     return JP.Settings("lootUI", SETTINGS_DEFAULTS) or {}
@@ -74,7 +80,14 @@ local function ItemMeta(link, currencyID, quest, slotType)
         detail = detail .. "  -  " .. itemLevel
     end
 
-    local bindLabel = bindType == (LE_ITEM_BIND_ON_ACQUIRE or 1) and L("БоП") or ""
+    local bindLabel = ""
+    if bindType == (LE_ITEM_BIND_ON_ACQUIRE or 1) then
+        bindLabel = L("БоП")
+    elseif bindType == (LE_ITEM_BIND_ON_EQUIP or 2) then
+        bindLabel = L("БоЕ")
+    elseif bindType == (LE_ITEM_BIND_ON_USE or 3) then
+        bindLabel = L("БоИ")
+    end
     return detail, bindLabel
 end
 
@@ -168,7 +181,6 @@ function LootUI:Refresh()
             row.count:SetText(data.quantity > 1 and ("×" .. data.quantity) or "")
             local r, g, b = QualityColor(data.quality, data.quest)
             local quality = tonumber(SafeValue(data.quality, 1)) or 1
-            local glowAlpha = quality >= 2 and .82 or .30
             row:SetBackdropBorderColor(r, g, b, quality >= 2 and 1 or .70)
             row.name:SetTextColor(r, g, b, 1)
             -- Тот же цвет на контуре иконки, но приглушённее рамки строки:
@@ -177,11 +189,9 @@ function LootUI:Refresh()
             -- Заливка гаснет к правому краю: под названием фон обязан остаться
             -- тёмным, иначе светлый текст по светлому цвету качества пропадает.
             row.tint:SetGradient("HORIZONTAL",
-                CreateColor(r, g, b, quality >= 2 and .34 or .07),
-                CreateColor(r, g, b, quality >= 2 and .12 or 0))
-            for _, glow in ipairs(row.glows) do
-                glow:SetColorTexture(r, g, b, glowAlpha)
-            end
+                CreateColor(r, g, b, quality >= 2 and .18 or .025),
+                CreateColor(r, g, b, quality >= 2 and .04 or 0))
+            row.glowFrame:SetVertexColor(r, g, b, quality >= 2 and .30 or .04)
             row:SetAlpha(data.locked and .48 or 1)
             row:Show()
         else
@@ -197,7 +207,8 @@ function LootUI:Refresh()
     else
         self.frame.page:Hide()
     end
-    self.frame:SetHeight(8 + shown * ROW_HEIGHT + (#slots > MAX_ROWS and 18 or 0))
+    self.frame.title:SetShown(#slots <= MAX_ROWS)
+    self.frame:SetHeight(4 + shown * ROW_HEIGHT + MAIN_FOOTER_HEIGHT)
 end
 
 function LootUI:ShowLoot()
@@ -270,11 +281,13 @@ function LootUI:RestoreBlizzard()
 end
 
 local function HideDefaultRollFrame(frame)
-    if not frame or not LootUI.blizzardRollsSuppressed then return end
-    frame:Hide()
+    if not frame or not LootUI.blizzardRollsSuppressed or frame.__mbRollHideActive then return end
+    frame.__mbRollHideActive = true
+    pcall(frame.Hide, frame)
     if _G.GroupLootContainer and type(_G.GroupLootContainer_RemoveFrame) == "function" then
         pcall(_G.GroupLootContainer_RemoveFrame, _G.GroupLootContainer, frame)
     end
+    frame.__mbRollHideActive = nil
 end
 
 function LootUI:SuppressBlizzardRolls()
@@ -311,44 +324,31 @@ end
 
 function LootUI:BuildRow(index)
     local row = CreateFrame("Button", nil, self.frame, "BackdropTemplate")
-    row:SetHeight(40)
-    row:SetPoint("TOPLEFT", 4, -4 - (index - 1) * ROW_HEIGHT)
-    row:SetPoint("TOPRIGHT", index == 1 and -30 or -4, -4 - (index - 1) * ROW_HEIGHT)
+    row:SetHeight(34)
+    row:SetPoint("TOPLEFT", 2, -2 - (index - 1) * ROW_HEIGHT)
+    row:SetPoint("TOPRIGHT", -2, -2 - (index - 1) * ROW_HEIGHT)
     row:RegisterForClicks("AnyUp")
     row:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 2,
+        edgeSize = 1,
     })
     row.baseAlpha = .98
     row:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], row.baseAlpha)
 
-    -- Четыре ADD-полосы дают тот самый XLoot glow: он остаётся прямоугольным,
-    -- повторяет цвет качества и не размывает иконку/текст поверх строки.
-    row.glows = {}
-    local function Glow(pointA, pointB, xA, yA, xB, yB)
-        local glow = row:CreateTexture(nil, "BACKGROUND", nil, -1)
-        glow:SetTexture("Interface\\Buttons\\WHITE8X8")
-        glow:SetBlendMode("ADD")
-        glow:SetPoint(pointA, row, pointA, xA, yA)
-        glow:SetPoint(pointB, row, pointB, xB, yB)
-        row.glows[#row.glows + 1] = glow
-        return glow
-    end
-    local top = Glow("TOPLEFT", "TOPRIGHT", -3, 3, 3, 3); top:SetHeight(4)
-    local bottom = Glow("BOTTOMLEFT", "BOTTOMRIGHT", -3, -3, 3, -3); bottom:SetHeight(4)
-    local left = Glow("TOPLEFT", "BOTTOMLEFT", -3, 3, -3, -3); left:SetWidth(4)
-    local right = Glow("TOPRIGHT", "BOTTOMRIGHT", 3, 3, 3, -3); right:SetWidth(4)
-
-    -- XLoot's row is a black glass capsule, not a light card. A very quiet
-    -- vertical sheen separates neighboring entries without heavy white bars.
+    -- Оригинальная AI-текстура MythicBoost: тёмное стекло без заимствованных
+    -- файлов XLoot. Растягивается по строке и сохраняет читаемый правый край.
     row.glass = row:CreateTexture(nil, "BACKGROUND", nil, 1)
     row.glass:SetPoint("TOPLEFT", 1, -1)
     row.glass:SetPoint("BOTTOMRIGHT", -1, 1)
-    row.glass:SetColorTexture(1, 1, 1, 1)
-    row.glass:SetGradient("VERTICAL",
-        CreateColor(.005, .008, .012, 1),
-        CreateColor(.25, .25, .25, .88))
+    row.glass:SetTexture(LOOT_GLASS_TEXTURE)
+    row.glass:SetVertexColor(.40, .46, .52, .82)
+
+    row.glowFrame = row:CreateTexture(nil, "BACKGROUND", nil, 2)
+    row.glowFrame:SetPoint("TOPLEFT", -1, 1)
+    row.glowFrame:SetPoint("BOTTOMRIGHT", 1, -1)
+    row.glowFrame:SetTexture(LOOT_GLOW_TEXTURE)
+    row.glowFrame:SetBlendMode("ADD")
 
     -- Главная примета XLoot: цвет качества не только на рамке, но и заливкой,
     -- утекающей от левого края в темноту. Именно она позволяет опознать
@@ -362,7 +362,7 @@ function LootUI:BuildRow(index)
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetPoint("TOPLEFT", 2, -2)
     row.icon:SetPoint("BOTTOMLEFT", 2, 2)
-    row.icon:SetWidth(36)
+    row.icon:SetWidth(30)
     row.icon:SetTexCoord(.07, .93, .07, .93)
 
     -- Подпись XLoot: цвет качества стоит не только на рамке строки, но и
@@ -374,14 +374,14 @@ function LootUI:BuildRow(index)
     row.iconEdge:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
 
     row.name = UI.Text(row, "GameFontNormal", "")
-    row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -3)
-    row.name:SetPoint("TOPRIGHT", -7, -3)
+    row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, -1)
+    row.name:SetPoint("TOPRIGHT", -5, -1)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
 
     row.detail = UI.Text(row, "GameFontNormalSmall", "", { 1, .84, 0, 1 })
-    row.detail:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -20)
-    row.detail:SetPoint("TOPRIGHT", row, "TOPRIGHT", -7, -20)
+    row.detail:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, -17)
+    row.detail:SetPoint("TOPRIGHT", row, "TOPRIGHT", -5, -17)
     row.detail:SetJustifyH("LEFT")
     row.detail:SetWordWrap(false)
 
@@ -435,14 +435,15 @@ local function PlaceAuxiliaryFrame(frame, key, defaultPoint, defaultX, defaultY)
     end
 end
 
-local function BuildAuxiliaryHeader(frame, title, positionKey)
-    frame.header = CreateFrame("Button", nil, frame)
+local function BuildAuxiliaryHeader(frame, title, positionKey, height)
+    height = height or 25
+    frame.header = CreateFrame("Button", nil, frame, "BackdropTemplate")
     frame.header:SetPoint("TOPLEFT", 1, -1)
     frame.header:SetPoint("TOPRIGHT", -1, -1)
-    frame.header:SetHeight(25)
+    frame.header:SetHeight(height)
     frame.header:RegisterForDrag("LeftButton")
     frame.header:SetScript("OnDragStart", function()
-        if MythicBoostDB.interfaceUnlocked then frame:StartMoving() end
+        if MythicBoostDB.interfaceUnlocked or frame.testMoveUnlocked then frame:StartMoving() end
     end)
     frame.header:SetScript("OnDragStop", function()
         frame:StopMovingOrSizing()
@@ -451,17 +452,50 @@ local function BuildAuxiliaryHeader(frame, title, positionKey)
     frame.title = UI.Text(frame.header, "GameFontNormal", title, C.accent)
     frame.title:SetPoint("LEFT", 8, 0)
     frame.line = UI.Line(frame, C.accent)
-    frame.line:SetPoint("TOPLEFT", 1, -25)
-    frame.line:SetPoint("TOPRIGHT", -1, -25)
+    frame.line:SetPoint("TOPLEFT", 1, -height)
+    frame.line:SetPoint("TOPRIGHT", -1, -height)
 end
 
+local ROLL_CHOICE_TEXTURES = {
+    [0] = "Interface\\Buttons\\UI-GroupLoot-Pass-Up",
+    [1] = "Interface\\Buttons\\UI-GroupLoot-Dice-Up",
+    [2] = "Interface\\Buttons\\UI-GroupLoot-Coin-Up",
+    [3] = "Interface\\Buttons\\UI-GroupLoot-DE-Up",
+    [4] = "Interface\\MINIMAP\\TRACKING\\Transmogrifier",
+}
+
 local function BuildRollChoice(row, label, rollType)
-    local button = UI.Button(row, label, 66, 22, rollType == 1)
+    local button = CreateFrame("Button", nil, row, "BackdropTemplate")
+    button:SetSize(24, 24)
+    button:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    button:SetBackdropColor(.015, .020, .026, .96)
+    button:SetBackdropBorderColor(.14, .42, .52, .96)
+    button.icon = button:CreateTexture(nil, "ARTWORK")
+    button.icon:SetPoint("TOPLEFT", 2, -2)
+    button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    button.icon:SetTexture(ROLL_CHOICE_TEXTURES[rollType])
+    button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
+    button.highlight:SetAllPoints(button.icon)
+    button.highlight:SetColorTexture(.12, .78, 1, .22)
     button.rollType = rollType
+    button.choiceLabel = label
     button:SetFrameLevel(row:GetFrameLevel() + 4)
+    button:SetScript("OnEnter", function(owner)
+        GameTooltip:SetOwner(owner, "ANCHOR_TOP")
+        GameTooltip:SetText(owner.choiceLabel)
+        GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", GameTooltip_Hide)
     button:SetScript("OnClick", function(owner)
         if not row.rollID or row.selectionMade then return end
-        local ok = type(RollOnLoot) == "function" and pcall(RollOnLoot, row.rollID, owner.rollType)
+        -- A preview roll is local-only: it exercises layout and choice states
+        -- but must never call Blizzard's protected loot API.
+        local ok = row.testRoll == true
+            or (type(RollOnLoot) == "function" and pcall(RollOnLoot, row.rollID, owner.rollType))
         if not ok then return end
         row.selectionMade = owner.rollType
         if LootUI.rolls and LootUI.rolls[row.rollID] then
@@ -471,8 +505,13 @@ local function BuildRollChoice(row, label, rollType)
             choice:SetEnabled(false)
             choice:SetAlpha(choice == owner and 1 or .32)
         end
-        row.result:SetText(owner.label:GetText())
+        row.result:SetText(owner.choiceLabel)
         row.result:Show()
+        if row.testRoll == true and C_Timer then
+            C_Timer.After(.35, function()
+                if row.rollID == TEST_ROLL_ID then LootUI:RemoveRoll(TEST_ROLL_ID) end
+            end)
+        end
     end)
     row.choices[#row.choices + 1] = button
     return button
@@ -480,35 +519,36 @@ end
 
 function LootUI:BuildRollRow(index)
     local row = CreateFrame("Button", nil, self.rollFrame, "BackdropTemplate")
-    row:SetHeight(58)
-    row:SetPoint("TOPLEFT", 7, -31 - (index - 1) * ROLL_ROW_HEIGHT)
-    row:SetPoint("TOPRIGHT", -7, -31 - (index - 1) * ROLL_ROW_HEIGHT)
+    row:SetHeight(46)
+    row:SetPoint("TOPLEFT", 5, -(ROLL_HEADER_HEIGHT + 3) - (index - 1) * ROLL_ROW_HEIGHT)
+    row:SetPoint("TOPRIGHT", -5, -(ROLL_HEADER_HEIGHT + 3) - (index - 1) * ROLL_ROW_HEIGHT)
     row:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
-    row:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], .97)
+    row:SetBackdropColor(.004, .007, .011, .98)
     row.progress = CreateFrame("StatusBar", nil, row)
-    row.progress:SetPoint("TOPLEFT", 1, -1)
+    row.progress:SetPoint("BOTTOMLEFT", 1, 1)
     row.progress:SetPoint("BOTTOMRIGHT", -1, 1)
+    row.progress:SetHeight(2)
     row.progress:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
-    row.progress:SetStatusBarColor(.74, .25, .025, .30)
+    row.progress:SetStatusBarColor(C.accent[1], C.accent[2], C.accent[3], .90)
     row.progress:SetFrameLevel(row:GetFrameLevel())
     row.icon = row:CreateTexture(nil, "ARTWORK", nil, 3)
-    row.icon:SetPoint("TOPLEFT", 5, -5)
-    row.icon:SetSize(47, 47)
+    row.icon:SetPoint("TOPLEFT", 3, -3)
+    row.icon:SetSize(40, 40)
     row.icon:SetTexCoord(.07, .93, .07, .93)
     row.name = UI.Text(row, "GameFontNormal", "", C.text)
-    row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -2)
-    row.name:SetPoint("RIGHT", -58, 0)
+    row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 7, -1)
+    row.name:SetPoint("RIGHT", -48, 0)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
-    row.timer = UI.Text(row, "GameFontNormalLarge", "", C.text)
-    row.timer:SetPoint("TOPRIGHT", -7, -4)
+    row.timer = UI.Text(row, "GameFontNormal", "", C.text)
+    row.timer:SetPoint("TOPRIGHT", -6, -3)
     row.timer:SetJustifyH("RIGHT")
     row.result = UI.Text(row, "GameFontNormalSmall", "", C.accent)
-    row.result:SetPoint("BOTTOMRIGHT", -8, 7)
+    row.result:SetPoint("BOTTOMRIGHT", -6, 5)
     row.result:Hide()
     row.choices = {}
     BuildRollChoice(row, L("НУЖНО"), 1)
@@ -536,11 +576,15 @@ function LootUI:RefreshRolls()
     if not settings.showRolls then self.rollFrame:Hide(); return end
     local active = {}
     for _, data in pairs(self.rolls or {}) do active[#active + 1] = data end
-    table.sort(active, function(a, b) return (a.deadline or 0) < (b.deadline or 0) end)
+    table.sort(active, function(a, b)
+        if a.test ~= b.test then return a.test == true end
+        return (a.deadline or 0) < (b.deadline or 0)
+    end)
     for index, row in ipairs(self.rollRows) do
         local data = active[index]
         if data then
             row.rollID, row.link, row.selectionMade = data.rollID, data.link, data.selected
+            row.testRoll = data.test == true
             row.icon:SetTexture(data.icon)
             row.name:SetText((data.count or 1) > 1 and (data.name .. "  ×" .. data.count) or data.name)
             row.progress:SetMinMaxValues(0, math.max(.1, data.duration or 1))
@@ -560,25 +604,53 @@ function LootUI:RefreshRolls()
                 choice:SetEnabled(not data.selected)
                 choice:SetAlpha(data.selected and (data.selected == choice.rollType and 1 or .32) or 1)
                 if availability[choiceIndex] == true then visibleChoices[#visibleChoices + 1] = choice end
-                if data.selected == choice.rollType then row.result:SetText(choice.label:GetText()) end
+                if data.selected == choice.rollType then row.result:SetText(choice.choiceLabel) end
             end
-            local choiceWidth, choiceGap = 61, 4
+            local choiceWidth, choiceGap = 24, 1
             for choiceIndex, choice in ipairs(visibleChoices) do
-                choice:SetWidth(choiceWidth)
+                choice:SetSize(choiceWidth, choiceWidth)
                 choice:ClearAllPoints()
                 choice:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT",
-                    8 + (choiceIndex - 1) * (choiceWidth + choiceGap), 0)
+                    7 + (choiceIndex - 1) * (choiceWidth + choiceGap), 2)
             end
             row.result:SetShown(data.selected ~= nil)
             row:Show()
         else
-            row.rollID, row.link, row.selectionMade = nil, nil, nil
+            row.rollID, row.link, row.selectionMade, row.testRoll = nil, nil, nil, nil
             row:Hide()
         end
     end
     local shown = math.min(#active, MAX_ROLL_ROWS)
-    self.rollFrame:SetHeight(32 + shown * ROLL_ROW_HEIGHT)
+    self.rollFrame:SetHeight(ROLL_HEADER_HEIGHT + 6 + shown * ROLL_ROW_HEIGHT)
     self.rollFrame:SetShown(shown > 0)
+end
+
+function LootUI:ShowTestRoll()
+    local settings = Settings()
+    if settings.enabled == false or settings.showRolls == false then
+        JP:Print(L("Сначала включи встроенное окно добычи и голосование за групповую добычу."))
+        return false
+    end
+    self:Create()
+    self.rolls = self.rolls or {}
+    local duration = 300
+    self.rolls[TEST_ROLL_ID] = {
+        rollID = TEST_ROLL_ID,
+        test = true,
+        icon = 134400,
+        name = L("Тестовый предмет — перетащи заголовок"),
+        count = 1,
+        quality = 4,
+        canNeed = true,
+        canGreed = true,
+        canDisenchant = true,
+        canTransmog = true,
+        duration = duration,
+        deadline = GetTime() + duration,
+    }
+    self.rollFrame.testMoveUnlocked = true
+    self:RefreshRolls()
+    return true
 end
 
 function LootUI:StartRoll(rollID, rollTime)
@@ -635,6 +707,7 @@ end
 function LootUI:RemoveRoll(rollID)
     if self.rolls then self.rolls[rollID] = nil end
     if self.pendingRollAttempts then self.pendingRollAttempts[rollID] = nil end
+    if rollID == TEST_ROLL_ID and self.rollFrame then self.rollFrame.testMoveUnlocked = nil end
     self:RefreshRolls()
 end
 
@@ -673,6 +746,17 @@ local LOOT_AWARD_FORMATS = {
     -- Добыча ДРУГИХ игроков: LOOT_ITEM без суффикса _SELF — это
     -- чужой подбор, и в группе его видеть полезно.
     "LOOT_ITEM", "LOOT_ITEM_MULTIPLE",
+    -- Собственная добыча нужна именно в мониторе: основное окно закрывается
+    -- сразу после подбора, а короткая история остаётся ещё несколько секунд.
+    "LOOT_ITEM_SELF", "LOOT_ITEM_SELF_MULTIPLE",
+    "LOOT_ITEM_PUSHED_SELF", "LOOT_ITEM_PUSHED_SELF_MULTIPLE",
+    "LOOT_ITEM_CREATED_SELF", "LOOT_ITEM_CREATED_SELF_MULTIPLE",
+}
+
+local OWN_LOOT_FORMATS = {
+    "LOOT_ITEM_SELF", "LOOT_ITEM_SELF_MULTIPLE",
+    "LOOT_ITEM_PUSHED_SELF", "LOOT_ITEM_PUSHED_SELF_MULTIPLE",
+    "LOOT_ITEM_CREATED_SELF", "LOOT_ITEM_CREATED_SELF_MULTIPLE",
 }
 
 local function MatchesGlobalFormat(message, format)
@@ -696,67 +780,146 @@ local function IsLootAwardMessage(message)
     return false
 end
 
-function LootUI:AddHistoryMessage(message)
+local function IsOwnLootMessage(message)
+    for _, globalName in ipairs(OWN_LOOT_FORMATS) do
+        if MatchesGlobalFormat(message, _G[globalName]) then return true end
+    end
+    return false
+end
+
+function LootUI:AddHistoryMessage(message, event)
     if not Settings().showHistory or IsExternalMonitorLoaded() or type(message) ~= "string"
         or issecretvalue(message) then return end
-    local link = message:match("(|c%x+|Hitem:.-|h%[.-%]|h|r)") or message:match("(|Hitem:.-|h%[.-%]|h)")
-    if not link or not IsLootAwardMessage(message) then return end
-    local icon = 134400
+    local itemLink = message:match("(|c%x+|Hitem:.-|h%[.-%]|h|r)")
+        or message:match("(|Hitem:.-|h%[.-%]|h)")
+    local currencyLink = message:match("(|c%x+|Hcurrency:.-|h%[.-%]|h|r)")
+        or message:match("(|Hcurrency:.-|h%[.-%]|h)")
+    if event == "CHAT_MSG_LOOT" and (not itemLink or not IsLootAwardMessage(message)) then return end
+    if event == "CHAT_MSG_CURRENCY" and not currencyLink then return end
+    if event ~= "CHAT_MSG_LOOT" and event ~= "CHAT_MSG_MONEY" and event ~= "CHAT_MSG_CURRENCY" then return end
+
+    local link = itemLink or currencyLink
+    local icon = event == "CHAT_MSG_MONEY" and 133784 or 134400
     local quality = 1
-    local itemInfoInstant = C_Item and C_Item.GetItemInfoInstant or _G.GetItemInfoInstant
-    if type(itemInfoInstant) == "function" then
-        local ok, _, _, _, _, texture = pcall(itemInfoInstant, link)
-        if ok then icon = SafeValue(texture, icon) end
+    if itemLink then
+        local itemInfoInstant = C_Item and C_Item.GetItemInfoInstant or _G.GetItemInfoInstant
+        if type(itemInfoInstant) == "function" then
+            local ok, _, _, _, _, texture = pcall(itemInfoInstant, itemLink)
+            if ok then icon = SafeValue(texture, icon) end
+        end
+        local itemInfo = C_Item and C_Item.GetItemInfo or _G.GetItemInfo
+        if type(itemInfo) == "function" then
+            local ok, _, _, itemQuality = pcall(itemInfo, itemLink)
+            if ok then quality = SafeValue(itemQuality, quality) end
+        end
+    elseif currencyLink and C_CurrencyInfo and type(C_CurrencyInfo.GetCurrencyInfoFromLink) == "function" then
+        local ok, info = pcall(C_CurrencyInfo.GetCurrencyInfoFromLink, currencyLink)
+        if ok and type(info) == "table" then icon = SafeValue(info.iconFileID, icon) end
     end
-    local itemInfo = C_Item and C_Item.GetItemInfo or _G.GetItemInfo
-    if type(itemInfo) == "function" then
-        local ok, _, _, itemQuality = pcall(itemInfo, link)
-        if ok then quality = SafeValue(itemQuality, quality) end
+    local displayMessage = message
+    if event == "CHAT_MSG_LOOT" and itemLink and IsOwnLootMessage(message) then
+        -- Системный текст «Ваша добыча: …» в компактной строке только
+        -- повторяет очевидное. Цветная ссылка уже содержит имя и качество.
+        displayMessage = itemLink
     end
     self.history = self.history or {}
     table.insert(self.history, 1, {
-        message = message, link = link, icon = icon, quality = quality,
+        message = displayMessage, link = link, icon = icon, quality = quality,
         expires = GetTime() + HISTORY_LIFETIME,
     })
     while #self.history > MAX_HISTORY_ROWS do table.remove(self.history) end
     self:RefreshHistory()
-    if C_Timer then C_Timer.After(HISTORY_LIFETIME + .1, function() LootUI:RefreshHistory() end) end
+    self:ScheduleHistoryExpiry()
+end
+
+-- Loot chat can arrive in large bursts.  A timer per message survived for the
+-- full 22-second lifetime even though the monitor retains at most six rows.
+-- Keep one timer aimed at the oldest visible expiry and reschedule only after
+-- it fires; memory and callback count are therefore bounded by one.
+function LootUI:ScheduleHistoryExpiry()
+    if self.historyExpiryQueued or not C_Timer or type(C_Timer.After) ~= "function" then return end
+    local nextExpiry
+    for _, entry in ipairs(self.history or {}) do
+        local expires = tonumber(entry.expires)
+        if expires and (not nextExpiry or expires < nextExpiry) then nextExpiry = expires end
+    end
+    if not nextExpiry then return end
+    self.historyExpiryQueued = true
+    C_Timer.After(math.max(.1, nextExpiry - GetTime() + .1), function()
+        LootUI.historyExpiryQueued = nil
+        LootUI:RefreshHistory()
+        if Settings().showHistory then LootUI:ScheduleHistoryExpiry() end
+    end)
 end
 
 function LootUI:RefreshHistory()
     if not self.historyFrame then return end
     if not Settings().showHistory then self.historyFrame:Hide(); return end
+    self.history = self.history or {}
+    local display = self.monitorPreview or self.history
     local now = GetTime()
-    for index = #self.history, 1, -1 do
-        if (self.history[index].expires or 0) <= now then table.remove(self.history, index) end
+    if not self.monitorPreview then
+        for index = #self.history, 1, -1 do
+            if (self.history[index].expires or 0) <= now then table.remove(self.history, index) end
+        end
     end
+    local maximumWidth = 220
     for index, row in ipairs(self.historyRows) do
-        local data = self.history[index]
+        local data = display[index]
         if data then
             row.link = data.link
             row.icon:SetTexture(data.icon)
             row.text:SetText(data.message)
             local r, g, b = QualityColor(data.quality)
             row:SetBackdropBorderColor(r, g, b, .90)
+            row.glow:SetVertexColor(r, g, b, (data.quality or 1) >= 2 and .26 or .04)
+            local textWidth = type(row.text.GetStringWidth) == "function" and row.text:GetStringWidth() or 180
+            local rowWidth = math.max(150, math.min(430, 48 + (textWidth or 180)))
+            row:SetWidth(rowWidth)
+            maximumWidth = math.max(maximumWidth, rowWidth)
             row:Show()
         else
             row.link = nil
             row:Hide()
         end
     end
-    local shown = math.min(#self.history, MAX_HISTORY_ROWS)
-    self.historyFrame:SetHeight(32 + shown * HISTORY_ROW_HEIGHT)
+    local shown = math.min(#display, MAX_HISTORY_ROWS)
+    self.historyFrame:SetWidth(maximumWidth)
+    self.historyFrame:SetHeight(HISTORY_FOOTER_HEIGHT + 4 + shown * HISTORY_ROW_HEIGHT)
     self.historyFrame:SetShown(shown > 0)
+end
+
+function LootUI:SetUnlocked(unlocked)
+    if not self.frame then self:Create() end
+    if not self.historyFrame then return end
+    self.historyFrame.testMoveUnlocked = unlocked == true
+    if unlocked and Settings().showHistory ~= false then
+        self.monitorPreview = {
+            { message = (type(GetMoneyString) == "function" and GetMoneyString(71261) or "7 Gold 12 Silver 61 Copper"), icon = 133784, quality = 1 },
+            { message = L("Игрок") .. "  [" .. L("Тестовый предмет") .. "]", icon = 134400, quality = 4 },
+            { message = "[" .. L("Добыча") .. "]  ×15", icon = 463447, quality = 2 },
+        }
+    else
+        self.monitorPreview = nil
+    end
+    self:RefreshHistory()
 end
 
 function LootUI:BuildAuxiliaryFrames()
     local rollFrame = CreateFrame("Frame", "MythicBoostLootRollFrame", UIParent, "BackdropTemplate")
-    rollFrame:SetSize(ROLL_FRAME_WIDTH, 96)
+    rollFrame:SetSize(ROLL_FRAME_WIDTH, ROLL_HEADER_HEIGHT + 6 + ROLL_ROW_HEIGHT)
     rollFrame:SetFrameStrata("DIALOG")
     rollFrame:SetClampedToScreen(true)
     rollFrame:SetMovable(true)
-    UI.Backdrop(rollFrame, { C.surface[1], C.surface[2], C.surface[3], .96 }, { .08, .34, .42, .98 })
-    BuildAuxiliaryHeader(rollFrame, L("ГОЛОСОВАНИЕ ЗА ДОБЫЧУ"), "rollPosition")
+    UI.Backdrop(rollFrame, { .004, .007, .011, .97 }, { .08, .58, .72, .98 })
+    BuildAuxiliaryHeader(rollFrame, L("БРОСКИ ГРУППЫ"), "rollPosition", ROLL_HEADER_HEIGHT)
+    rollFrame.close = UI.CloseButton(rollFrame)
+    rollFrame.close:SetSize(18, 18)
+    rollFrame.close:SetPoint("TOPRIGHT", -1, -1)
+    rollFrame.close:SetScript("OnClick", function()
+        if LootUI.rolls and LootUI.rolls[TEST_ROLL_ID] then LootUI:RemoveRoll(TEST_ROLL_ID) end
+        rollFrame:Hide()
+    end)
     -- Над кастбаром: тот стоит на BOTTOM 250, и на 260 окна перекрывались.
     PlaceAuxiliaryFrame(rollFrame, "rollPosition", "BOTTOM", 0, 330)
     self.rollFrame, self.rollRows, self.rolls = rollFrame, {}, {}
@@ -764,13 +927,51 @@ function LootUI:BuildAuxiliaryFrames()
     rollFrame:SetScript("OnUpdate", function(_, elapsed) LootUI:UpdateRollTimers(elapsed) end)
     rollFrame:Hide()
 
-    local historyFrame = CreateFrame("Frame", "MythicBoostLootHistoryFrame", UIParent, "BackdropTemplate")
-    historyFrame:SetSize(430, 96)
+    local historyFrame = CreateFrame("Frame", "MythicBoostLootHistoryFrame", UIParent)
+    historyFrame:SetSize(300, 96)
     historyFrame:SetFrameStrata("HIGH")
     historyFrame:SetClampedToScreen(true)
     historyFrame:SetMovable(true)
-    UI.Backdrop(historyFrame, { C.surface[1], C.surface[2], C.surface[3], .94 }, { .08, .34, .42, .94 })
-    BuildAuxiliaryHeader(historyFrame, L("БРОСКИ ГРУППЫ"), "historyPosition")
+    -- Монитор — не большое окно, а стопка отдельных коротких строк. Нижняя
+    -- плашка остаётся на месте, новые записи растут вверх как в старых UI.
+    historyFrame.header = CreateFrame("Button", nil, historyFrame, "BackdropTemplate")
+    historyFrame.header:SetPoint("BOTTOMLEFT", 0, 0)
+    historyFrame.header:SetPoint("BOTTOMRIGHT", 0, 0)
+    historyFrame.header:SetHeight(HISTORY_FOOTER_HEIGHT)
+    historyFrame.header:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    historyFrame.header:SetBackdropColor(.018, .014, .009, .96)
+    historyFrame.header:SetBackdropBorderColor(.34, .25, .08, .92)
+    historyFrame.header:RegisterForDrag("LeftButton")
+    historyFrame.header:SetScript("OnDragStart", function()
+        if MythicBoostDB.interfaceUnlocked or historyFrame.testMoveUnlocked then historyFrame:StartMoving() end
+    end)
+    historyFrame.header:SetScript("OnDragStop", function()
+        historyFrame:StopMovingOrSizing()
+        SaveAuxiliaryPosition(historyFrame, "historyPosition")
+    end)
+    historyFrame.header.glass = historyFrame.header:CreateTexture(nil, "BACKGROUND")
+    historyFrame.header.glass:SetAllPoints()
+    historyFrame.header.glass:SetTexture(LOOT_GLASS_TEXTURE)
+    historyFrame.header.glass:SetVertexColor(.42, .34, .18, .54)
+    historyFrame.title = UI.Text(historyFrame.header, "GameFontNormalSmall", L("МОНИТОР ДОБЫЧИ"), { 1, .78, .10, 1 })
+    historyFrame.title:SetPoint("CENTER", 0, 0)
+    historyFrame.close = CreateFrame("Button", nil, historyFrame.header, "BackdropTemplate")
+    historyFrame.close:SetSize(18, 18)
+    historyFrame.close:SetPoint("RIGHT", -2, 0)
+    historyFrame.close:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    historyFrame.close:SetBackdropColor(.28, .015, .015, 1)
+    historyFrame.close:SetBackdropBorderColor(.72, .48, .02, 1)
+    historyFrame.close.glyph = UI.Text(historyFrame.close, "GameFontNormal", "×", { 1, .82, 0, 1 })
+    historyFrame.close.glyph:SetAllPoints()
+    historyFrame.close:SetScript("OnClick", function() historyFrame:Hide() end)
     -- Нижняя полоса, над левой (чатовой) частью дока. Раньше окно вставало
     -- в левый верх экрана — прямо в игровую зону, которую HUD обязан
     -- оставлять чистой: весь интерфейс живёт снизу и справа.
@@ -779,14 +980,24 @@ function LootUI:BuildAuxiliaryFrames()
     for index = 1, MAX_HISTORY_ROWS do
         local row = CreateFrame("Button", nil, historyFrame, "BackdropTemplate")
         row:SetHeight(32)
-        row:SetPoint("TOPLEFT", 7, -30 - (index - 1) * HISTORY_ROW_HEIGHT)
-        row:SetPoint("TOPRIGHT", -7, -30 - (index - 1) * HISTORY_ROW_HEIGHT)
+        row:SetWidth(260)
+        row:SetPoint("BOTTOMLEFT", 0, HISTORY_FOOTER_HEIGHT + 2 + (index - 1) * HISTORY_ROW_HEIGHT)
         UI.Backdrop(row, { .008, .012, .020, .88 }, { .06, .22, .28, .86 })
+        row.glass = row:CreateTexture(nil, "BACKGROUND", nil, 1)
+        row.glass:SetPoint("TOPLEFT", 1, -1)
+        row.glass:SetPoint("BOTTOMRIGHT", -1, 1)
+        row.glass:SetTexture(LOOT_GLASS_TEXTURE)
+        row.glass:SetVertexColor(.38, .43, .48, .80)
+        row.glow = row:CreateTexture(nil, "BACKGROUND", nil, 2)
+        row.glow:SetPoint("TOPLEFT", -1, 1)
+        row.glow:SetPoint("BOTTOMRIGHT", 1, -1)
+        row.glow:SetTexture(LOOT_GLOW_TEXTURE)
+        row.glow:SetBlendMode("ADD")
         row.icon = row:CreateTexture(nil, "ARTWORK")
         row.icon:SetPoint("TOPLEFT", 3, -3)
         row.icon:SetSize(26, 26)
         row.icon:SetTexCoord(.07, .93, .07, .93)
-        row.text = UI.Text(row, "GameFontHighlightSmall", "", C.text)
+        row.text = UI.Text(row, "GameFontHighlight", "", C.text)
         row.text:SetPoint("LEFT", row.icon, "RIGHT", 7, 0)
         row.text:SetPoint("RIGHT", -6, 0)
         row.text:SetJustifyH("LEFT")
@@ -812,7 +1023,7 @@ function LootUI:RegisterLootEvents()
     for _, event in ipairs({
         "LOOT_READY", "LOOT_OPENED", "LOOT_SLOT_CLEARED", "LOOT_CLOSED",
         "START_LOOT_ROLL", "CANCEL_LOOT_ROLL", "CANCEL_ALL_LOOT_ROLLS",
-        "CHAT_MSG_LOOT", "PLAYER_ENTERING_WORLD",
+        "CHAT_MSG_LOOT", "CHAT_MSG_MONEY", "CHAT_MSG_CURRENCY", "PLAYER_ENTERING_WORLD",
     }) do
         self.events:RegisterEvent(event)
     end
@@ -829,12 +1040,23 @@ function LootUI:Create()
     frame:EnableMouseWheel(true)
     UI.Backdrop(frame, { .025, .025, .030, .98 }, { .30, .30, .32, 1 })
 
-    -- XLoot has no title bar: entries begin at the top edge. The invisible
-    -- footer remains only as a drag handle while interface moving is enabled.
-    frame.header = CreateFrame("Button", nil, frame)
+    -- Строки начинаются у верхнего края, а компактная нижняя плашка служит
+    -- одновременно подписью, местом закрытия и ручкой перемещения.
+    frame.header = CreateFrame("Button", nil, frame, "BackdropTemplate")
     frame.header:SetPoint("BOTTOMLEFT", 1, 1)
     frame.header:SetPoint("BOTTOMRIGHT", -1, 1)
-    frame.header:SetHeight(22)
+    frame.header:SetHeight(MAIN_FOOTER_HEIGHT - 2)
+    frame.header:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    frame.header:SetBackdropColor(.015, .012, .008, .96)
+    frame.header:SetBackdropBorderColor(.28, .22, .10, .90)
+    frame.headerGlass = frame.header:CreateTexture(nil, "BACKGROUND")
+    frame.headerGlass:SetAllPoints()
+    frame.headerGlass:SetTexture(LOOT_GLASS_TEXTURE)
+    frame.headerGlass:SetVertexColor(.42, .34, .18, .52)
     frame.header:RegisterForDrag("LeftButton")
     frame.header:SetScript("OnDragStart", function()
         if not Settings().atCursor and MythicBoostDB.interfaceUnlocked then frame:StartMoving() end
@@ -843,20 +1065,18 @@ function LootUI:Create()
         frame:StopMovingOrSizing()
         LootUI:SavePosition()
     end)
-    -- Kept as hidden compatibility fields for Refresh; XLoot does not repeat
-    -- a title or item counter above every corpse.
-    frame.title = UI.Text(frame.header, "GameFontNormalSmall", "", C.accent)
-    frame.title:Hide()
+    frame.title = UI.Text(frame.header, "GameFontNormalSmall", L("ДОБЫЧА"), { 1, .78, .12, 1 })
+    frame.title:SetPoint("CENTER", 0, 0)
     frame.counter = UI.Text(frame.header, "GameFontHighlight", "", C.muted)
     frame.counter:Hide()
     local close = CreateFrame("Button", nil, frame, "BackdropTemplate")
-    close:SetSize(22, 22)
-    close:SetPoint("TOPRIGHT", -4, -4)
+    close:SetSize(18, 18)
+    close:SetPoint("BOTTOMRIGHT", -1, 1)
     close:SetFrameLevel(frame:GetFrameLevel() + 20)
     close:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 2,
+        edgeSize = 1,
     })
     close:SetBackdropColor(.28, .015, .015, 1)
     close:SetBackdropBorderColor(.72, .48, .02, 1)
@@ -876,7 +1096,7 @@ function LootUI:Create()
         if type(CloseLoot) == "function" then CloseLoot() else frame:Hide() end
     end)
     frame.page = UI.Text(frame, "GameFontHighlightSmall", "", C.muted)
-    frame.page:SetPoint("BOTTOM", 0, 3)
+    frame.page:SetPoint("CENTER", frame.header, "CENTER", 0, 0)
 
     self.frame, self.rows = frame, {}
     for index = 1, MAX_ROWS do self:BuildRow(index) end
@@ -921,7 +1141,8 @@ function LootUI:Create()
         elseif event == "CANCEL_ALL_LOOT_ROLLS" then
             wipe(LootUI.rolls or {})
             LootUI:RefreshRolls()
-        elseif event == "CHAT_MSG_LOOT" then LootUI:AddHistoryMessage(arg1)
+        elseif event == "CHAT_MSG_LOOT" or event == "CHAT_MSG_MONEY" or event == "CHAT_MSG_CURRENCY" then
+            LootUI:AddHistoryMessage(arg1, event)
         elseif event == "PLAYER_ENTERING_WORLD" then
             LootUI:SuppressBlizzardRolls()
             C_Timer.After(.4, function() LootUI:RecoverRolls() end)
@@ -960,7 +1181,7 @@ function LootUI:Disable()
         for _, event in ipairs({
             "LOOT_READY", "LOOT_OPENED", "LOOT_SLOT_CLEARED", "LOOT_CLOSED",
             "START_LOOT_ROLL", "CANCEL_LOOT_ROLL", "CANCEL_ALL_LOOT_ROLLS",
-            "CHAT_MSG_LOOT", "PLAYER_ENTERING_WORLD",
+            "CHAT_MSG_LOOT", "CHAT_MSG_MONEY", "CHAT_MSG_CURRENCY", "PLAYER_ENTERING_WORLD",
         }) do
             self.events:UnregisterEvent(event)
         end

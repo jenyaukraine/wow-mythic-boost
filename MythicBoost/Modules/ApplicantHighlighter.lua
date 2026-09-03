@@ -149,8 +149,15 @@ local function SkinPanel(viewer)
 
     local inset = viewer.Inset
     if inset then
-        if inset.Bg and inset.Bg.SetColorTexture then inset.Bg:SetColorTexture(UI.Unpack(C.raised)) end
+        if inset.Bg and inset.Bg.SetColorTexture then inset.Bg:SetColorTexture(.008, .014, .020, .98) end
         if inset.NineSlice then HideRegion(inset.NineSlice) end
+
+        local headerShade = inset:CreateTexture(nil, "BACKGROUND", nil, 1)
+        headerShade:SetPoint("TOPLEFT", 1, -1)
+        headerShade:SetPoint("TOPRIGHT", -1, -1)
+        headerShade:SetHeight(42)
+        headerShade:SetColorTexture(.018, .032, .044, .98)
+        viewer.__mbHeaderShade = headerShade
 
         local topLine = inset:CreateTexture(nil, "OVERLAY")
         topLine:SetPoint("TOPLEFT", 1, -1)
@@ -158,6 +165,20 @@ local function SkinPanel(viewer)
         topLine:SetHeight(2)
         topLine:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .75)
         viewer.__mbTopLine = topLine
+
+        viewer.__mbEdges = {}
+        local function Edge(pointA, pointB, width, height)
+            local edge = inset:CreateTexture(nil, "OVERLAY")
+            edge:SetPoint(pointA, inset, pointA, 0, 0)
+            edge:SetPoint(pointB, inset, pointB, 0, 0)
+            if width then edge:SetWidth(width) end
+            if height then edge:SetHeight(height) end
+            edge:SetColorTexture(.06, .28, .36, .95)
+            viewer.__mbEdges[#viewer.__mbEdges + 1] = edge
+        end
+        Edge("TOPLEFT", "BOTTOMLEFT", 1)
+        Edge("TOPRIGHT", "BOTTOMRIGHT", 1)
+        Edge("BOTTOMLEFT", "BOTTOMRIGHT", nil, 1)
 
     end
 
@@ -170,7 +191,9 @@ local function SkinPanel(viewer)
                     if region:GetObjectType() == "Texture" then
                         HideRegion(region)
                     elseif region:GetObjectType() == "FontString" then
-                        region:SetTextColor(UI.Unpack(C.accent))
+                        region:SetTextColor(.28, .82, 1, 1)
+                        region:SetShadowColor(0, 0, 0, 1)
+                        region:SetShadowOffset(1, -1)
                     end
                 end
             end
@@ -202,8 +225,20 @@ local function SkinRow(button, index)
             end
         end
     end
-    local tone = index % 2 == 0 and C.rowAlt or C.row
-    button.__mbRowBg:SetColorTexture(UI.Unpack(tone))
+    if not button.__mbRowGlass then
+        local glass = button:CreateTexture(nil, "BACKGROUND", nil, 2)
+        glass:SetPoint("TOPLEFT", 1, -1)
+        glass:SetPoint("BOTTOMRIGHT", -1, 1)
+        glass:SetColorTexture(1, 1, 1, 1)
+        button.__mbRowGlass = glass
+    end
+    if index % 2 == 0 then
+        button.__mbRowBg:SetColorTexture(.018, .028, .038, .98)
+    else
+        button.__mbRowBg:SetColorTexture(.010, .018, .026, .98)
+    end
+    button.__mbRowGlass:SetGradient("VERTICAL",
+        CreateColor(.02, .035, .045, .90), CreateColor(.12, .14, .16, .30))
 end
 
 local function ApplicantIDForButton(button)
@@ -263,21 +298,33 @@ function ApplicantHighlighter:Create()
         local scrollBox = viewer and viewer.ScrollBox
         if not scrollBox or self.created then return end
         self.created = true
+        if self.loader then
+            self.loader:UnregisterAllEvents()
+            self.loader:SetScript("OnEvent", nil)
+            self.loader = nil
+        end
 
         -- ScrollBoxUtil приходит от Raider.IO, а не от Blizzard. Без него
         -- обходимся периодическим обновлением, вместо падения модуля.
+        local viewCallbackInstalled = false
         if ScrollBoxUtil and type(ScrollBoxUtil.OnViewFramesChanged) == "function" then
-            pcall(ScrollBoxUtil.OnViewFramesChanged, ScrollBoxUtil, scrollBox, function() self:QueueRefresh() end)
+            viewCallbackInstalled = pcall(ScrollBoxUtil.OnViewFramesChanged,
+                ScrollBoxUtil, scrollBox, function() self:QueueRefresh() end)
         end
 
         viewer:HookScript("OnShow", function() self:QueueRefresh() end)
-        viewer:HookScript("OnUpdate", function(_, elapsed)
-            self.refreshElapsed = (self.refreshElapsed or 0) + elapsed
-            if self.refreshElapsed >= REFRESH_INTERVAL then
-                self.refreshElapsed = 0
-                self:Refresh()
-            end
-        end)
+        -- Poll only on clients/addon combinations where no frame-change
+        -- callback exists.  With ScrollBoxUtil installed, events now drive
+        -- refreshes and the applicant window performs no idle per-frame work.
+        if not viewCallbackInstalled then
+            viewer:HookScript("OnUpdate", function(_, elapsed)
+                self.refreshElapsed = (self.refreshElapsed or 0) + elapsed
+                if self.refreshElapsed >= REFRESH_INTERVAL then
+                    self.refreshElapsed = 0
+                    self:Refresh()
+                end
+            end)
+        end
 
         self.events = CreateFrame("Frame")
         for _, event in ipairs({ "LFG_LIST_APPLICANT_LIST_UPDATED", "LFG_LIST_APPLICANT_UPDATED", "GROUP_ROSTER_UPDATE", "PLAYER_ROLES_ASSIGNED" }) do

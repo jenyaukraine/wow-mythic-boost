@@ -98,6 +98,7 @@ end
 local IsTrue = UI.SafeBoolean
 
 local SafeAura = UI.SafeAura
+local SafeUnitAura = UI.SafeUnitAura
 
 -- Каст всегда на себя. Все эти баффы групповые — один каст закрывает всех в
 -- радиусе, и цель для них роли не играет. Без [@player] заклинание уходит в
@@ -341,14 +342,22 @@ function SmartClick:MissingBuff()
     for _, unit in ipairs(units) do
         if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and UnitIsConnected(unit) then
             local found = false
-            for index = 1, 40 do
-                local data, blocked = SafeAura(unit, index, "HELPFUL")
-                -- Ауры закрыты целиком — подсказка по баффу сейчас невозможна,
-                -- и перебирать оставшиеся тридцать девять слотов незачем.
-                if blocked then return nil, true end
-                if not data then break end
-                local spellID = data.spellId
-                if not issecretvalue(spellID) and wanted[spellID] then found = true; break end
+            if SafeUnitAura then
+                for spellID in pairs(wanted) do
+                    local data, blocked = SafeUnitAura(unit, spellID)
+                    if blocked then return nil, true end
+                    if data then found = true; break end
+                end
+            else
+                -- Compatibility fallback for clients predating the targeted
+                -- API. UI.SafeAura itself refuses this path in restricted combat.
+                for index = 1, 40 do
+                    local data, blocked = SafeAura(unit, index, "HELPFUL")
+                    if blocked then return nil, true end
+                    if not data then break end
+                    local spellID = data.spellId
+                    if not issecretvalue(spellID) and wanted[spellID] then found = true; break end
+                end
             end
             -- Вне радиуса бафф не наложить, и в список такие не идут: иначе
             -- кнопка горела бы вечно из-за отставшего на другом конце данжа.

@@ -2,7 +2,7 @@ local _, JP = ...
 local L = JP.L
 local FrameSwitch = {}
 local UI = JP.UI
-local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon"
+local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon.tga"
 
 -- MythicBoost больше не перехватывает штатную кнопку «Поиск группы».
 -- Она всегда открывает Blizzard Group Finder, а переход в наше окно живёт
@@ -77,7 +77,13 @@ end
 
 function FrameSwitch:Install()
     EnsureButton(self)
-    return self.button ~= nil
+    local installed = self.button ~= nil
+    if installed and self.loader then
+        self.loader:UnregisterAllEvents()
+        self.loader:SetScript("OnEvent", nil)
+        self.loader = nil
+    end
+    return installed
 end
 
 function FrameSwitch:Create()

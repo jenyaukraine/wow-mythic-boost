@@ -55,6 +55,38 @@ local function ColumnHeading(parent, text, right, y)
     return holder
 end
 
+local function TextBox(parent, width, height, placeholder)
+    local holder = UI.Panel(parent, C.field, C.line)
+    holder:SetSize(width, height or 28)
+    local field = CreateFrame("EditBox", nil, holder)
+    field:SetPoint("TOPLEFT", 8, -2)
+    field:SetPoint("BOTTOMRIGHT", -8, 2)
+    field:SetFontObject("GameFontHighlightSmall")
+    field:SetAutoFocus(false)
+    field:SetTextInsets(2, 2, 0, 0)
+    field:SetJustifyH("LEFT")
+    field:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    field:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    if placeholder then
+        field:SetScript("OnEditFocusGained", function(self)
+            if self.placeholderShown then
+                self:SetText(""); self.placeholderShown = nil
+                self:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+            end
+        end)
+        field:SetScript("OnEditFocusLost", function(self)
+            if self:GetText() == "" then
+                self:SetText(placeholder); self:SetTextColor(C.faint[1], C.faint[2], C.faint[3], 1)
+                self.placeholderShown = true
+            end
+        end)
+        field:SetText(placeholder)
+        field:SetTextColor(C.faint[1], C.faint[2], C.faint[3], 1)
+        field.placeholderShown = true
+    end
+    return field, holder
+end
+
 function SettingsHub:AddStoredCheck(parent, settings, key, label, x, y, callback, checkKey)
     local check = UI.CheckBox(parent, label, settings[key], function(value)
         settings[key] = value and true or false
@@ -155,8 +187,6 @@ function SettingsHub:RefreshDependencies()
     Enable("merchantSummary", convenience.repair == true or convenience.sellJunk == true)
     Enable("hideBags", MythicBoostDB.minimalUI == true)
     Enable("minimalUIMinimap", MythicBoostDB.minimalUI == true)
-    Enable("minimalUIBottomDock", MythicBoostDB.minimalUI == true)
-    Enable("minimalUIActionBars", MythicBoostDB.minimalUI == true)
     Enable("minimalUIStanceBar", MythicBoostDB.minimalUI == true)
     Enable("unitFramesHideBlizzard", MythicBoostDB.unitFrames and MythicBoostDB.unitFrames.enabled == true)
     local resources = MythicBoostDB.unitFrames and MythicBoostDB.unitFrames.showResourcePips ~= false
@@ -168,6 +198,10 @@ function SettingsHub:RefreshDependencies()
     Enable("lootAtCursor", lootEnabled)
     Enable("lootRolls", lootEnabled)
     Enable("lootHistory", lootEnabled)
+    if self.lootTestButton then
+        self.lootTestButton:SetEnabled(lootEnabled
+            and MythicBoostDB.lootUI and MythicBoostDB.lootUI.showRolls ~= false)
+    end
     Enable("allowRejectedApplications", MythicBoostDB.search and MythicBoostDB.search.showRejectedResults ~= false)
     Enable("nameplateMarkers", MythicBoostDB.playerAnalysis and MythicBoostDB.playerAnalysis.enabled ~= false)
     Enable("errorKeep", MythicBoostDB.errorGuard and MythicBoostDB.errorGuard.enabled == true)
@@ -178,9 +212,12 @@ function SettingsHub:SetInterfaceUnlocked(value)
     MythicBoostDB.interfaceUnlocked = unlocked
     JP.Settings("unitFrames").unlocked = unlocked
     JP.Settings("castBar").unlocked = unlocked
+    JP.Settings("positiveAuraTracker").unlocked = unlocked
     self:GetSettings().movableKeystoneFrame = unlocked
     if JP.UnitFrames then JP.UnitFrames:SetUnlocked(unlocked) end
     if JP.CastBar then JP.CastBar:SetUnlocked(unlocked) end
+    if JP.LootUI then JP.LootUI:SetUnlocked(unlocked) end
+    if JP.PositiveAuraTracker then JP.PositiveAuraTracker:SetUnlocked(unlocked) end
     if JP.Convenience then JP.Convenience:SetupKeystoneFrame() end
 end
 
@@ -235,6 +272,8 @@ function SettingsHub:Build(_, parent)
         L("Общий внешний вид и расположение элементов"))
     local framesPage = MakePage("frames", L("КАПСУЛА И РЕСУРСЫ"),
         L("Точная настройка карточек игрока и цели, ресурсов и аур"))
+    local auraPage = MakePage("auras", L("ТРЕКЕР БАФОВ"),
+        L("Мини-трекер разрешённых положительных аур на персонаже"))
     local screenshotsPage = MakePage("screenshots", L("РЕЖИМ СКРИНШОТОВ"),
         L("Пять готовых анонимных сцен для страницы аддона"))
     local lootPage = MakePage("loot", L("ДОБЫЧА"),
@@ -256,6 +295,7 @@ function SettingsHub:Build(_, parent)
         { "groups", L("Группы и ключи") },
         { "interface", L("Интерфейс") },
         { "frames", L("Капсула") },
+        { "auras", L("Трекер бафов") },
         { "screenshots", L("Скриншоты") },
         { "loot", L("Добыча") },
         { "system", L("Система") },
@@ -345,25 +385,17 @@ function SettingsHub:Build(_, parent)
     end)
     self.checks.minimalUI:SetChecked(MythicBoostDB.minimalUI == true)
     local minimalOptions = JP.Settings("minimalUIOptions", {
-        minimap = true, bottomDock = false, compactActionBars = false, hideStanceBar = false,
+        minimap = true, hideStanceBar = false,
     })
     self:AddStoredCheck(interfacePage, minimalOptions, "minimap",
         L("Оформлять миникарту MythicBoost"), 52, -152, function(value)
             if JP.MinimalUI then JP.MinimalUI:SetMinimapEnabled(value) end
         end, "minimalUIMinimap")
-    self:AddStoredCheck(interfacePage, minimalOptions, "bottomDock",
-        L("Нижний HUD: чат, урон и исцеление"), 52, -186, function(value)
-            if JP.BottomDock then JP.BottomDock:SetEnabled(value) end
-        end, "minimalUIBottomDock")
-    self:AddStoredCheck(interfacePage, minimalOptions, "compactActionBars",
-        L("Три ряда панелей способностей"), 52, -220, function()
-            if JP.MinimalUI then JP.MinimalUI:Apply() end
-        end, "minimalUIActionBars")
     self:AddStoredCheck(interfacePage, minimalOptions, "hideStanceBar",
-        L("Скрывать панель стоек"), 52, -254, function()
+        L("Скрывать панель стоек"), 52, -186, function()
             if JP.MinimalUI then JP.MinimalUI:Apply() end
         end, "minimalUIStanceBar")
-    self:AddCheck(interfacePage, "hideBags", L("Скрывать панель сумок"), 28, -288, function(value)
+    self:AddCheck(interfacePage, "hideBags", L("Скрывать панель сумок"), 28, -220, function(value)
         if JP.MinimalUI then JP.MinimalUI:StyleBags(value) end
     end)
     local castBar = UI.CheckBox(interfacePage, L("Кастбар игрока в стиле Quartz"),
@@ -371,8 +403,8 @@ function SettingsHub:Build(_, parent)
             MythicBoostDB.castBar.enabled = value and true or false
             JP:ReloadModule("CastBar")
         end)
-    castBar:SetPoint("TOPLEFT", 28, -322)
-    castBar:SetPoint("TOPRIGHT", -28, -322)
+    castBar:SetPoint("TOPLEFT", 28, -254)
+    castBar:SetPoint("TOPRIGHT", -28, -254)
     self.checks.castBar = castBar
 
     -----------------------------------------------------------------------
@@ -380,15 +412,15 @@ function SettingsHub:Build(_, parent)
     -- are HUD decisions, not incidental toggles in the global interface page.
     -----------------------------------------------------------------------
     local unitFrameSettings = JP.Settings("unitFrames", {
-        enabled = false, hideBlizzard = true, unlocked = false,
-        scale = 1, opacity = 1,
+        enabled = true, hideBlizzard = true, unlocked = false,
+        scale = 1.5, opacity = 1,
         showHealthText = true, showPowerText = true,
         animatedPortrait = true, showBadges = true,
         badgesUnlocked = false, badgeShape = 1,
-        alwaysShowTarget = false,
+        alwaysShowTarget = true,
         showPlayerAuras = true, showTargetAuras = true,
-        aurasAbove = false,
-        showResourcePips = true, showEmptyResources = true,
+        aurasAbove = true,
+        showResourcePips = true, showEmptyResources = false,
         resourceHeight = 10, resourceGap = 2, resourceOpacity = 1,
     })
     local function ApplyFrameSettings()
@@ -473,27 +505,281 @@ function SettingsHub:Build(_, parent)
     self:AddColumnCheck(framesPage, unitFrameSettings, "showTargetAuras",
         L("Показывать ауры цели"), true, -414, ApplyFrameSettings, "frameTargetAuras", 24)
     self:AddStepper(framesPage, unitFrameSettings, "badgeShape", L("Форма значков"), true, -452,
-        1, 3, 1, function(value)
-            return ({ L("Круг"), L("Квадрат"), L("Ромб") })[value] or tostring(value)
+        1, 4, 1, function(value)
+            return ({ L("Круг"), L("Квадрат"), L("Ромб"), L("Нет") })[value] or tostring(value)
         end, ApplyFrameSettings, "frameBadgeShape")
     local resetAppearance = UI.Button(framesPage, L("Вернуть оформление по умолчанию"), 238, 28)
     resetAppearance:SetPoint("TOPRIGHT", framesPage, "TOPRIGHT", -28, -490)
     resetAppearance:SetScript("OnClick", function()
         local defaults = {
-            scale = 1, opacity = 1,
+            scale = 1.5, opacity = 1,
             showHealthText = true, showPowerText = true,
             animatedPortrait = true, showBadges = true,
             badgesUnlocked = false, badgeShape = 1,
-            alwaysShowTarget = false,
+            alwaysShowTarget = true,
             showPlayerAuras = true, showTargetAuras = true,
-            aurasAbove = false,
-            showResourcePips = true, showEmptyResources = true,
+            aurasAbove = true,
+            showResourcePips = true, showEmptyResources = false,
             resourceHeight = 10, resourceGap = 2, resourceOpacity = 1,
         }
         for key, value in pairs(defaults) do unitFrameSettings[key] = value end
         ApplyFrameSettings()
         SettingsHub:Refresh()
     end)
+
+    -----------------------------------------------------------------------
+    -- Positive aura tracker. Every runtime lookup is by an exact spell ID;
+    -- it never enumerates the player's global aura list in restricted combat.
+    -----------------------------------------------------------------------
+    local auraSettings = JP.Settings("positiveAuraTracker", {
+        enabled = false, spellIDs = {}, showWhenMissing = false,
+        showSeconds = true, showStacks = true, showIcon = true,
+        barHeight = 190, barWidth = 72, sideGap = 110, barSpacing = 12,
+        colorPreset = 2, texturePreset = 1, fontSize = 24,
+        pulse = true, pulseSpeed = .8, maxIcons = 8, iconOverride = nil,
+        x = 0, y = -20, unlocked = false,
+    })
+    -- The old free-form texture field encouraged pasting square spell icons as
+    -- tall bar art. Remove that one-time override now that forms are presets.
+    if auraSettings.textureInputRevision ~= 1 then
+        auraSettings.barTexture = nil
+        auraSettings.textureInputRevision = 1
+    end
+    -- Leave a real gutter before the preview at narrow UI scales. The fixed
+    -- stepper controls end at the row edge, so even the '+' button remains
+    -- completely outside the preview border.
+    local AURA_LEFT, AURA_RIGHT, AURA_CONTROL_WIDTH = 28, 286, 240
+    local function PlaceAuraControl(control, x, y, width)
+        control:ClearAllPoints()
+        control:SetPoint("TOPLEFT", x, y)
+        control:SetWidth(width or AURA_CONTROL_WIDTH)
+        return control
+    end
+    Heading(auraPage, L("ОТОБРАЖЕНИЕ"), 28, -84, 764)
+    local auraEnabled = self:AddStoredCheck(auraPage, auraSettings, "enabled",
+        L("Включить мини-трекер положительных аур"), 28, -118, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:Refresh() end
+        end, "positiveAuraEnabled")
+    PlaceAuraControl(auraEnabled, AURA_LEFT, -118, 506)
+    local auraMissing = self:AddStoredCheck(auraPage, auraSettings, "showWhenMissing",
+        L("Предупреждать, если бафа нет"), 28, -152, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:Refresh() end
+        end, "positiveAuraMissing")
+    PlaceAuraControl(auraMissing, AURA_LEFT, -152)
+    local auraSeconds = self:AddStoredCheck(auraPage, auraSettings, "showSeconds",
+        L("Показывать оставшиеся секунды"), 28, -186, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:Refresh() end
+        end, "positiveAuraSeconds")
+    PlaceAuraControl(auraSeconds, AURA_LEFT, -186)
+    local auraPulse = self:AddStoredCheck(auraPage, auraSettings, "pulse",
+        L("Плавное переливание"), AURA_RIGHT, -152, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:Refresh() end
+        end, "positiveAuraPulse")
+    PlaceAuraControl(auraPulse, AURA_RIGHT, -152)
+    local auraStacks = self:AddStoredCheck(auraPage, auraSettings, "showStacks",
+        L("Показывать количество зарядов"), 28, -220, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:Refresh() end
+        end, "positiveAuraStacks")
+    PlaceAuraControl(auraStacks, AURA_LEFT, -220)
+    local auraIcon = self:AddStoredCheck(auraPage, auraSettings, "showIcon",
+        L("Иконка заклинания на шкале"), AURA_RIGHT, -186, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:Refresh() end
+        end, "positiveAuraIcon")
+    PlaceAuraControl(auraIcon, AURA_RIGHT, -186)
+    local auraHeight = self:AddStepper(auraPage, auraSettings, "barHeight", L("Высота шкалы"), false, -260,
+        100, 300, 10, function(value) return tostring(value) .. " px" end, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ApplySettings() end
+        end, "positiveAuraHeight")
+    PlaceAuraControl(auraHeight, AURA_LEFT, -260)
+    local auraWidth = self:AddStepper(auraPage, auraSettings, "barWidth", L("Ширина шкалы"), false, -260,
+        36, 120, 6, function(value) return tostring(value) .. " px" end, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ApplySettings() end
+        end, "positiveAuraWidth")
+    PlaceAuraControl(auraWidth, AURA_RIGHT, -260)
+    local auraSideGap = self:AddStepper(auraPage, auraSettings, "sideGap", L("Отступ от персонажа"), false, -296,
+        40, 240, 10, function(value) return tostring(value) .. " px" end, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ApplySettings() end
+        end, "positiveAuraSideGap")
+    PlaceAuraControl(auraSideGap, AURA_LEFT, -296)
+    local auraSpacing = self:AddStepper(auraPage, auraSettings, "barSpacing", L("Между шкалами"), false, -296,
+        0, 40, 2, function(value) return tostring(value) .. " px" end, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ApplySettings() end
+        end, "positiveAuraBarSpacing")
+    PlaceAuraControl(auraSpacing, AURA_RIGHT, -296)
+    local auraColor = self:AddStepper(auraPage, auraSettings, "colorPreset", L("Цвет шкал"), false, -332,
+        1, 6, 1, function(value)
+            return JP.PositiveAuraTracker and JP.PositiveAuraTracker:GetColorName(value) or tostring(value)
+        end, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ApplySettings(); JP.PositiveAuraTracker:Refresh() end
+            if SettingsHub.RefreshAuraPreview then SettingsHub:RefreshAuraPreview() end
+        end, "positiveAuraColor")
+    PlaceAuraControl(auraColor, AURA_LEFT, -332)
+    local auraTexture = self:AddStepper(auraPage, auraSettings, "texturePreset", L("Форма шкал"), false, -332,
+        1, 2, 1, function(value)
+            return JP.PositiveAuraTracker and JP.PositiveAuraTracker:GetTextureName(value) or tostring(value)
+        end, function(value)
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:SetTexturePreset(value) end
+            if SettingsHub.RefreshAuraPreview then SettingsHub:RefreshAuraPreview() end
+        end, "positiveAuraTexture")
+    PlaceAuraControl(auraTexture, AURA_RIGHT, -332)
+    local auraFontSize = self:AddStepper(auraPage, auraSettings, "fontSize", L("Размер секунд"), false, -368,
+        12, 48, 2, function(value) return tostring(value) .. " px" end, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ApplySettings() end
+            if SettingsHub.RefreshAuraPreview then SettingsHub:RefreshAuraPreview() end
+        end, "positiveAuraFontSize")
+    PlaceAuraControl(auraFontSize, AURA_LEFT, -368)
+    local auraPulseSpeed = self:AddStepper(auraPage, auraSettings, "pulseSpeed", L("Скорость переливания"), false, -368,
+        .3, 2, .1, function(value) return ("%.1f c"):format(value) end, function()
+            if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ApplySettings() end
+        end, "positiveAuraPulseSpeed")
+    PlaceAuraControl(auraPulseSpeed, AURA_RIGHT, -368)
+
+    local previewPanel = UI.Panel(auraPage, C.field, C.line)
+    previewPanel:SetSize(150, 240)
+    previewPanel:SetPoint("TOPRIGHT", -28, -84)
+    local previewTitle = UI.Text(previewPanel, "GameFontNormalSmall", L("ПРЕДПРОСМОТР"), C.muted)
+    previewTitle:SetPoint("TOP", 0, -9)
+    local previewLeft = previewPanel:CreateTexture(nil, "ARTWORK")
+    previewLeft:SetSize(56, 168)
+    previewLeft:SetPoint("BOTTOMLEFT", 12, 31)
+    previewLeft:SetBlendMode("ADD")
+    previewLeft:SetAlpha(.16)
+    local previewLeftFill = previewPanel:CreateTexture(nil, "OVERLAY")
+    previewLeftFill:SetSize(56, 109)
+    previewLeftFill:SetPoint("BOTTOMLEFT", 12, 31)
+    previewLeftFill:SetBlendMode("ADD")
+    previewLeftFill:SetTexCoord(0, 1, .35, 1)
+    local previewRight = previewPanel:CreateTexture(nil, "ARTWORK")
+    previewRight:SetSize(56, 168)
+    previewRight:SetPoint("BOTTOMRIGHT", -12, 31)
+    previewRight:SetBlendMode("ADD")
+    previewRight:SetTexCoord(1, 0, 0, 1)
+    previewRight:SetAlpha(.16)
+    local previewRightFill = previewPanel:CreateTexture(nil, "OVERLAY")
+    previewRightFill:SetSize(56, 109)
+    previewRightFill:SetPoint("BOTTOMRIGHT", -12, 31)
+    previewRightFill:SetBlendMode("ADD")
+    previewRightFill:SetTexCoord(1, 0, .35, 1)
+    local previewSeconds = UI.Text(previewPanel, "GameFontNormalHuge", "35", C.text)
+    previewSeconds:SetPoint("CENTER", 0, -4)
+    previewSeconds:SetShadowColor(0, 0, 0, 1)
+    previewSeconds:SetShadowOffset(2, -2)
+    local previewCaption = UI.Text(previewPanel, "GameFontHighlightSmall", L("65% времени"), C.muted)
+    previewCaption:SetPoint("BOTTOM", 0, 8)
+    function self:RefreshAuraPreview()
+        local colors = {
+            { 1.00, .78, .20 }, { .20, .82, 1.00 }, { .32, 1.00, .48 },
+            { .72, .34, 1.00 }, { 1.00, .30, .18 }, { 1.00, 1.00, 1.00 },
+        }
+        local color = colors[tonumber(auraSettings.colorPreset) or 2] or colors[2]
+        local texture = JP.PositiveAuraTracker and JP.PositiveAuraTracker:GetBarTexture()
+            or "Interface\\AddOns\\MythicBoost\\Media\\AuraWingMask"
+        previewLeft:SetTexture(texture); previewRight:SetTexture(texture)
+        previewLeftFill:SetTexture(texture); previewRightFill:SetTexture(texture)
+        previewLeft:SetVertexColor(color[1], color[2], color[3], 1)
+        previewRight:SetVertexColor(color[1], color[2], color[3], 1)
+        previewLeftFill:SetVertexColor(color[1], color[2], color[3], 1)
+        previewRightFill:SetVertexColor(color[1], color[2], color[3], 1)
+        previewSeconds:SetFont("Fonts\\FRIZQT__.TTF", tonumber(auraSettings.fontSize) or 24, "OUTLINE")
+    end
+    previewPanel:SetScript("OnUpdate", function(_, elapsed)
+        previewPanel.elapsed = (previewPanel.elapsed or 0) + elapsed
+        if previewPanel.elapsed < .05 then return end
+        previewPanel.elapsed = 0
+        if auraSettings.pulse == false then
+            previewLeftFill:SetAlpha(1); previewRightFill:SetAlpha(1)
+            return
+        end
+        local speed = math.max(.3, tonumber(auraSettings.pulseSpeed) or .8)
+        local wave = .5 + .5 * math.cos((GetTime() % speed) / speed * math.pi * 2)
+        local alpha = .68 + .32 * wave
+        previewLeftFill:SetAlpha(alpha); previewRightFill:SetAlpha(alpha)
+    end)
+    self:RefreshAuraPreview()
+
+    Heading(auraPage, L("СПИСОК ЗАКЛИНАНИЙ"), 28, -414, 764)
+    local spellInput, spellInputHolder = TextBox(auraPage, 270, 30,
+        L("ID, ссылка или точное имя; несколько — через запятую"))
+    spellInputHolder:SetPoint("TOPLEFT", 28, -448)
+    local addSpell = UI.Button(auraPage, L("Добавить"), 82, 30, true)
+    addSpell:SetPoint("LEFT", spellInputHolder, "RIGHT", 8, 0)
+    local scanSpell = UI.Button(auraPage, L("Сканировать"), 132, 30, true)
+    scanSpell:SetPoint("LEFT", addSpell, "RIGHT", 8, 0)
+    local eclipsePreset = UI.Button(auraPage, L("Затмение"), 94, 30)
+    eclipsePreset:SetPoint("LEFT", scanSpell, "RIGHT", 8, 0)
+    local clearSpells = UI.Button(auraPage, L("Очистить"), 86, 30)
+    clearSpells:SetPoint("LEFT", eclipsePreset, "RIGHT", 8, 0)
+
+    self.auraSpellSummary = UI.Text(auraPage, "GameFontHighlightSmall", "", C.muted)
+    self.auraSpellSummary:SetPoint("TOPLEFT", 28, -488)
+    self.auraSpellSummary:SetPoint("TOPRIGHT", -28, -488)
+    self.auraSpellSummary:SetJustifyH("LEFT")
+    self.auraSpellSummary:SetWordWrap(true)
+
+    self.auraStatus = UI.Text(auraPage, "GameFontHighlightSmall", "", C.amber)
+    self.auraStatus:SetPoint("TOPLEFT", 28, -526)
+    self.auraStatus:SetPoint("TOPRIGHT", -28, -526)
+    self.auraStatus:SetJustifyH("LEFT")
+    self.auraStatus:SetText(L("Сканирование поймает следующий успешно применённый вами спелл."))
+
+    local spellScanner = CreateFrame("Frame")
+    local scanning
+    local function StopSpellScan(message)
+        scanning = nil
+        spellScanner:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+        scanSpell.label:SetText(L("Сканировать"))
+        if message then self.auraStatus:SetText(message) end
+    end
+    spellScanner:SetScript("OnEvent", function(_, _, unit, _, spellID)
+        if not scanning or unit ~= "player" then return end
+        spellID = UI.SafeNumber(spellID)
+        if not spellID or not JP.PositiveAuraTracker then return end
+        local resolved = JP.PositiveAuraTracker:ResolveInput(tostring(spellID))
+        local spell = resolved and resolved[1]
+        if not spell then return end
+        local added = JP.PositiveAuraTracker:AddFromInput(tostring(spellID))
+        if added > 0 then
+            StopSpellScan((L("Найдено: %s (%d) — добавлено в список")):format(spell.name, spellID))
+        else
+            StopSpellScan((L("Найдено: %s (%d) — уже в списке")):format(spell.name, spellID))
+        end
+        self:Refresh()
+    end)
+    scanSpell:SetScript("OnClick", function()
+        if scanning then
+            StopSpellScan(L("Сканирование отменено"))
+            return
+        end
+        scanning = true
+        spellScanner:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        scanSpell.label:SetText(L("Отмена"))
+        self.auraStatus:SetText(L("Жду следующий успешно применённый спелл..."))
+    end)
+
+    addSpell:SetScript("OnClick", function()
+        if not JP.PositiveAuraTracker then return end
+        local input = spellInput.placeholderShown and "" or spellInput:GetText()
+        local added, rejected = JP.PositiveAuraTracker:AddFromInput(input)
+        self.auraStatus:SetText((L("Добавлено: %d; не распознано: %d")):format(added, #rejected))
+        spellInput:SetText(""); spellInput.placeholderShown = nil
+        self:Refresh()
+    end)
+    clearSpells:SetScript("OnClick", function()
+        if JP.PositiveAuraTracker then JP.PositiveAuraTracker:ClearSpells() end
+        self.auraStatus:SetText(L("Список очищен"))
+        self:Refresh()
+    end)
+    eclipsePreset:SetScript("OnClick", function()
+        if not JP.PositiveAuraTracker then return end
+        local added, rejected = JP.PositiveAuraTracker:AddFromInput("1233272,194223,102560")
+        self.auraStatus:SetText((L("Пресет затмения: добавлено %d; недоступно %d")):format(added, #rejected))
+        self:Refresh()
+    end)
+    eclipsePreset:HookScript("OnEnter", function(self)
+        UI.Tooltip(self, L("Затмение друида"),
+            L("Одним нажатием добавляет три эффекта затмения в список."))
+    end)
+    eclipsePreset:HookScript("OnLeave", GameTooltip_Hide)
 
     -----------------------------------------------------------------------
     -- Screenshot showcase: exact non-secure copies of the capsule, never the
@@ -571,6 +857,7 @@ function SettingsHub:Build(_, parent)
                     JP.LootUI:RestoreBlizzardRolls()
                 end
             end
+            SettingsHub:RefreshDependencies()
         end)
     lootRolls:SetPoint("TOPLEFT", 52, -186)
     lootRolls:SetPoint("TOPRIGHT", -28, -186)
@@ -587,6 +874,18 @@ function SettingsHub:Build(_, parent)
     lootHistory:SetPoint("TOPLEFT", 52, -220)
     lootHistory:SetPoint("TOPRIGHT", -28, -220)
     self.checks.lootHistory = lootHistory
+
+    local testRoll = UI.Button(lootPage, L("Показать тестовый бросок"), 230, 28)
+    testRoll:SetPoint("TOPLEFT", 52, -264)
+    testRoll:SetScript("OnClick", function()
+        if JP.LootUI then JP.LootUI:ShowTestRoll() end
+    end)
+    testRoll:HookScript("OnEnter", function(self)
+        UI.Tooltip(self, L("Тестовый бросок"),
+            L("Показывает безопасный локальный пример. Перетащи окно за заголовок — позиция сохранится."))
+    end)
+    testRoll:HookScript("OnLeave", GameTooltip_Hide)
+    self.lootTestButton = testRoll
 
     Heading(interfacePage, L("РАСПОЛОЖЕНИЕ"), 28, -372, 764)
     local interfaceMove = UI.CheckBox(interfacePage, L("Режим перемещения интерфейса"),
@@ -637,13 +936,13 @@ function SettingsHub:Build(_, parent)
     smartRes:HookScript("OnLeave", GameTooltip_Hide)
     self.checks.smartRes = smartRes
 
-    Heading(lootPage, L("ГРУППОВАЯ ДОБЫЧА"), 28, -270, 764)
+    Heading(lootPage, L("ГРУППОВАЯ ДОБЫЧА"), 28, -322, 764)
     local rcLoot = UI.CheckBox(lootPage, L("Отвечать на розыгрыши RCLootCouncil"),
         MythicBoostDB.rcLoot and MythicBoostDB.rcLoot.enabled == true, function(value)
             if JP.RCLootBridge then JP.RCLootBridge:SetEnabled(value) end
         end)
-    rcLoot:SetPoint("TOPLEFT", 28, -304)
-    rcLoot:SetPoint("TOPRIGHT", -28, -304)
+    rcLoot:SetPoint("TOPLEFT", 28, -356)
+    rcLoot:SetPoint("TOPRIGHT", -28, -356)
     rcLoot:HookScript("OnEnter", function(self)
         UI.Tooltip(self, L("Мост к RCLootCouncil"),
             L("Лидер разыгрывает вещь — окно открывается у нас, ответ уходит в его RCLootCouncil."),
@@ -720,10 +1019,6 @@ function SettingsHub:Refresh()
         elseif key == "minimalUI" then value = MythicBoostDB.minimalUI == true
         elseif key == "minimalUIMinimap" then
             value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.minimap ~= false
-        elseif key == "minimalUIBottomDock" then
-            value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.bottomDock ~= false
-        elseif key == "minimalUIActionBars" then
-            value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.compactActionBars == true
         elseif key == "minimalUIStanceBar" then
             value = MythicBoostDB.minimalUIOptions and MythicBoostDB.minimalUIOptions.hideStanceBar == true
         elseif key == "showRejectedResults" then value = MythicBoostDB.search and MythicBoostDB.search.showRejectedResults ~= false
@@ -738,6 +1033,18 @@ function SettingsHub:Refresh()
         elseif key == "lootRolls" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showRolls ~= false
         elseif key == "lootHistory" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showHistory ~= false
         elseif key == "interfaceUnlocked" then value = MythicBoostDB.interfaceUnlocked == true
+        elseif key == "positiveAuraEnabled" then
+            value = MythicBoostDB.positiveAuraTracker and MythicBoostDB.positiveAuraTracker.enabled == true
+        elseif key == "positiveAuraMissing" then
+            value = MythicBoostDB.positiveAuraTracker and MythicBoostDB.positiveAuraTracker.showWhenMissing == true
+        elseif key == "positiveAuraSeconds" then
+            value = not MythicBoostDB.positiveAuraTracker or MythicBoostDB.positiveAuraTracker.showSeconds ~= false
+        elseif key == "positiveAuraStacks" then
+            value = not MythicBoostDB.positiveAuraTracker or MythicBoostDB.positiveAuraTracker.showStacks ~= false
+        elseif key == "positiveAuraIcon" then
+            value = not MythicBoostDB.positiveAuraTracker or MythicBoostDB.positiveAuraTracker.showIcon ~= false
+        elseif key == "positiveAuraPulse" then
+            value = not MythicBoostDB.positiveAuraTracker or MythicBoostDB.positiveAuraTracker.pulse ~= false
         elseif key == "smartBuff" then
             value = MythicBoostDB.smartClick and MythicBoostDB.smartClick.buff == true
         elseif key == "smartRes" then
@@ -755,6 +1062,10 @@ function SettingsHub:Refresh()
         binding.control:SetValue(binding.settings[binding.key], true)
     end
     self:RefreshDependencies()
+    if self.auraSpellSummary and JP.PositiveAuraTracker then
+        self.auraSpellSummary:SetText(L("Отслеживается: ") .. JP.PositiveAuraTracker:GetSpellSummary())
+    end
+    if self.RefreshAuraPreview then self:RefreshAuraPreview() end
     if self.systemStatus then
         local rioReady = RaiderIO and type(RaiderIO.GetProfile) == "function"
         local unique, total = 0, 0

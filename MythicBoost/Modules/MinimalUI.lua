@@ -102,14 +102,43 @@ end
 local function MuteActionStateTextures(self, button)
     self.savedTextureAlpha = self.savedTextureAlpha or UI.WeakKeys()
     local icon = button.icon or button.Icon
+    local function MuteArtifact(texture)
+        if not texture or texture == icon or texture.__mbActionDecoration
+            or type(texture.SetAlpha) ~= "function" then return end
+        if self.savedTextureAlpha[texture] == nil then
+            self.savedTextureAlpha[texture] = texture:GetAlpha()
+        end
+        if not texture.__mbActionArtifactAlphaHooked then
+            texture.__mbActionArtifactAlphaHooked = true
+            local correcting = false
+            hooksecurefunc(texture, "SetAlpha", function(owner, alpha)
+                if not correcting and MythicBoostDB and MythicBoostDB.minimalUI
+                    and alpha and alpha > 0 then
+                    correcting = true
+                    owner:SetAlpha(0)
+                    correcting = false
+                end
+            end)
+        end
+        texture:SetAlpha(0)
+    end
     for _, getter in ipairs({
         "GetNormalTexture", "GetPushedTexture", "GetHighlightTexture", "GetDisabledTexture", "GetCheckedTexture",
     }) do
         local texture = type(button[getter]) == "function" and button[getter](button)
-        if texture and type(texture.SetAlpha) == "function" then
-            if self.savedTextureAlpha[texture] == nil then self.savedTextureAlpha[texture] = texture:GetAlpha() end
-            texture:SetAlpha(0)
-        end
+        MuteArtifact(texture)
+    end
+    -- Retail has moved the tiny corner/slot artwork between named keys over
+    -- several action-button templates. Silence every known carrier as well as
+    -- the generic state textures above; the alpha hook prevents Blizzard from
+    -- bringing the white corner ticks back during an action update.
+    for _, texture in pairs({
+        button.NormalTexture, button.FloatingBG, button.SlotBackground,
+        button.Border, button.SlotArt, button.Background, button.Flash,
+        button.NewActionTexture, button.HighlightTexture, button.CheckedTexture,
+        button.PushedTexture,
+    }) do
+        MuteArtifact(texture)
     end
     -- У разных поколений Blizzard_ActionBar круглая подсветка носит разные
     -- имена. Надёжнее убрать все собственные Texture-регионы кнопки, кроме
@@ -120,8 +149,7 @@ local function MuteActionStateTextures(self, button)
             if region ~= icon and not region.__mbActionDecoration
                 and type(region.GetObjectType) == "function" and region:GetObjectType() == "Texture"
                 and type(region.SetAlpha) == "function" then
-                if self.savedTextureAlpha[region] == nil then self.savedTextureAlpha[region] = region:GetAlpha() end
-                region:SetAlpha(0)
+                MuteArtifact(region)
             end
         end
     end
@@ -130,8 +158,8 @@ end
 -- Квадратная рамка кнопки действия держит три состояния сразу, поэтому цвет
 -- назначается в одном месте: иначе наведение мышью затирало подсветку
 -- подсказанного заклинания, а обновление панели — наведение.
-local ACTION_EDGE_IDLE = { .08, .24, .29 }
-local ACTION_EDGE_HOVER = { .16, .80, .86, 1 }
+local ACTION_EDGE_IDLE = { .48, .34, .09 }
+local ACTION_EDGE_HOVER = { .95, .72, .18, 1 }
 local ACTION_EDGE_SUGGESTED = { .24, .96, .48, 1 }
 
 local function ApplyActionBorderColor(button)
@@ -290,7 +318,13 @@ local function StyleMinimapZoneLabel(self, enabled)
     local function Place(frame, key, point, relativePoint, x, y)
         if not frame then return end
         if not self.minimapWidgetLayouts[key] then
-            local state = { frame = frame, parent = frame:GetParent(), points = {} }
+            local state = {
+                frame = frame,
+                parent = frame:GetParent(),
+                level = frame:GetFrameLevel(),
+                strata = frame:GetFrameStrata(),
+                points = {},
+            }
             for index = 1, frame:GetNumPoints() do state.points[index] = { frame:GetPoint(index) } end
             self.minimapWidgetLayouts[key] = state
         end
@@ -312,7 +346,7 @@ local function StyleMinimapZoneLabel(self, enabled)
             label:SetWidth(width)
             label:SetJustifyH("LEFT")
             if self.minimapZoneLayout.labelFont and self.minimapZoneLayout.labelFont[1] then
-                label:SetFont(self.minimapZoneLayout.labelFont[1], 11, "OUTLINE")
+                label:SetFont(self.minimapZoneLayout.labelFont[1], 13, "OUTLINE")
             end
             label:SetTextColor(.88, .94, 1, 1)
             label:SetShadowColor(0, 0, 0, 1)
@@ -327,11 +361,14 @@ local function StyleMinimapZoneLabel(self, enabled)
             or (_G.MinimapCluster and MinimapCluster.GuildInstanceDifficulty)
         local challengeDifficulty = _G.MiniMapChallengeMode
             or (_G.MinimapCluster and MinimapCluster.ChallengeMode)
+        local queueStatus = _G.QueueStatusButton
 
         Place(_G.GameTimeFrame, "calendar", "TOPRIGHT", "TOPRIGHT", -2, -2)
         Place(difficulty, "difficulty", "TOPRIGHT", "TOPRIGHT", -4, -29)
         Place(guildDifficulty, "guildDifficulty", "TOPRIGHT", "TOPRIGHT", -4, -29)
         Place(challengeDifficulty, "challengeDifficulty", "TOPRIGHT", "TOPRIGHT", -4, -29)
+        Place(queueStatus, "queueStatus", "BOTTOMLEFT", "BOTTOMLEFT", 6, 6)
+        if queueStatus then queueStatus:SetFrameLevel(Minimap:GetFrameLevel() + 31) end
 
         -- SexyMap намеренно перехватывает SetPoint штатных часов и возвращает
         -- их наружу. Не боремся с его hooksecurefunc: показываем внутри карты
@@ -343,7 +380,7 @@ local function StyleMinimapZoneLabel(self, enabled)
             local text = clock:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             text:SetPoint("CENTER")
             local fontPath = text:GetFont()
-            if fontPath then text:SetFont(fontPath, 10, "OUTLINE") end
+            if fontPath then text:SetFont(fontPath, 12, "OUTLINE") end
             text:SetTextColor(1, 1, 1, 1)
             text:SetShadowColor(0, 0, 0, 1)
             text:SetShadowOffset(1, -1)
@@ -363,7 +400,10 @@ local function StyleMinimapZoneLabel(self, enabled)
             self.minimapClock = clock
         end
         self.minimapClock:ClearAllPoints()
-        self.minimapClock:SetPoint("BOTTOMLEFT", Minimap, "BOTTOMLEFT", 5, 5)
+        -- Queue status lives on the left and the addon compartment on the
+        -- right.  The clock is the stable visual centre and must not drift
+        -- when either corner widget appears or disappears.
+        self.minimapClock:SetPoint("BOTTOM", Minimap, "BOTTOM", 0, 5)
         self.minimapClock:Show()
 
         local sourceClock = _G.TimeManagerClockButton
@@ -402,6 +442,8 @@ local function StyleMinimapZoneLabel(self, enabled)
                 if widgetState.parent then frame:SetParent(widgetState.parent) end
                 frame:ClearAllPoints()
                 for _, point in ipairs(widgetState.points or {}) do frame:SetPoint(unpack(point)) end
+                if widgetState.strata then frame:SetFrameStrata(widgetState.strata) end
+                if widgetState.level then frame:SetFrameLevel(widgetState.level) end
             end
         end
         if self.minimapClock then self.minimapClock:Hide() end
@@ -415,247 +457,77 @@ local function StyleMinimapZoneLabel(self, enabled)
     end
 end
 
-local function StyleMinimapAddonButtons(self, enabled)
-    self.minimapAddonLayouts = self.minimapAddonLayouts or UI.WeakKeys()
-    self.minimapButtonRows = self.minimapButtonRows or UI.WeakKeys()
-    self.minimapKnownButtons = self.minimapKnownButtons or UI.WeakKeys()
+local function HideLooseMinimapAddonButtons(self, enabled)
+    self.looseMinimapButtons = self.looseMinimapButtons or UI.WeakKeys()
+    self.looseMinimapVisibility = self.looseMinimapVisibility or UI.WeakKeys()
+
     if not enabled then
-        for button, state in pairs(self.minimapAddonLayouts) do
-            if button and type(button.SetPoint) == "function" then
-                if state.parent then button:SetParent(state.parent) end
-                button:ClearAllPoints()
-                for _, point in ipairs(state.points or {}) do button:SetPoint(unpack(point)) end
-                if state.scale then button:SetScale(state.scale) end
-                if state.alpha then button:SetAlpha(state.alpha) end
-                if type(button.EnableMouse) == "function" then button:EnableMouse(state.mouse and true or false) end
-                if state.strata then button:SetFrameStrata(state.strata) end
-                if state.level then button:SetFrameLevel(state.level) end
-                button:SetShown(state.shown)
-            end
+        for button, shown in pairs(self.looseMinimapVisibility) do
+            if button and type(button.SetShown) == "function" then button:SetShown(shown) end
         end
-        if self.minimapButtonMenu then self.minimapButtonMenu:Hide() end
-        if self.minimapButtonLauncher then self.minimapButtonLauncher:Hide() end
-        wipe(self.minimapAddonLayouts)
+        wipe(self.looseMinimapVisibility)
         return
     end
 
-    local buttons, seen = {}, {}
-    local function ButtonLabel(button)
-        local data = button and (button.dataObject or button.dataobj)
-        local label = data and (data.label or data.name or data.text)
-        if type(label) == "string" and not issecretvalue(label) and label ~= "" then return label end
-        local name = button and button:GetName() or L("Модификация")
-        return (name:gsub("^LibDBIcon10_", ""):gsub("_", " "))
-    end
-    local function HasIcon(button)
-        local icon = button and (button.icon or button.Icon)
-        if icon and type(icon.GetTexture) == "function" and icon:GetTexture() then return true end
-        if button and type(button.GetRegions) == "function" then
-            for _, region in ipairs({ button:GetRegions() }) do
-                if region and type(region.GetObjectType) == "function"
-                    and region:GetObjectType() == "Texture"
-                    and type(region.GetTexture) == "function" and region:GetTexture() then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-    local function Add(button)
-        if button and button ~= self.minimapButtonLauncher
-            and type(button.SetPoint) == "function" and not seen[button]
-            and button:IsShown() and HasIcon(button) then
-            seen[button] = true
-            buttons[#buttons + 1] = button
-        end
-    end
-    -- AddonCompartmentFrame already represents the whole addon collection.
-    -- Including it in our own collection produced a second count button.
-    -- Scanning every global object on the 2.5-second maintenance tick was both
-    -- expensive and unnecessary. Discover buttons once, then rescan only when
-    -- another load-on-demand addon has actually loaded.
-    if not self.minimapAddonScanned or self.minimapAddonScanDirty then
+    if not self.looseMinimapScanned or self.minimapAddonScanDirty then
         for name, object in pairs(_G) do
             if type(name) == "string" and name:match("^LibDBIcon10_") then
-                self.minimapKnownButtons[object] = true
+                self.looseMinimapButtons[object] = true
             end
         end
-        self.minimapAddonScanned = true
+        self.looseMinimapScanned = true
         self.minimapAddonScanDirty = nil
     end
-    -- Some addons register their LibDBIcon button shortly after ADDON_LOADED.
-    -- Reading the library registry is cheap and catches those late buttons
-    -- without returning to a full scan of every global on every tick.
     if type(LibStub) == "table" or type(LibStub) == "function" then
         local ok, lib = pcall(LibStub, "LibDBIcon-1.0", true)
         if ok and type(lib) == "table" and type(lib.objects) == "table" then
-            for _, object in pairs(lib.objects) do self.minimapKnownButtons[object] = true end
-        end
-    end
-    for button in pairs(self.minimapKnownButtons) do Add(button) end
-    table.sort(buttons, function(a, b) return ButtonLabel(a):lower() < ButtonLabel(b):lower() end)
-
-    if not self.minimapButtonMenu then
-        local launcher = CreateFrame("Button", "MythicBoostMinimapButtonLauncher", Minimap, "BackdropTemplate")
-        launcher:SetSize(24, 18)
-        launcher:SetFrameStrata("HIGH")
-        launcher:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8X8",
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = 1,
-        })
-        launcher:SetBackdropColor(0, 0, 0, 0)
-        launcher:SetBackdropBorderColor(0, 0, 0, 0)
-        launcher.count = launcher:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        launcher.count:SetPoint("CENTER", 0, 0)
-        launcher.count:SetTextColor(.95, .78, .20, 1)
-        launcher.count:SetShadowColor(0, 0, 0, 1)
-        launcher.count:SetShadowOffset(1, -1)
-
-        local menu = CreateFrame("Frame", "MythicBoostMinimapButtonMenu", UIParent, "BackdropTemplate")
-        menu:SetFrameStrata("DIALOG")
-        menu:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8X8",
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = 1,
-        })
-        menu:SetBackdropColor(JP.UI.colors.surface[1], JP.UI.colors.surface[2], JP.UI.colors.surface[3], .97)
-        menu:SetBackdropBorderColor(.25, .31, .37, 1)
-        menu:EnableMouse(true)
-        menu:Hide()
-        launcher:SetScript("OnClick", function()
-            menu:SetShown(not menu:IsShown())
-        end)
-        launcher:SetScript("OnEnter", function(owner)
-            owner.count:SetTextColor(.35, .86, 1, 1)
-            GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
-            GameTooltip:SetText(L("Меню аддонов"))
-            GameTooltip:AddLine(L("Нажмите, чтобы показать иконки"), .72, .78, .84)
-            GameTooltip:Show()
-        end)
-        launcher:SetScript("OnLeave", function(owner)
-            owner.count:SetTextColor(.95, .78, .20, 1)
-            GameTooltip_Hide()
-        end)
-        local closeRevision = 0
-        local function KeepMenuOpen()
-            closeRevision = closeRevision + 1
-        end
-        local function CloseMenuAfterLeave()
-            closeRevision = closeRevision + 1
-            local revision = closeRevision
-            C_Timer.After(.35, function()
-                if revision ~= closeRevision or not menu:IsShown() then return end
-                if not launcher:IsMouseOver() and not menu:IsMouseOver() then menu:Hide() end
-            end)
-        end
-        launcher:HookScript("OnEnter", KeepMenuOpen)
-        launcher:HookScript("OnLeave", CloseMenuAfterLeave)
-        menu:SetScript("OnEnter", KeepMenuOpen)
-        menu:SetScript("OnLeave", CloseMenuAfterLeave)
-        menu.KeepOpen = KeepMenuOpen
-        menu.CloseAfterLeave = CloseMenuAfterLeave
-        self.minimapButtonLauncher = launcher
-        self.minimapButtonMenu = menu
-        UISpecialFrames = UISpecialFrames or {}
-        table.insert(UISpecialFrames, menu:GetName())
-
-        if not self.minimapDrawerCloseHooks then
-            self.minimapDrawerCloseHooks = true
-            if WorldFrame and type(WorldFrame.HookScript) == "function" then
-                WorldFrame:HookScript("OnMouseDown", function()
-                    if self.minimapButtonMenu then self.minimapButtonMenu:Hide() end
-                end)
-            end
-            if type(Minimap.HookScript) == "function" then
-                Minimap:HookScript("OnMouseDown", function()
-                    if self.minimapButtonMenu then self.minimapButtonMenu:Hide() end
-                end)
-            end
+            for _, object in pairs(lib.objects) do self.looseMinimapButtons[object] = true end
         end
     end
 
-    local launcher, menu = self.minimapButtonLauncher, self.minimapButtonMenu
-    for _, row in pairs(self.minimapButtonRows) do row:Hide() end
-    launcher:SetParent(Minimap)
-    launcher:ClearAllPoints()
-    launcher:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -5, 5)
-    launcher.count:SetText(tostring(#buttons))
-    launcher:SetShown(#buttons > 0)
-    if #buttons == 0 then menu:Hide(); return end
-    local rowHeight, menuWidth = 24, 218
-    menu:ClearAllPoints()
-    menu:SetPoint("BOTTOMRIGHT", launcher, "TOPRIGHT", 0, 4)
-    menu:SetSize(menuWidth, #buttons * rowHeight + 8)
-
-    for index, button in ipairs(buttons) do
-        if not self.minimapAddonLayouts[button] then
-            local state = {
-                parent = button:GetParent(), scale = button:GetScale(),
-                alpha = button:GetAlpha(), mouse = button:IsMouseEnabled(), shown = button:IsShown(),
-                strata = button:GetFrameStrata(), level = button:GetFrameLevel(), points = {},
-            }
-            for pointIndex = 1, button:GetNumPoints() do
-                state.points[pointIndex] = { button:GetPoint(pointIndex) }
+    local nativeCompartment = _G.AddonCompartmentFrame
+    local function IsNativeCompartment(button)
+        if not button then return false end
+        if button == nativeCompartment or button == _G.AddonCompartmentFrame then return true end
+        local name = type(button.GetName) == "function" and button:GetName()
+        return name == "AddonCompartmentFrame"
+    end
+    for button in pairs(self.looseMinimapButtons) do
+        if button and not IsNativeCompartment(button) and type(button.Hide) == "function" then
+            if self.looseMinimapVisibility[button] == nil then
+                self.looseMinimapVisibility[button] = button:IsShown() and true or false
             end
-            self.minimapAddonLayouts[button] = state
+            if type(button.HookScript) == "function" and not button.__mbKeepLooseMinimapHidden then
+                button.__mbKeepLooseMinimapHidden = true
+                button:HookScript("OnShow", function(owner)
+                    -- A foreign minimap addon may synchronously Show() its
+                    -- button from OnHide. Calling Hide() again from our
+                    -- OnShow without a guard makes the two hooks recurse on
+                    -- the UI thread until the client stops responding.
+                    if self.minimapOwnershipActive and not IsNativeCompartment(owner)
+                        and not owner.__mbLooseMinimapHideActive then
+                        owner.__mbLooseMinimapHideActive = true
+                        pcall(owner.Hide, owner)
+                        owner.__mbLooseMinimapHideActive = nil
+                    end
+                end)
+            end
+            button:Hide()
         end
-        button.__mbMinimapMenu = menu
-        if type(button.HookScript) == "function" and not button.__mbMinimapKeepParked then
-            button.__mbMinimapKeepParked = true
-            button:HookScript("OnShow", function(owner)
-                if not self.minimapOwnershipActive or not owner.__mbMinimapMenu then return end
-                owner:SetParent(owner.__mbMinimapMenu)
-                owner:SetScale(.01)
-                owner:SetAlpha(0)
-                owner:EnableMouse(false)
-            end)
-        end
-        -- Keep the original button logically shown so later rescans still
-        -- count it, but make its icon physically invisible inside our menu.
-        button:Show()
-        button:SetParent(menu)
-        button:SetScale(.01)
-        button:SetAlpha(0)
-        button:EnableMouse(false)
-        button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", menu, "TOPLEFT", 4, -4)
+    end
 
-        local row = self.minimapButtonRows[button]
-        if not row then
-            row = CreateFrame("Button", nil, menu, "BackdropTemplate")
-            row:RegisterForClicks("AnyUp")
-            row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
-            row:SetBackdropColor(0, 0, 0, 0)
-            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            row.label:SetPoint("LEFT", 10, 0)
-            row.label:SetPoint("RIGHT", -10, 0)
-            row.label:SetJustifyH("LEFT")
-            row:SetScript("OnEnter", function(owner)
-                owner:SetBackdropColor(.12, .32, .40, .72)
-                if menu.KeepOpen then menu.KeepOpen() end
-            end)
-            row:SetScript("OnLeave", function(owner)
-                owner:SetBackdropColor(0, 0, 0, 0)
-                if menu.CloseAfterLeave then menu.CloseAfterLeave() end
-            end)
-            row:SetScript("OnClick", function(owner, mouseButton)
-                local target = owner.addonButton
-                if target and type(target.Click) == "function" then target:Click(mouseButton) end
-                menu:Hide()
-            end)
-            self.minimapButtonRows[button] = row
-        end
-        row.addonButton = button
-        row.label:SetText(ButtonLabel(button))
-        row:SetParent(menu)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", menu, "TOPLEFT", 4, -4 - (index - 1) * rowHeight)
-        row:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -4, -4 - (index - 1) * rowHeight)
-        row:SetHeight(rowHeight)
-        row:Show()
+    -- The compartment can be created after our first minimap pass. Explicitly
+    -- expose Blizzard's own button after filtering the loose LibDBIcon objects;
+    -- this is the supported entry point for the complete addon list.
+    nativeCompartment = _G.AddonCompartmentFrame
+    if nativeCompartment and type(nativeCompartment.Show) == "function" then
+        self.looseMinimapButtons[nativeCompartment] = nil
+        self.looseMinimapVisibility[nativeCompartment] = nil
+        nativeCompartment:Show()
     end
 end
+
+local PlaceNativeAddonCompartment
 
 function MinimalUI:StyleMinimap(enabled)
     if not Minimap then return end
@@ -695,7 +567,7 @@ function MinimalUI:StyleMinimap(enabled)
             local anchor = _G.MinimapCluster or UIParent
             Minimap:ClearAllPoints()
             Minimap:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", -4, -4)
-            Minimap:SetSize(245, 245)
+            Minimap:SetSize(265, 265)
         end
         pcall(Minimap.SetMaskTexture, Minimap, SQUARE_MASK)
         -- Круг на присланном скриншоте оказался не рамкой, а кольцом зоны
@@ -729,7 +601,11 @@ function MinimalUI:StyleMinimap(enabled)
             if object and type(object.HookScript) == "function" and not object.__mbKeepMinimapHidden then
                 object.__mbKeepMinimapHidden = true
                 object:HookScript("OnShow", function(owner)
-                    if self.minimapOwnershipActive then owner:Hide() end
+                    if self.minimapOwnershipActive and not owner.__mbMinimapHideActive then
+                        owner.__mbMinimapHideActive = true
+                        pcall(owner.Hide, owner)
+                        owner.__mbMinimapHideActive = nil
+                    end
                 end)
             end
         end
@@ -746,18 +622,10 @@ function MinimalUI:StyleMinimap(enabled)
         end
         self.minimapBorder:Show()
         StyleMinimapZoneLabel(self, true)
-        -- Loose LibDBIcon buttons become one count in the corner. Clicking the
-        -- count opens a compact text list, never another grid of icon cards.
-        StyleMinimapAddonButtons(self, true)
-        local nativeCompartment = _G.AddonCompartmentFrame
-        RememberAndHideMinimap(self, nativeCompartment)
-        if nativeCompartment and type(nativeCompartment.HookScript) == "function"
-            and not nativeCompartment.__mbKeepHidden then
-            nativeCompartment.__mbKeepHidden = true
-            nativeCompartment:HookScript("OnShow", function(owner)
-                if self.minimapOwnershipActive then owner:Hide() end
-            end)
-        end
+        -- Keep Blizzard's native Addon Compartment. MythicBoost is listed
+        -- there through TOC metadata; no second drawer or custom tooltip.
+        HideLooseMinimapAddonButtons(self, true)
+        PlaceNativeAddonCompartment(self, true)
         -- The minimap already has its own one-pixel border. A second enclosing
         -- panel only creates a pointless rectangle around it.
 
@@ -781,7 +649,8 @@ function MinimalUI:StyleMinimap(enabled)
             if layout.width and layout.height then Minimap:SetSize(layout.width, layout.height) end
         end
         self.minimapMapLayout = nil
-        StyleMinimapAddonButtons(self, false)
+        HideLooseMinimapAddonButtons(self, false)
+        PlaceNativeAddonCompartment(self, false)
         pcall(Minimap.SetMaskTexture, Minimap, self.roundMask or FALLBACK_ROUND_MASK)
         for _, method in ipairs({
             "SetArchBlobRingScalar", "SetArchBlobRingAlpha",
@@ -978,7 +847,47 @@ local function MicroButtons()
     if #buttons == 0 then
         for _, name in ipairs(MICRO_BUTTON_FALLBACK_ORDER) do Add(name) end
     end
+    -- Retail may create HelpMicroButton outside the authoritative
+    -- MICRO_BUTTONS array. Include it explicitly; the red question-mark
+    -- artwork itself is MainMenuMicroButton on current Retail builds.
+    Add("HelpMicroButton")
     return buttons
+end
+
+PlaceNativeAddonCompartment = function(self, enabled)
+    local button = _G.AddonCompartmentFrame
+    if not button or type(button.SetPoint) ~= "function" or InCombatLockdown() then return end
+    if not self.addonCompartmentLayout then
+        local state = {
+            scale = button:GetScale(),
+            strata = button:GetFrameStrata(),
+            level = button:GetFrameLevel(),
+            shown = button:IsShown(),
+            points = {},
+        }
+        for index = 1, button:GetNumPoints() do state.points[index] = { button:GetPoint(index) } end
+        self.addonCompartmentLayout = state
+    end
+    if enabled then
+        button:ClearAllPoints()
+        -- Overlay the native count inside the square map instead of treating
+        -- it as another footer icon. The inset keeps the circle off the border
+        -- and the high level prevents map pins from swallowing mouse input.
+        button:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -8, 8)
+        button:SetScale(1.1)
+        button:SetFrameStrata("HIGH")
+        button:SetFrameLevel(Minimap:GetFrameLevel() + 30)
+        button:Show()
+    else
+        local state = self.addonCompartmentLayout
+        button:ClearAllPoints()
+        for _, point in ipairs(state.points or {}) do button:SetPoint(unpack(point)) end
+        if state.scale then button:SetScale(state.scale) end
+        if state.strata then button:SetFrameStrata(state.strata) end
+        if state.level then button:SetFrameLevel(state.level) end
+        button:SetShown(state.shown)
+        self.addonCompartmentLayout = nil
+    end
 end
 
 -- The Blizzard micro menu is kept as one responsive row immediately below
@@ -993,6 +902,7 @@ function MinimalUI:StyleMicroMenu(enabled)
             button:ClearAllPoints()
             for _, point in ipairs(state.points or {}) do button:SetPoint(unpack(point)) end
             if state.scale then button:SetScale(state.scale) end
+            if state.shown ~= nil then button:SetShown(state.shown) end
         end
         wipe(self.microButtonLayouts)
         if self.microMenuAnchor then self.microMenuAnchor:Hide() end
@@ -1003,6 +913,19 @@ function MinimalUI:StyleMicroMenu(enabled)
     if not self.microMenuAnchor then
         local anchor = CreateFrame("Frame", "MythicBoostMicroMenuAnchor", UIParent)
         anchor:EnableMouse(false)
+        anchor.rail = anchor:CreateTexture(nil, "BACKGROUND")
+        anchor.rail:SetAllPoints()
+        anchor.rail:SetColorTexture(.035, .024, .010, .72)
+        anchor.railTop = anchor:CreateTexture(nil, "BORDER")
+        anchor.railTop:SetPoint("TOPLEFT", 0, 0)
+        anchor.railTop:SetPoint("TOPRIGHT", 0, 0)
+        anchor.railTop:SetHeight(1)
+        anchor.railTop:SetColorTexture(.98, .76, .22, .82)
+        anchor.railBottom = anchor:CreateTexture(nil, "BORDER")
+        anchor.railBottom:SetPoint("BOTTOMLEFT", 0, 0)
+        anchor.railBottom:SetPoint("BOTTOMRIGHT", 0, 0)
+        anchor.railBottom:SetHeight(1)
+        anchor.railBottom:SetColorTexture(.20, .11, .025, .90)
         self.microMenuAnchor = anchor
     end
 
@@ -1011,11 +934,20 @@ function MinimalUI:StyleMicroMenu(enabled)
     -- Ряд шире карты и почти без промежутка между кнопками. Вся выигранная
     -- ширина уходит в раскладку ниже: чем её больше, тем больше колонок
     -- помещается и тем меньше строк приходится занимать под картой.
-    local rowWidth, gap = mapWidth + 14, .5
+    -- Blizzard micro-button frames contain roughly three pixels of transparent
+    -- side padding. A numeric gap of zero therefore still produced obvious
+    -- visual holes. Compensate that template padding in the slot pitch: the
+    -- visible artwork now meets edge-to-edge while each native button retains
+    -- its complete clickable frame.
+    -- Весь ряд обязан помещаться ровно под квадратом: ни персонаж слева,
+    -- ни системная кнопка справа не выходят за вертикали рамки миникарты.
+    -- Нулевой шаг: штатные кнопки равномерно делят всю ширину карты без
+    -- дополнительного промежутка между кликабельными слотами.
+    local rowWidth, gap = mapWidth, 0
     anchor:ClearAllPoints()
-    -- Центром под картой, а не по правому краю: ряд может оказаться шире
-    -- карты, и тогда он должен свисать одинаково с обеих сторон.
-    anchor:SetPoint("TOP", Minimap, "BOTTOM", 0, -4)
+    -- The minimap sits against the right screen edge. Any extra footer width
+    -- must grow leftward; centring it clipped the final buttons off-screen.
+    anchor:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 0, -4)
     anchor:SetWidth(rowWidth)
     anchor:Show()
 
@@ -1023,12 +955,31 @@ function MinimalUI:StyleMicroMenu(enabled)
     for _, button in ipairs(MicroButtons()) do
         local state = self.microButtonLayouts[button]
         if not state then
-            state = { scale = button:GetScale(), points = {} }
+            state = { scale = button:GetScale(), shown = button:IsShown(), points = {} }
             for index = 1, button:GetNumPoints() do state.points[index] = { button:GetPoint(index) } end
             self.microButtonLayouts[button] = state
         end
-        local visibleOnScreen = type(button.IsVisible) == "function" and button:IsVisible() or button:IsShown()
-        if visibleOnScreen then visible[#visible + 1] = button end
+        local buttonName = type(button.GetName) == "function" and button:GetName() or nil
+        local isDefaultQuestionButton = button == _G.HelpMicroButton
+            or button == _G.MainMenuMicroButton
+            or buttonName == "HelpMicroButton"
+            or buttonName == "MainMenuMicroButton"
+        if isDefaultQuestionButton then
+            if type(button.HookScript) == "function" and not button.__mbKeepQuestionHidden then
+                button.__mbKeepQuestionHidden = true
+                button:HookScript("OnShow", function(owner)
+                    if self.minimapOwnershipActive and not owner.__mbQuestionHideActive then
+                        owner.__mbQuestionHideActive = true
+                        pcall(owner.Hide, owner)
+                        owner.__mbQuestionHideActive = nil
+                    end
+                end)
+            end
+            button:Hide()
+        else
+            local visibleOnScreen = type(button.IsVisible) == "function" and button:IsVisible() or button:IsShown()
+            if visibleOnScreen then visible[#visible + 1] = button end
+        end
     end
 
     local count = #visible
@@ -1056,7 +1007,7 @@ function MinimalUI:StyleMicroMenu(enabled)
         local parentScale = parent and type(parent.GetEffectiveScale) == "function"
             and parent:GetEffectiveScale() or uiScale
         local scale = (targetWidth / nativeWidth) * (uiScale / math.max(.01, parentScale))
-        scale = math.max(.35, math.min(1.25, scale))
+        scale = math.max(.35, math.min(1.35, scale))
         scales[index] = scale
         rowHeight = math.max(rowHeight, nativeHeight * scale * (parentScale / math.max(.01, uiScale)))
     end
@@ -1078,18 +1029,13 @@ function MinimalUI:StyleMicroMenu(enabled)
 
         button:ClearAllPoints()
         button:SetScale(scales[index])
-        button:SetPoint("TOP", slot, "TOP", 0, 0)
+        -- Native micro-button templates use different transparent top/bottom
+        -- insets. Centre their full frames in equal slots so the visible
+        -- artwork shares one baseline instead of forming a small staircase.
+        button:SetPoint("CENTER", slot, "CENTER", 0, 0)
     end
     for index = count + 1, #(self.microMenuSlots or {}) do self.microMenuSlots[index]:Hide() end
     anchor:SetHeight(rows * rowHeight + (rows - 1) * gap)
-    -- The tracker anchors to this row. Blizzard can rebuild the micro menu
-    -- after our tracker pass, so re-apply once on the next frame using the
-    -- final measured height instead of leaving objectives far below the map.
-    if self.trackerLayout and C_Timer then
-        C_Timer.After(0, function()
-            if MythicBoostDB and MythicBoostDB.minimalUI then self:StyleObjectiveTracker(true) end
-        end)
-    end
 end
 
 local ACTION_BUTTON_PREFIXES = {
@@ -1152,7 +1098,12 @@ function MinimalUI:StyleBags(hidden)
                 frame.__mbHideBagsHook = true
                 frame:HookScript("OnShow", function(owner)
                     local settings = MythicBoostDB and MythicBoostDB.convenience
-                    if settings and settings.hideBags ~= false and not InCombatLockdown() then owner:Hide() end
+                    if settings and settings.hideBags ~= false and not InCombatLockdown()
+                        and not owner.__mbBagHideActive then
+                        owner.__mbBagHideActive = true
+                        pcall(owner.Hide, owner)
+                        owner.__mbBagHideActive = nil
+                    end
                 end)
             end
         elseif state ~= nil then
@@ -1315,7 +1266,79 @@ end
 local EFFECT_FILL_BOTTOM = CreateColor and CreateColor(.48, .13, .015, 1)
 local EFFECT_FILL_TOP = CreateColor and CreateColor(1, .45, .035, 1)
 
+local function CooldownViewerIcon(button)
+    local icon = button and (button.Icon or button.icon)
+    if icon and type(icon.GetTexture) == "function" and icon:GetTexture() then return icon end
+end
+
+function MinimalUI:QueueCompactCooldownIcons()
+    if self.cooldownIconLayoutQueued or not C_Timer then return end
+    self.cooldownIconLayoutQueued = true
+    C_Timer.After(0, function()
+        self.cooldownIconLayoutQueued = nil
+        if MythicBoostDB and MythicBoostDB.minimalUI then self:CompactCooldownIcons(true) end
+    end)
+end
+
+function MinimalUI:CompactCooldownIcons(enabled)
+    local viewer = _G.BuffIconCooldownViewer
+    if not viewer or type(viewer.GetChildren) ~= "function" then return end
+    self.cooldownIconLayouts = self.cooldownIconLayouts or UI.WeakKeys()
+
+    local buttons, visible = { viewer:GetChildren() }, {}
+    for _, button in ipairs(buttons) do
+        local icon = CooldownViewerIcon(button)
+        if icon and type(button.GetNumPoints) == "function" then
+            local state = self.cooldownIconLayouts[button]
+            if not state then
+                state = { points = {} }
+                for index = 1, button:GetNumPoints() do state.points[index] = { button:GetPoint(index) } end
+                self.cooldownIconLayouts[button] = state
+            end
+            if not button.__mbCompactCooldownHooked then
+                button.__mbCompactCooldownHooked = true
+                button:HookScript("OnShow", function() self:QueueCompactCooldownIcons() end)
+                button:HookScript("OnHide", function() self:QueueCompactCooldownIcons() end)
+            end
+            if enabled and button:IsShown() and button:GetAlpha() > .05 and icon:IsShown()
+                and icon:GetAlpha() > .05 then
+                visible[#visible + 1] = button
+            end
+        end
+    end
+
+    if not enabled then
+        for button, state in pairs(self.cooldownIconLayouts) do
+            local protected = button and type(button.IsProtected) == "function" and button:IsProtected()
+            if button and not (InCombatLockdown() and protected) then
+                button:ClearAllPoints()
+                for _, point in ipairs(state.points or {}) do button:SetPoint(unpack(point)) end
+            end
+        end
+        wipe(self.cooldownIconLayouts)
+        return
+    end
+    if #visible == 0 then return end
+    for _, button in ipairs(visible) do
+        if InCombatLockdown() and type(button.IsProtected) == "function" and button:IsProtected() then return end
+    end
+
+    local gap, total = 4, 0
+    for index, button in ipairs(visible) do
+        total = total + math.max(1, button:GetWidth() or button:GetHeight() or 36)
+        if index > 1 then total = total + gap end
+    end
+    local cursor = -total * .5
+    for _, button in ipairs(visible) do
+        local width = math.max(1, button:GetWidth() or button:GetHeight() or 36)
+        button:ClearAllPoints()
+        button:SetPoint("CENTER", viewer, "CENTER", cursor + width * .5, 0)
+        cursor = cursor + width + gap
+    end
+end
+
 function MinimalUI:StyleCooldownEffectBars(enabled)
+    self:CompactCooldownIcons(enabled)
     if InCombatLockdown() then return end
     local viewer = _G.BuffBarCooldownViewer
     if not viewer then return end
@@ -1438,15 +1461,23 @@ function MinimalUI:StyleActionButtons(enabled)
     for _, button in ipairs(ActionButtons()) do
         local state = self.actionState[button]
         if enabled then
+            local cooldown = button.cooldown or button.Cooldown
             if not state then
                 local icon = button.icon or button.Icon
                 state = {
                     icon = icon,
                     texCoords = icon and { icon:GetTexCoord() },
+                    iconColor = icon and type(icon.GetVertexColor) == "function"
+                        and { icon:GetVertexColor() } or nil,
+                    iconAlpha = icon and type(icon.GetAlpha) == "function" and icon:GetAlpha() or nil,
+                    iconDesaturated = icon and type(icon.IsDesaturated) == "function"
+                        and icon:IsDesaturated() or nil,
                     iconPoints = {},
                     hotkey = SaveFont(button.HotKey),
                     count = SaveFont(button.Count),
                     name = SaveFont(button.Name),
+                    cooldownSwipe = cooldown and type(cooldown.GetSwipeColor) == "function"
+                        and { cooldown:GetSwipeColor() } or nil,
                     cooldownFonts = {},
                 }
                 if icon then
@@ -1469,6 +1500,18 @@ function MinimalUI:StyleActionButtons(enabled)
                 state.icon:SetPoint("TOPLEFT", button, "TOPLEFT", ACTION_ICON_INSET, -ACTION_ICON_INSET)
                 state.icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -ACTION_ICON_INSET, ACTION_ICON_INSET)
                 state.icon:SetTexCoord(.06, .94, .06, .94)
+                state.icon:SetVertexColor(1, 1, 1, 1)
+                state.icon:SetAlpha(1)
+                if type(state.icon.SetDesaturated) == "function" then state.icon:SetDesaturated(false) end
+            end
+            if not button.__mbActionLight then
+                local light = button:CreateTexture(nil, "ARTWORK", nil, 6)
+                light:SetPoint("TOPLEFT", ACTION_ICON_INSET, -ACTION_ICON_INSET)
+                light:SetPoint("BOTTOMRIGHT", -ACTION_ICON_INSET, ACTION_ICON_INSET)
+                light:SetColorTexture(.72, .88, 1, .08)
+                light:SetBlendMode("ADD")
+                light.__mbActionDecoration = true
+                button.__mbActionLight = light
             end
             if not button.__mbActionGloss then
                 local gloss = button:CreateTexture(nil, "ARTWORK", nil, 7)
@@ -1478,8 +1521,8 @@ function MinimalUI:StyleActionButtons(enabled)
                 gloss:SetColorTexture(1, 1, 1, 1)
                 gloss:SetBlendMode("ADD")
                 gloss:SetGradient("VERTICAL",
-                    CreateColor(1, 1, 1, 0),
-                    CreateColor(.82, .94, 1, .19))
+                    CreateColor(.98, .76, .22, 0),
+                    CreateColor(.98, .76, .22, .22))
                 gloss.__mbActionDecoration = true
                 button.__mbActionGloss = gloss
             end
@@ -1493,7 +1536,11 @@ function MinimalUI:StyleActionButtons(enabled)
                 fill.__mbActionDecoration = true
                 button.__mbEmptyFill = fill
             end
-            local cooldown = button.cooldown or button.Cooldown
+            if cooldown and type(cooldown.SetSwipeColor) == "function" then
+                -- Blizzard's default cooldown swipe is almost opaque black.
+                -- Keep cooldown state visible without crushing the spell art.
+                cooldown:SetSwipeColor(0, 0, 0, .42)
+            end
             if cooldown and type(cooldown.GetRegions) == "function" then
                 for _, region in ipairs({ cooldown:GetRegions() }) do
                     if region and type(region.GetObjectType) == "function"
@@ -1539,6 +1586,7 @@ function MinimalUI:StyleActionButtons(enabled)
             MuteActionSuggestionGlows(self, button)
             button.__mbEmptyAction = IsEmptyActionButton(button)
             button.__mbEmptyFill:SetShown(button.__mbEmptyAction)
+            button.__mbActionLight:SetShown(not button.__mbEmptyAction)
             button.__mbActionGloss:SetShown(not button.__mbEmptyAction)
             ApplyActionBorderColor(button)
             if button.HotKey then button.HotKey:SetAlpha(button.__mbEmptyAction and .38 or 1) end
@@ -1552,6 +1600,13 @@ function MinimalUI:StyleActionButtons(enabled)
                 state.icon:ClearAllPoints()
                 for _, point in ipairs(state.iconPoints or {}) do state.icon:SetPoint(unpack(point)) end
                 if state.texCoords and #state.texCoords > 0 then state.icon:SetTexCoord(unpack(state.texCoords)) end
+                if state.iconColor and #state.iconColor > 0 then
+                    state.icon:SetVertexColor(unpack(state.iconColor))
+                end
+                if state.iconAlpha ~= nil then state.icon:SetAlpha(state.iconAlpha) end
+                if type(state.icon.SetDesaturated) == "function" then
+                    state.icon:SetDesaturated(state.iconDesaturated and true or false)
+                end
             end
             if button.HotKey and state.hotkey and state.hotkey[1] then
                 button.HotKey:SetFont(state.hotkey[1], state.hotkey[2], state.hotkey[3])
@@ -1567,7 +1622,12 @@ function MinimalUI:StyleActionButtons(enabled)
             end
             if button.__mbMinimalBorder then button.__mbMinimalBorder:Hide() end
             if button.__mbActionGloss then button.__mbActionGloss:Hide() end
+            if button.__mbActionLight then button.__mbActionLight:Hide() end
             if button.__mbEmptyFill then button.__mbEmptyFill:Hide() end
+            local cooldown = button.cooldown or button.Cooldown
+            if cooldown and state.cooldownSwipe and type(cooldown.SetSwipeColor) == "function" then
+                cooldown:SetSwipeColor(unpack(state.cooldownSwipe))
+            end
             for region, font in pairs(state.cooldownFonts or {}) do
                 if region and font and font[1] then region:SetFont(font[1], font[2], font[3]) end
             end
@@ -1584,6 +1644,21 @@ end
 -- То же самое для строк Details: градиент один и тот же на все полосы.
 local DETAILS_FILL_BOTTOM = CreateColor and CreateColor(.36, .36, .36, 1)
 local DETAILS_FILL_TOP = CreateColor and CreateColor(1, 1, 1, 1)
+
+local function SafeObjectValue(object, method)
+    local callback = object and object[method]
+    if type(callback) ~= "function" then return nil end
+    local ok, value = pcall(callback, object)
+    if ok then return value end
+end
+
+local function SafePushObjectChildren(queue, object)
+    local callback = object and object.GetChildren
+    if type(callback) ~= "function" then return end
+    local values = { pcall(callback, object) }
+    if not values[1] then return end
+    for index = 2, #values do queue[#queue + 1] = values[index] end
+end
 
 function MinimalUI:StyleDetails(enabled)
     if not _G.Details or type(Details.GetAllInstances) ~= "function" then return end
@@ -1694,11 +1769,15 @@ end
 -- surface and cyan edge used by the rest of MythicBoost.
 local function NativeDamageMeterFrame(frame)
     if not frame or type(frame.GetName) ~= "function" then return false end
-    local name = frame:GetName()
+    -- DamageMeterEntry exposes a GetName method that can throw while Blizzard
+    -- is recycling the row. Discovery must never trust methods on foreign UI
+    -- objects, even when their type signature looks correct.
+    local name = SafeObjectValue(frame, "GetName")
     if type(name) ~= "string" or not name:find("DamageMeter", 1, true) then return false end
     if name:match("^DamageMeterSessionWindow%d+$") then return false end
     if type(frame.GetWidth) ~= "function" or type(frame.GetHeight) ~= "function" then return false end
-    return (frame:GetWidth() or 0) >= 220 and (frame:GetHeight() or 0) >= 110
+    return (SafeObjectValue(frame, "GetWidth") or 0) >= 220
+        and (SafeObjectValue(frame, "GetHeight") or 0) >= 110
 end
 
 local function SaveAndMuteNativeMeterObject(state, object)
@@ -1730,8 +1809,49 @@ local function NativeMeterDecorations(frame, state)
     end
 end
 
-function MinimalUI:SkinNativeDamageMeterFrame(frame, enabled)
-    if not NativeDamageMeterFrame(frame) then return end
+local function StyleNativeMeterBars(frame, state, enabled)
+    state.bars = state.bars or UI.WeakKeys()
+    local queue, index, seen = { frame }, 1, {}
+    while queue[index] and index <= 140 do
+        local node = queue[index]
+        index = index + 1
+        if node and not seen[node] then
+            seen[node] = true
+            local objectType = SafeObjectValue(node, "GetObjectType")
+            if objectType == "StatusBar" and type(node.SetStatusBarTexture) == "function" then
+                local barState = state.bars[node]
+                if not barState then
+                    local texture = node:GetStatusBarTexture()
+                    barState = {
+                        texture = texture and texture:GetTexture(),
+                        color = { node:GetStatusBarColor() },
+                    }
+                    local gloss = node:CreateTexture(nil, "ARTWORK", nil, 7)
+                    gloss:SetPoint("TOPLEFT", 1, -1)
+                    gloss:SetPoint("TOPRIGHT", -1, -1)
+                    gloss:SetHeight(math.max(2, (node:GetHeight() or 14) * .42))
+                    gloss:SetColorTexture(1, 1, 1, 1)
+                    gloss:SetBlendMode("ADD")
+                    gloss:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(.9, .96, 1, .16))
+                    barState.gloss = gloss
+                    state.bars[node] = barState
+                end
+                if enabled then
+                    node:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+                    barState.gloss:Show()
+                else
+                    if barState.texture then node:SetStatusBarTexture(barState.texture) end
+                    if barState.color then node:SetStatusBarColor(unpack(barState.color)) end
+                    barState.gloss:Hide()
+                end
+            end
+            SafePushObjectChildren(queue, node)
+        end
+    end
+end
+
+function MinimalUI:SkinNativeDamageMeterFrame(frame, enabled, knownWindow)
+    if not knownWindow and not NativeDamageMeterFrame(frame) then return end
     self.nativeMeterState = self.nativeMeterState or UI.WeakKeys()
     local state = self.nativeMeterState[frame]
     if not state then
@@ -1763,6 +1883,7 @@ function MinimalUI:SkinNativeDamageMeterFrame(frame, enabled)
     if enabled then
         NativeMeterDecorations(frame, state)
         state.fill:Show(); state.edge:Show(); state.accent:Show()
+        StyleNativeMeterBars(frame, state, true)
         local scrollBar = frame.ScrollBar or frame.scrollBar
         if scrollBar and type(scrollBar.SetAlpha) == "function" then
             if state.scrollAlpha == nil then state.scrollAlpha = scrollBar:GetAlpha() end
@@ -1776,9 +1897,73 @@ function MinimalUI:SkinNativeDamageMeterFrame(frame, enabled)
         if state.fill then state.fill:Hide() end
         if state.edge then state.edge:Hide() end
         if state.accent then state.accent:Hide() end
+        StyleNativeMeterBars(frame, state, false)
         local scrollBar = frame.ScrollBar or frame.scrollBar
         if scrollBar and state.scrollAlpha ~= nil then scrollBar:SetAlpha(state.scrollAlpha) end
         state.scrollAlpha = nil
+    end
+end
+
+function MinimalUI:QueueNativeDamageMeterDetails()
+    if self.nativeMeterDetailsQueued or not C_Timer then return end
+    self.nativeMeterDetailsQueued = true
+    C_Timer.After(.05, function()
+        self.nativeMeterDetailsQueued = nil
+        if not MythicBoostDB or not MythicBoostDB.minimalUI then return end
+        -- Detail windows are named DamageMeter globals. Scanning that table
+        -- once after a physical row click is cheap and does not mutate the
+        -- live EnumerateFrames list that caused the former client freeze.
+        for name, frame in pairs(_G) do
+            if type(name) == "string" and name:find("DamageMeter", 1, true)
+                and NativeDamageMeterFrame(frame) then
+                self:SkinNativeDamageMeterFrame(frame, true, false)
+            end
+        end
+    end)
+end
+
+local function HookNativeMeterDetailClicks(module, root)
+    local queue, index, seen = { root }, 1, {}
+    while queue[index] and index <= 140 do
+        local node = queue[index]
+        index = index + 1
+        if node and not seen[node] then
+            seen[node] = true
+            local objectType = SafeObjectValue(node, "GetObjectType")
+            local mouseEnabled = SafeObjectValue(node, "IsMouseEnabled")
+            if (objectType == "Button" or mouseEnabled) and not node.__mbMeterDetailHook
+                and type(node.HookScript) == "function" then
+                node.__mbMeterDetailHook = true
+                pcall(node.HookScript, node, "OnMouseUp", function() module:QueueNativeDamageMeterDetails() end)
+            end
+            SafePushObjectChildren(queue, node)
+        end
+    end
+end
+
+-- Session windows are already exposed by Blizzard's owner or numbered frame
+-- globals. Style only those known objects: no global scan, reparenting,
+-- resizing or periodic work is needed.
+function MinimalUI:StyleNativeDamageMeterWindows(enabled)
+    local windows, seen = {}, {}
+    local function Add(frame)
+        if frame and not seen[frame] and type(frame.GetWidth) == "function" then
+            seen[frame] = true
+            windows[#windows + 1] = frame
+        end
+    end
+    local owner = _G.DamageMeter
+    if owner and type(owner.ForEachSessionWindow) == "function" then
+        pcall(owner.ForEachSessionWindow, owner, Add)
+    end
+    for index = 1, 10 do Add(_G["DamageMeterSessionWindow" .. index]) end
+    if not enabled then
+        for frame in pairs(self.nativeMeterState or {}) do self:SkinNativeDamageMeterFrame(frame, false) end
+        return
+    end
+    for _, frame in ipairs(windows) do
+        self:SkinNativeDamageMeterFrame(frame, true, true)
+        HookNativeMeterDetailClicks(self, frame)
     end
 end
 
@@ -1887,7 +2072,6 @@ function MinimalUI:Apply()
     self:StyleMicroMenu(enabled)
     self:StyleObjectiveTracker(enabled)
     local options = MythicBoostDB and MythicBoostDB.minimalUIOptions or {}
-    self:StyleActionBarRows(enabled and options.compactActionBars == true)
     self:StyleStanceBar(enabled and options.hideStanceBar == true)
     -- Micro-menu placement is the tracker's anchor; bind it once more after
     -- the final micro pass so objective rows never retain a stale position.
@@ -1895,11 +2079,12 @@ function MinimalUI:Apply()
     self:StyleActionButtons(enabled)
     self:StyleCooldownEffectBars(enabled)
     self:StyleDetails(enabled)
-    self:StyleNativeDamageMeter(enabled)
+    -- Blizzard's own Damage Meter keeps its complete native artwork. The
+    -- addon now blends in through its own gold trim instead of repainting a
+    -- protected standard window.
+    self:StyleNativeDamageMeterWindows(false)
     self:StylePlayerAuras(enabled)
     self:StyleBags(hideBags)
-    if JP.MinimalChat then JP.MinimalChat:Apply() end
-    if JP.BottomDock then JP.BottomDock:Apply() end
 
     -- Страховочный проход для тех слоёв, у которых нет своего события: панель
     -- кулдаунов и окна Details создаются на лету чужим кодом, лента
@@ -1915,7 +2100,10 @@ function MinimalUI:Apply()
     -- дерева трекера и одиннадцать семейств кнопок — двадцать четыре
     -- раза в минуту, всегда, даже когда менять нечего.
     if enabled and not self.maintenanceTicker and C_Timer and C_Timer.NewTicker then
-        self.maintenanceTicker = C_Timer.NewTicker(2.5, function()
+        -- Exact events handle the live interface. This is only a fallback for
+        -- foreign frames created silently, so a five-second safety pass is
+        -- enough and halves idle work during dungeons and busy cities.
+        self.maintenanceTicker = C_Timer.NewTicker(5, function()
             if not MythicBoostDB or not MythicBoostDB.minimalUI then return end
             -- Пока открыт режим редактирования, Blizzard должен свободно
             -- показывать и двигать свои макеты без борьбы с нашим тикером.
@@ -1925,7 +2113,6 @@ function MinimalUI:Apply()
             self:StyleMinimap(ownMinimap)
             self:StyleCooldownEffectBars(true)
             self:StyleDetails(true)
-            self:StyleNativeDamageMeter(true)
             self:StylePlayerAuras(true)
             self:StyleBags(MythicBoostDB.convenience and MythicBoostDB.convenience.hideBags ~= false)
         end)
@@ -1938,35 +2125,6 @@ end
 function MinimalUI:SetEnabled(enabled)
     MythicBoostDB.minimalUI = enabled and true or false
     self:Apply()
-end
-
--- Keep the three Blizzard action-bar roots in a compact vertical stack.  Only
--- the protected root frames are moved; their secure child buttons retain all
--- native ownership and state-driver behaviour.
-function MinimalUI:StyleActionBarRows(enabled)
-    if InCombatLockdown() then return end
-    local roots = { _G.MainActionBar, _G.MultiBarBottomLeft, _G.MultiBarBottomRight }
-    self.actionBarRowLayouts = self.actionBarRowLayouts or UI.WeakKeys()
-    local previous
-    for _, bar in ipairs(roots) do
-        if bar and type(bar.GetNumPoints) == "function" and type(bar.SetPoint) == "function" then
-            if not self.actionBarRowLayouts[bar] then
-                self.actionBarRowLayouts[bar] = CaptureFrameLayout(bar)
-            end
-            if enabled and bar:IsShown() then
-                bar:ClearAllPoints()
-                if previous then
-                    bar:SetPoint("BOTTOM", previous, "TOP", 0, 3)
-                else
-                    bar:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 18)
-                end
-                previous = bar
-            elseif not enabled then
-                RestoreFrameLayout(bar, self.actionBarRowLayouts[bar])
-            end
-        end
-    end
-    if not enabled then wipe(self.actionBarRowLayouts) end
 end
 
 function MinimalUI:StyleStanceBar(enabled)

@@ -102,17 +102,31 @@ def test_safe_defaults():
     assert db.convenience.autoKeystone is True
     for key in ("autoQuests", "summon", "resurrection", "sellJunk", "repair", "whisperInvite"):
         assert db.convenience[key] is False
-    assert db.unitFrames.enabled is False
-    assert (db.unitFrames.scale, db.unitFrames.opacity) == (1, 1)
+    assert db.minimalUI is True and db.minimalUIOptions.hideStanceBar is True
+    assert db.unitFrames.enabled is True
+    assert (db.unitFrames.scale, db.unitFrames.opacity) == (1.5, 1)
     assert db.unitFrames.showHealthText is True and db.unitFrames.showPowerText is True
     assert db.unitFrames.animatedPortrait is True and db.unitFrames.showBadges is True
     assert db.unitFrames.showPlayerAuras is True and db.unitFrames.showTargetAuras is True
-    assert db.unitFrames.showResourcePips is True and db.unitFrames.showEmptyResources is True
+    assert db.unitFrames.alwaysShowTarget is True and db.unitFrames.aurasAbove is True
+    assert db.unitFrames.showResourcePips is True and db.unitFrames.showEmptyResources is False
     assert (db.unitFrames.resourceHeight, db.unitFrames.resourceGap, db.unitFrames.resourceOpacity) == (10, 2, 1)
-    assert db.castBar.enabled is False
-    assert db.lootUI.enabled is False
+    assert db.castBar.enabled is True
+    assert db.lootUI.enabled is True
     assert db.smartClick.buff is False and db.smartClick.res is False
     assert db.rcLoot.enabled is False and db.errorGuard.enabled is False
+    assert db.errorGuard.stabilityPrunedRevision == 3
+
+    # A non-empty legacy profile with no HUD keys must not be taken over by an
+    # update. The same visual defaults above are reserved for genuinely fresh
+    # users, while explicit settings remain untouched below.
+    lua.execute("""MythicBoostDB={scannedPlayers={Legacy=true}};
+        coreEvents(nil,'ADDON_LOADED','MythicBoost')""")
+    db = lua.globals().MythicBoostDB
+    assert db.minimalUI is False and db.minimalUIOptions.minimap is False
+    assert db.unitFrames.enabled is False and db.unitFrames.hideBlizzard is False
+    assert db.castBar.enabled is False and db.lootUI.enabled is False
+    assert db.convenience.hideBags is False
 
     # Explicit choices survive initialization, while the old automatically
     # raised leader-run threshold is migrated away once.
@@ -575,7 +589,7 @@ def test_basicminimap_owns_the_minimap():
     assert "self:StyleMinimap(minimapEnabled)" in source
     assert 'L("Оформлять миникарту MythicBoost")' in settings
     assert 'Enable("minimalUIMinimap", MythicBoostDB.minimalUI == true)' in settings
-    assert "db.minimalUIOptions.minimap = true" in core
+    assert "db.minimalUIOptions.minimap = freshProfile" in core
 
 
 def test_run_history_can_invite_by_whisper():
@@ -652,6 +666,18 @@ def test_target_identity_and_portrait_have_fallbacks():
     frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
     assert 'model:SetScript("OnModelLoaded"' in ui
     assert "portrait.face:Hide()" in ui and "self.model:Hide()" in ui
+    portrait = ui.split("function UI.Portrait", 1)[1].split("function UI.StatusBar", 1)[0]
+    loaded = portrait.split('model:SetScript("OnModelLoaded"', 1)[1].split(
+        "portrait.ring, portrait.face, portrait.model", 1
+    )[0]
+    assert "self:Show()" not in loaded
+    assert portrait.index("self.model:SetAlpha(0)") < portrait.index(
+        "local modelOK = pcall(self.model.SetUnit, self.model, unit)"
+    )
+    assert "self.model:Show()" in portrait
+    assert "self:SetAlpha(1)" in portrait
+    assert 'self.ring:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3]' in portrait
+    assert "self.face:SetDesaturated(false)" in portrait
     assert "local function ReadUnitName" in frames
     assert "UnitNameUnmodified" in frames and "display.cachedName" in frames
     refresh = frames.split("function UnitFrames:RefreshDisplay", 1)[1].split(
@@ -664,6 +690,10 @@ def test_target_identity_and_portrait_have_fallbacks():
     assert "function UnitFrames:QueuePortraitRefresh" in frames
     assert "display.portraitRefreshToken ~= token" in frames
     assert "self:QueuePortraitRefresh(display)" in frames
+    assert 'display.name = UI.Text(namePanel, "GameFontNormalSmall", "", C.amber)' in frames
+    assert 'display.name:SetFont(nameFont, 11, nameFlags or "OUTLINE")' in frames
+    assert 'display.name:SetPoint("TOPLEFT", 10, 0)' in frames
+    assert 'display.name:SetPoint("BOTTOMRIGHT", -10, 1)' in frames
 
 
 def test_rotation_suggestion_stays_square():
@@ -686,55 +716,206 @@ def test_rotation_suggestion_stays_square():
     assert "fill:SetColorTexture(.16, .22, .28, .24)" in action
 
 
+def test_active_cooldown_icons_are_compacted_without_empty_slots():
+    source = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    compact = source.split("function MinimalUI:CompactCooldownIcons", 1)[1].split(
+        "function MinimalUI:StyleCooldownEffectBars", 1
+    )[0]
+    assert "BuffIconCooldownViewer" in compact
+    assert "button:IsShown()" in compact and "icon:IsShown()" in compact
+    assert 'button:SetPoint("CENTER", viewer, "CENTER", cursor + width * .5, 0)' in compact
+    assert 'button:HookScript("OnShow"' in compact
+    assert 'button:HookScript("OnHide"' in compact
+    assert "for _, point in ipairs(state.points or {}) do button:SetPoint(unpack(point)) end" in compact
+
+
+def test_chat_skin_is_fully_removed():
+    toc = (ROOT / "MythicBoost/MythicBoost.toc").read_text(encoding="utf-8")
+    minimal = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    assert not (ROOT / "MythicBoost/Modules/MinimalChat.lua").exists()
+    assert "Modules/MinimalChat.lua" not in toc
+    assert "JP.MinimalChat" not in minimal
+
+
 def test_brand_icon_and_upgrade_shortcut():
     ui = (ROOT / "MythicBoost/UI.lua").read_text(encoding="utf-8")
     switch = (ROOT / "MythicBoost/Modules/FrameSwitch.lua").read_text(encoding="utf-8")
     upgrades = (ROOT / "MythicBoost/Modules/UpgradeCalculator.lua").read_text(encoding="utf-8")
     toc = (ROOT / "MythicBoost/MythicBoost.toc").read_text(encoding="utf-8")
-    assert (ROOT / "MythicBoost/Media/MythicBoostIcon.png").is_file()
+    assert (ROOT / "MythicBoost/Media/MythicBoostIcon.tga").is_file()
+    assert (ROOT / "MythicBoost/Media/LootGlass.tga").is_file()
+    assert (ROOT / "MythicBoost/Media/LootGlow.tga").is_file()
     assert "function UI.IconButton" in ui
+    assert "local function ResetIconButtonPress" in ui
+    assert 'button:HookScript("OnHide", ResetIconButtonPress)' in ui
     assert "UI.IconButton(PVEFrame, ICON, 28)" in switch
     assert "function UpgradeCalculator:EnsureUpgraderShortcut" in upgrades
+    assert 'button:SetPoint("RIGHT", close, "LEFT", -7, 0)' in upgrades
+    assert "close:GetFrameLevel() + 1" in upgrades
     assert 'welcome:SwitchPage("upgrades")' in upgrades
-    assert "Media\\MythicBoostIcon" in toc
+    assert "Media\\MythicBoostIcon.tga" in toc
+    assert "## AddonCompartmentFunc: MythicBoost_OnAddonCompartmentClick" in toc
+    assert "MythicBoostIcon.tga" in switch and "MythicBoostIcon.tga" in upgrades
+    assert "local function ShowCurrencyDetailsTooltip" in upgrades
+    assert "GameTooltip.SetCurrencyByID" in upgrades
+    assert "ShowCurrencyDetailsTooltip(self)" in upgrades
 
 
-def test_bottom_hud_uses_native_blizzard_frames_and_restores_them():
-    dock = (ROOT / "MythicBoost/Modules/BottomDock.lua").read_text(encoding="utf-8")
+def test_native_gold_trim_is_applied_without_repainting_damage_meter():
+    ui = (ROOT / "MythicBoost/UI.lua").read_text(encoding="utf-8")
+    frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    minimal = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    assert "frame.__mbGoldTrimTop" in ui and "frame.__mbGoldTrimBottom" in ui
+    assert "top:SetColorTexture(.98, .76, .22, .86)" in ui
+    assert "sheen:SetColorTexture(.98, .76, .22, .82)" in frames
+    assert "local ACTION_EDGE_IDLE = { .48, .34, .09 }" in minimal
+    assert "anchor.railTop" in minimal and "anchor.railBottom" in minimal
+    assert "CreateColor(.98, .76, .22, .22)" in minimal
+    assert "self:StyleNativeDamageMeterWindows(false)" in minimal
+
+
+def test_layout_takeover_features_are_fully_removed():
     settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
     core = (ROOT / "MythicBoost/Core.lua").read_text(encoding="utf-8")
     toc = (ROOT / "MythicBoost/MythicBoost.toc").read_text(encoding="utf-8")
-    assert "Modules/BottomDock.lua" in toc
-    assert '_G.ChatFrame1' in dock
-    assert '_G["DamageMeterSessionWindow" .. index]' in dock
-    assert "Enum.DamageMeterType.DamageDone" in dock
-    assert "Enum.DamageMeterType.HealingDone" in dock
-    assert "CaptureFrame(frame)" in dock and "RestoreFrame(frame, state" in dock
-    assert "if InCombatLockdown() then self.pendingApply" in dock
-    assert "layoutOnboardingRevision" in dock
-    assert "OnCancel = function() MythicBoostDB.layoutOnboardingRevision = 1 end" in dock
-    assert 'L("Нижний HUD: чат, урон и исцеление")' in settings
-    assert "db.minimalUIOptions.bottomDock = false" in core
+    minimal = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    assert not (ROOT / "MythicBoost/Modules/BottomDock.lua").exists()
+    assert "Modules/BottomDock.lua" not in toc
+    assert 'L("Нижний HUD: чат, урон и исцеление")' not in settings
+    assert 'L("Три ряда панелей способностей")' not in settings
+    assert "JP.BottomDock" not in minimal
+    assert "function MinimalUI:StyleActionBarRows" not in minimal
+    assert "db.minimalUIOptions.bottomDock = nil" in core
+    assert "db.minimalUIOptions.compactActionBars = nil" in core
 
 
 def test_compact_hud_controls_and_native_meter_skin():
     source = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
     settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
-    assert 'bar:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 18)' in source
-    assert 'bar:SetPoint("BOTTOM", previous, "TOP", 0, 3)' in source
     assert "function MinimalUI:StyleStanceBar" in source
-    assert 'L("Три ряда панелей способностей")' in settings
     assert 'L("Скрывать панель стоек")' in settings
     assert "function MinimalUI:StyleNativeDamageMeter" in source
     assert 'name:find("DamageMeter", 1, true)' in source
     assert "NativeMeterDecorations(frame, state)" in source
-    assert "self:StyleNativeDamageMeter(enabled)" in source
     native = source.split("function MinimalUI:StyleNativeDamageMeter", 1)[1].split(
         "local function CaptureFrameLayout", 1
     )[0]
     assert native.index("candidates[#candidates + 1] = frame") < native.index(
         "self:SkinNativeDamageMeterFrame(candidate, true)"
     )
+    apply = source.split("function MinimalUI:Apply", 1)[1].split(
+        "function MinimalUI:SetEnabled", 1
+    )[0]
+    assert "self:StyleNativeDamageMeterWindows(false)" in apply
+    assert "self:StyleNativeDamageMeterWindows(enabled)" not in apply
+    assert "self:StyleNativeDamageMeter(true)" not in apply
+    native_skin = source.split("function MinimalUI:SkinNativeDamageMeterFrame", 1)[1].split(
+        "function MinimalUI:QueueNativeDamageMeterDetails", 1
+    )[0]
+    assert "frame:SetSize(" not in native_skin
+    assert "function MinimalUI:QueueNativeDamageMeterDetails" in source
+    assert 'pcall(node.HookScript, node, "OnMouseUp"' in source
+    assert "StyleNativeMeterBars(frame, state, true)" in source
+
+
+def test_native_addon_compartment_and_bright_action_icons():
+    source = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    toc = (ROOT / "MythicBoost/MythicBoost.toc").read_text(encoding="utf-8")
+    assert "RememberAndHideMinimap(self, nativeCompartment)" not in source
+    assert 'GameTooltip:SetText(L("Меню аддонов"))' not in source
+    assert "HideLooseMinimapAddonButtons(self, true)" in source
+    assert "not IsNativeCompartment(button)" in source
+    assert "nativeCompartment:Show()" in source
+    assert "MythicBoostMinimapButtonLauncher" not in source
+    assert "StyleMinimapAddonButtons" not in source
+    assert "button.__mbActionLight" in source
+    assert "button.NewActionTexture" in source
+    assert "texture.__mbActionArtifactAlphaHooked" in source
+    assert "cooldown:SetSwipeColor(0, 0, 0, .42)" in source
+    assert "state.icon:SetVertexColor(1, 1, 1, 1)" in source
+    assert "Minimap:SetSize(265, 265)" in source
+    assert 'label:SetFont(self.minimapZoneLayout.labelFont[1], 13, "OUTLINE")' in source
+    assert "local rowWidth, gap = mapWidth, 0" in source
+    assert "Add(_G.AddonCompartmentFrame)" not in source
+    assert 'anchor:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 0, -4)' in source
+    assert 'button:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -8, 8)' in source
+    assert "button:SetScale(1.1)" in source
+    assert 'buttonName == "HelpMicroButton"' in source
+    assert 'Add("HelpMicroButton")' in source
+    assert 'buttonName == "MainMenuMicroButton"' in source
+    assert 'button == _G.MainMenuMicroButton' in source
+    assert "if self.minimapOwnershipActive and not owner.__mbMinimapHideActive then" in source
+    assert "button:SetShown(state.shown)" in source
+    assert 'button:SetPoint("CENTER", slot, "CENTER", 0, 0)' in source
+    assert 'text:SetFont(fontPath, 12, "OUTLINE")' in source
+    assert 'Place(queueStatus, "queueStatus", "BOTTOMLEFT", "BOTTOMLEFT", 6, 6)' in source
+    assert 'self.minimapClock:SetPoint("BOTTOM", Minimap, "BOTTOM", 0, 5)' in source
+    assert "PlaceNativeAddonCompartment(self, true)" in source
+    assert "## Category: Dungeons & Raids" in toc
+    assert "## Category-ruRU: Подземелья и рейды" in toc
+    assert "## Category-ru:" not in toc
+
+
+def test_stability_guards_avoid_foreign_frame_errors_and_idle_tickers():
+    minimal = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    guard = (ROOT / "MythicBoost/Modules/ErrorGuard.lua").read_text(encoding="utf-8")
+    applicants = (ROOT / "MythicBoost/Modules/ApplicantHighlighter.lua").read_text(encoding="utf-8")
+    loot = (ROOT / "MythicBoost/Modules/LootUI.lua").read_text(encoding="utf-8")
+    tooltip = (ROOT / "MythicBoost/Modules/PlayerTooltip.lua").read_text(encoding="utf-8")
+    native = minimal.split("local function NativeDamageMeterFrame", 1)[1].split(
+        "local function SaveAndMuteNativeMeterObject", 1
+    )[0]
+    assert 'SafeObjectValue(frame, "GetName")' in native
+    assert 'SafeObjectValue(frame, "GetWidth")' in native
+    assert "SafePushObjectChildren(queue, node)" in minimal
+    assert "QueueDirtyRefresh()" in guard
+    assert "C_Timer.NewTicker(1" not in guard
+    assert "settings.keepBetweenSessions == false and not self.sessionLogReset" in guard
+    assert "owner:UnregisterAllEvents()" in guard
+    assert "if not viewCallbackInstalled then" in applicants
+    assert "function LootUI:ScheduleHistoryExpiry()" in loot
+    assert "if self.historyExpiryQueued" in loot
+    assert "C_Timer.After(HISTORY_LIFETIME + .1" not in loot
+    assert "if attemptsLeft <= 0 then self.raiderSkinTicker = nil end" in tooltip
+    assert "not owner.__mbLooseMinimapHideActive" in minimal
+    assert "not owner.__mbMinimapHideActive" in minimal
+    assert "not owner.__mbQuestionHideActive" in minimal
+    assert "not owner.__mbBagHideActive" in minimal
+    assert "C_Timer.NewTicker(5, function()" in minimal
+    assert "not owner.__mbCastBarHideActive" in (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
+    assert "not owner.__mbErrorGuardHideActive" in guard
+    assert "frame.__mbRollHideActive" in loot
+
+
+def test_loot_roll_preview_is_local_and_draggable():
+    loot = (ROOT / "MythicBoost/Modules/LootUI.lua").read_text(encoding="utf-8")
+    settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
+    core = (ROOT / "MythicBoost/Core.lua").read_text(encoding="utf-8")
+    assert "function LootUI:ShowTestRoll()" in loot
+    assert "local TEST_ROLL_ID = -2147483647" in loot
+    assert "local ok = row.testRoll == true" in loot
+    assert "MythicBoostDB.interfaceUnlocked or frame.testMoveUnlocked" in loot
+    assert "SaveAuxiliaryPosition(frame, positionKey)" in loot
+    assert "local ROLL_FRAME_WIDTH = 420" in loot
+    assert 'BuildAuxiliaryHeader(rollFrame, L("БРОСКИ ГРУППЫ")' in loot
+    assert "UI-GroupLoot-Dice-Up" in loot
+    assert "UI-GroupLoot-Coin-Up" in loot
+    assert "UI-GroupLoot-DE-Up" in loot
+    assert "UI-GroupLoot-Pass-Up" in loot
+    assert "LOOT_GLASS_TEXTURE" in loot and "LOOT_GLOW_TEXTURE" in loot
+    assert 'L("БоЕ")' in loot and 'L("БоИ")' in loot
+    assert '"CHAT_MSG_MONEY", "CHAT_MSG_CURRENCY"' in loot
+    assert "local function IsOwnLootMessage(message)" in loot
+    assert "displayMessage = itemLink" in loot
+    assert "function LootUI:SetUnlocked(unlocked)" in loot
+    assert 'historyFrame.title = UI.Text(historyFrame.header, "GameFontNormalSmall", L("МОНИТОР ДОБЫЧИ")' in loot
+    assert 'row:SetPoint("BOTTOMLEFT", 0, HISTORY_FOOTER_HEIGHT + 2' in loot
+    assert "if JP.LootUI then JP.LootUI:SetUnlocked(unlocked) end" in settings
+    assert "if row.rollID == TEST_ROLL_ID then LootUI:RemoveRoll(TEST_ROLL_ID) end" in loot
+    assert "rollFrame.close = UI.CloseButton(rollFrame)" in loot
+    assert 'L("Показать тестовый бросок")' in settings
+    assert 'Heading(lootPage, L("ГРУППОВАЯ ДОБЫЧА"), 28, -322, 764)' in settings
+    assert 'command == "testroll"' in core
 
 
 def test_unit_frame_badges_target_placeholder_and_aura_order():
@@ -743,12 +924,55 @@ def test_unit_frame_badges_target_placeholder_and_aura_order():
     assert "function UnitFrames:ConfigureBadgeDisplay" in frames
     assert "ApplyBadgeShape(panel, settings.badgeShape)" in frames
     assert "Settings().badgesUnlocked == true" in frames
-    assert 'display.name:SetText(moving and L("ЦЕЛЬ") or L("ЦЕЛИ НЕТ"))' in frames
+    assert 'local otherUnit = display.unit == "player" and "target" or "player"' in frames
+    assert "otherDisplay.holder:GetWidth()" in frames
+    assert "mirroredX, y" in frames
+    assert 'L("Нет")' in settings
+    assert 'display.name:SetText(moving and L("Цель") or L("Цель не выбрана"))' in frames
+    placeholder = frames.split("local function ShowTargetPlaceholder", 1)[1].split(
+        "local function RestoreTargetPlaceholder", 1
+    )[0]
+    assert "display.portrait.ring:Show()" in placeholder
+    assert 'display.portrait.face:SetTexture("Interface\\\\Icons\\\\INV_Misc_QuestionMark")' in placeholder
+    assert "display.levelPanel:Hide()" in placeholder
+    assert "display.classPanel:Hide()" in placeholder
+    assert "display.statsPanel:Show()" in placeholder
+    assert "display.health:SetValue(1)" in placeholder
+    assert "display.power:SetValue(1)" in placeholder
+    assert "display.panel:SetSize(SIZE.panelWidth, SIZE.headerH)" in placeholder
+    assert "gravityToFrame and (lines - 1 - sourceLine) or sourceLine" in frames
     assert "ActiveSettings().alwaysShowTarget == true" in frames
     aura_above = settings.index('L("Размещать ауры сверху")')
     player_auras = settings.index('L("Показывать ауры игрока")')
     target_auras = settings.index('L("Показывать ауры цели")')
     assert aura_above < player_auras < target_auras
+
+
+def test_cast_events_are_correlated_and_capsule_uses_glass_progress():
+    cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
+    frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    assert "local function MatchesActiveCast" in cast
+    assert "if not self.frame or not self.active then return end" in cast
+    assert "if MatchesActiveCast(self, arg2, arg3) then self:Finish(false) end" in cast
+    assert "self.sentGUID = PlainToken(arg3) and arg3 or nil" in cast
+    assert "function UnitFrames:UpdateCast(display, event)" in frames
+    assert "display.name:Hide()" in frames
+    assert "castFill:SetGradient" in frames
+    assert "display.castIcon:SetTexture(icon)" in frames
+    assert "display.classIcon:Hide()" in frames
+    assert "UI.SetClassIconTexture(display.classIcon, class)" in frames
+    assert 'display.classIcon = CreateBadgeLayer(levelPanel, 22, "OVERLAY", 6)' in frames
+    assert "local function UpdateClassBadgePanelVisibility(display)" in frames
+    assert "display.hasClassIcon == true or display.hasCastIcon == true" in frames
+    assert "UpdateClassBadgePanelVisibility(display)" in frames
+    assert "CreateColor(1, .49, 0, .96)" in frames
+    assert "CreateColor(.44, .36, 1, .96)" in frames
+    assert "local function CastLatency(duration)" in frames
+    assert "math.max(IsPlainNumber(homeMS) and homeMS or 0" in frames
+    assert "now - startTime + latency" in frames
+    assert "endTime - now - latency" in frames
+    assert "display.castCompleteUntil = now + math.max(.06, display.castLatency or 0)" in frames
+    assert "self:UpdateCast(display, event)" in frames
 
 
 def test_unit_frames_magnetize_to_blizzard_action_bars():
@@ -757,6 +981,115 @@ def test_unit_frames_magnetize_to_blizzard_action_bars():
     assert '"ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton"' in source
     assert "self:MagnetizeToActionBars(display)" in source
     assert "horizontalDistance > 44" in source
+
+
+def test_approved_hud_is_the_new_profile_default():
+    frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
+    loot = (ROOT / "MythicBoost/Modules/LootUI.lua").read_text(encoding="utf-8")
+    assert 'player = { "BOTTOM", -269, 2 }' in frames
+    assert 'target = { "BOTTOM", 269, 2 }' in frames
+    assert "local DEFAULT_BADGE_POSITION" in frames
+    assert "db.unitFrames.positionRevision ~= 6" in frames
+    assert "scale = 1.5" in frames
+    assert "alwaysShowTarget = true" in frames
+    assert "aurasAbove = true" in frames
+    assert "showEmptyResources = false" in frames
+    assert "local SETTINGS_DEFAULTS = { enabled = true" in cast
+    assert "settings.x, settings.y = 2, 161" in cast
+    assert "local SETTINGS_DEFAULTS = { enabled = true" in loot
+    assert not (ROOT / "MythicBoost/Media/XPerl_TargetSelect.ogg").exists()
+
+
+def test_restricted_auras_use_targeted_friendly_lookup():
+    ui = (ROOT / "MythicBoost/UI.lua").read_text(encoding="utf-8")
+    frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    smart = (ROOT / "MythicBoost/Modules/SmartClick.lua").read_text(encoding="utf-8")
+    tracker = (ROOT / "MythicBoost/Modules/PositiveAuraTracker.lua").read_text(encoding="utf-8")
+    settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
+    core = (ROOT / "MythicBoost/Core.lua").read_text(encoding="utf-8")
+    toc = (ROOT / "MythicBoost/MythicBoost.toc").read_text(encoding="utf-8")
+
+    assert 'function UI.SafeUnitAura(unit, spellID)' in ui
+    assert 'C_UnitAuras.GetUnitAuraBySpellID' in ui
+    assert 'InCombatLockdown() then return nil, true end' in ui
+    assert 'InCombatLockdown() then return false end' in frames
+    assert 'local data, blocked = SafeUnitAura(unit, spellID)' in smart
+    assert 'UI.SafeUnitAura("player", spellID)' in tracker
+    assert "showIcon = true" in tracker
+    assert 'Default(db.positiveAuraTracker, "showIcon", true)' in core
+    assert "db.positiveAuraTracker.identityRevision ~= 1" in core
+    assert "db.errorGuard.stabilityPrunedRevision ~= 3" in core
+    assert 'message:find("MythicBoost/Modules/PositiveAuraTracker.lua:42", 1, true)' in core
+    assert "icon.textureBorder:SetShown(settings.showIcon ~= false)" in tracker
+    assert '"! " .. icon.missingCount' in tracker
+    assert "if settings.showWhenMissing and #missing > 0 then" in tracker
+    assert 'spellScanner:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")' in settings
+    assert 'spellScanner:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")' in settings
+    assert "PositiveAuraTracker:AddFromInput(tostring(spellID))" in settings
+    assert 'L("file:ID, путь или заклинание")' not in settings
+    assert 'GetAuraDataByIndex' not in tracker
+    assert 'GetAuraDataByAuraInstanceID' not in tracker
+    assert 'Modules/PositiveAuraTracker.lua' in toc
+    assert 'for index = 1, 8 do frame.icons[index] = CreateIcon(frame) end' in tracker
+    assert 'if self.elapsed >= .10' in tracker
+    assert 'Media\\AuraWingMask.tga' in (ROOT / "Tools/BuildRelease.ps1").read_text(encoding="utf-8")
+    assert (ROOT / "MythicBoost/Media/AuraWingMask.tga").stat().st_size > 100_000
+    assert (ROOT / "MythicBoost/Media/AuraLunarMask.tga").stat().st_size > 100_000
+    assert not (ROOT / "MythicBoost/lunar.blp").exists()
+    assert 'settings.barHeight * progress' in tracker
+    assert 'icon.rightSide and 1 or 0' in tracker
+    assert 'pulseAlpha = .68 + .32 * wave' in tracker
+    assert 'settings.fontSize' in tracker
+    settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
+    assert 'previewLeftFill:SetTexCoord(0, 1, .35, 1)' in settings
+    assert 'local AURA_LEFT, AURA_RIGHT, AURA_CONTROL_WIDTH = 28, 286, 240' in settings
+    assert 'previewPanel:SetSize(150, 240)' in settings
+    assert 'L("Предупреждать, если бафа нет")' in settings
+    assert 'AddFromInput("1233272,194223,102560")' in settings
+    assert 'HoofyEclipse' not in (tracker + settings)
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        function issecretvalue(_) return false end
+        inCombat=true; indexedCalls=0; targetedCalls=0
+        function InCombatLockdown() return inCombat end
+        C_UnitAuras={
+            GetAuraDataByIndex=function() indexedCalls=indexedCalls+1; return {spellId=1} end,
+            GetUnitAuraBySpellID=function(unit,id)
+                targetedCalls=targetedCalls+1; return {spellId=id,unit=unit}
+            end}
+    """)
+    jp = lua.table()
+    jp.L = lambda text: text
+    load(lua, "MythicBoost/Contracts.lua", jp)
+    load(lua, "MythicBoost/UI.lua", jp)
+    aura, blocked = jp.UI.SafeAura("player", 1, "HELPFUL")
+    assert aura is None and blocked is True and lua.globals().indexedCalls == 0
+    aura, blocked = jp.UI.SafeUnitAura("player", 777)
+    assert blocked is False and aura.spellId == 777 and lua.globals().targetedCalls == 1
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        function issecretvalue(_) return false end
+        C_Spell={GetSpellInfo=function(id)
+            if id==123 or id=='Known Buff' then return {spellID=123,name='Known Buff',iconID=456} end
+        end}
+        trackerDB={spellIDs={},texturePreset=2}
+        JP={L=function(x) return x end,
+            UI={colors={},SafeNumber=function(v) if type(v)=='number' then return v end end,
+                SafeString=function(v) if type(v)=='string' and v~='' then return v end end,
+                UsableNumber=function(v) return type(v)=='number' end},
+            Settings=function() return trackerDB end,
+            RegisterModule=function(self,name,module) self[name]=module end}
+    """)
+    jp = lua.globals().JP
+    load(lua, "MythicBoost/Modules/PositiveAuraTracker.lua", jp)
+    resolved, rejected = jp.PositiveAuraTracker.ResolveInput(jp.PositiveAuraTracker, "|Hspell:123|h[Known Buff]|h, bad")
+    assert len(resolved) == 1 and resolved[1].spellID == 123
+    assert len(rejected) == 1 and rejected[1] == "bad"
+    assert "AuraLunarMask" in jp.PositiveAuraTracker.GetBarTexture(jp.PositiveAuraTracker)
+    assert jp.PositiveAuraTracker.GetTextureName(jp.PositiveAuraTracker, 2) == "Вихрь"
 
 
 if __name__ == "__main__":
@@ -778,9 +1111,18 @@ if __name__ == "__main__":
     test_buff_button_is_prepared_before_combat()
     test_target_identity_and_portrait_have_fallbacks()
     test_rotation_suggestion_stays_square()
+    test_active_cooldown_icons_are_compacted_without_empty_slots()
+    test_chat_skin_is_fully_removed()
     test_brand_icon_and_upgrade_shortcut()
-    test_bottom_hud_uses_native_blizzard_frames_and_restores_them()
+    test_native_gold_trim_is_applied_without_repainting_damage_meter()
+    test_layout_takeover_features_are_fully_removed()
     test_compact_hud_controls_and_native_meter_skin()
+    test_native_addon_compartment_and_bright_action_icons()
+    test_stability_guards_avoid_foreign_frame_errors_and_idle_tickers()
+    test_loot_roll_preview_is_local_and_draggable()
     test_unit_frame_badges_target_placeholder_and_aura_order()
+    test_cast_events_are_correlated_and_capsule_uses_glass_progress()
     test_unit_frames_magnetize_to_blizzard_action_bars()
+    test_approved_hud_is_the_new_profile_default()
+    test_restricted_auras_use_targeted_friendly_lookup()
     print("MythicBoost executable smoke tests: all passed")

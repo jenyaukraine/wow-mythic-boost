@@ -1,14 +1,13 @@
 local _, JP = ...
 
 local L = JP.L
--- Единый визуальный язык аддона. Все панели, кнопки, поля и списки
--- создаются только через эти конструкторы, поэтому окно выглядит цельно
--- и не зависит от стандартных шаблонов Blizzard.
+-- Единый визуальный язык аддона. Тёплый золотой кант роднит наши панели со
+-- штатным WoW, а cyan остаётся информационным акцентом внутри интерфейса.
 local UI = {}
 JP.UI = UI
 
 UI.colors = {
-    edge      = { .16, .80, .86, 1 },
+    edge      = { .95, .72, .18, 1 },
     accent    = { .16, .72, .96, 1 },
     accentSoft= { .16, .72, .96, .18 },
     accentDim = { .10, .40, .55, 1 },
@@ -25,8 +24,8 @@ UI.colors = {
     row       = { .075, .093, .118, .92 },
     rowAlt    = { .058, .073, .095, .92 },
     rowHover  = { .112, .150, .190, .95 },
-    line      = { .15, .20, .26, 1 },
-    lineSoft  = { .12, .16, .21, .85 },
+    line      = { .42, .30, .10, 1 },
+    lineSoft  = { .28, .20, .08, .90 },
 
     -- Канонические поверхности. Любая панель аддона — и в окне, и поверх
     -- игрового мира — обязана брать фон и контур ОТСЮДА, а не объявлять свои
@@ -36,7 +35,7 @@ UI.colors = {
     -- пятью разными контурами на одном экране глаз читает как пять разных
     -- аддонов; одинаковые — как один интерфейс.
     surface     = { .014, .020, .028, .94 },
-    surfaceEdge = { .16, .21, .27, .96 },
+    surfaceEdge = { .78, .56, .12, .98 },
 }
 
 local C = UI.colors
@@ -52,8 +51,23 @@ UI.SafeTable = JP.SafeTable
 
 function UI.SafeAura(unit, index, filter)
     if not C_UnitAuras or type(C_UnitAuras.GetAuraDataByIndex) ~= "function" then return nil, true end
+    -- Retail 12.1 restricts indexed/global aura enumeration in combat for
+    -- addon code. A pcall catches a Lua error, but it cannot prevent Blizzard
+    -- from flagging the addon for a forbidden action afterwards. Known
+    -- friendly buffs must use GetUnitAuraBySpellID instead (see SafeUnitAura).
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then return nil, true end
     local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
     if not ok then return nil, true end
+    return data, false
+end
+
+-- Targeted positive-aura lookup. Blizzard explicitly permits this path for
+-- non-secret friendly auras even while addon code is tainted/restricted.
+function UI.SafeUnitAura(unit, spellID)
+    if not C_UnitAuras or type(C_UnitAuras.GetUnitAuraBySpellID) ~= "function"
+        or not UI.UsableNumber(spellID) then return nil, true end
+    local ok, data = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
+    if not ok or JP.IsSecret(data) then return nil, true end
     return data, false
 end
 
@@ -122,6 +136,24 @@ function UI.Backdrop(frame, background, border, edgeSize)
     })
     frame:SetBackdropColor(Unpack(background or C.panel))
     if border then frame:SetBackdropBorderColor(Unpack(border)) end
+    local themed = border == C.edge or border == C.line or border == C.lineSoft or border == C.surfaceEdge
+    if themed and not frame.__mbGoldTrimTop and type(frame.CreateTexture) == "function" then
+        local top = frame:CreateTexture(nil, "BORDER", nil, 7)
+        top:SetPoint("TOPLEFT", 1, -1)
+        top:SetPoint("TOPRIGHT", -1, -1)
+        top:SetHeight(1)
+        top:SetColorTexture(.98, .76, .22, .86)
+        frame.__mbGoldTrimTop = top
+
+        local bottom = frame:CreateTexture(nil, "BORDER", nil, 7)
+        bottom:SetPoint("BOTTOMLEFT", 1, 1)
+        bottom:SetPoint("BOTTOMRIGHT", -1, 1)
+        bottom:SetHeight(1)
+        bottom:SetColorTexture(.20, .11, .025, .90)
+        frame.__mbGoldTrimBottom = bottom
+    end
+    if frame.__mbGoldTrimTop then frame.__mbGoldTrimTop:SetShown(themed) end
+    if frame.__mbGoldTrimBottom then frame.__mbGoldTrimBottom:SetShown(themed) end
 end
 
 function UI.Panel(parent, background, border)
@@ -205,6 +237,26 @@ function UI.ClassIcon(classFilename, size)
         size, size,
         math.floor(coords[1] * 256 + .5), math.floor(coords[2] * 256 + .5),
         math.floor(coords[3] * 256 + .5), math.floor(coords[4] * 256 + .5))
+end
+
+-- Texture counterpart for places that need real masking rather than inline
+-- font markup. The atlas is preferred on current Retail; the legacy class
+-- sheet keeps the medallion working when an atlas is unavailable.
+function UI.SetClassIconTexture(texture, classFilename)
+    if not texture or type(classFilename) ~= "string" then return false end
+    local atlas = CLASS_ATLAS[classFilename]
+    if atlas and type(texture.SetAtlas) == "function" then
+        local ok = pcall(texture.SetAtlas, texture, atlas, false)
+        if ok then return true end
+    end
+    local coords = CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[classFilename]
+    if not coords then
+        texture:SetTexture(nil)
+        return false
+    end
+    texture:SetTexture("Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES")
+    texture:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+    return true
 end
 
 local ROLE_LETTER = { TANK = L("Т"), HEALER = L("Х"), DAMAGER = L("Б") }
@@ -300,18 +352,25 @@ local function IconButtonVisual(button)
     local hovered = button.hovered and enabled
     button:SetBackdropColor(C.field[1], C.field[2], C.field[3], enabled and (hovered and .96 or .82) or .48)
     button:SetBackdropBorderColor(
-        enabled and (hovered and .24 or .12) or .16,
-        enabled and (hovered and .92 or .54) or .20,
-        enabled and (hovered and 1.00 or .70) or .24,
-        enabled and (hovered and 1 or .88) or .60)
+        enabled and (hovered and C.edge[1] or C.line[1]) or C.lineSoft[1],
+        enabled and (hovered and C.edge[2] or C.line[2]) or C.lineSoft[2],
+        enabled and (hovered and C.edge[3] or C.line[3]) or C.lineSoft[3],
+        enabled and (hovered and 1 or .92) or .62)
     button.icon:SetAlpha(enabled and (hovered and 1 or .92) or .38)
     button.glow:SetAlpha(hovered and .24 or 0)
+end
+
+local function ResetIconButtonPress(button)
+    if not button or not button.icon then return end
+    button.icon:ClearAllPoints()
+    button.icon:SetPoint("TOPLEFT", 2, -2)
+    button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
 end
 
 function UI.IconButton(parent, texturePath, size)
     local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
     button:SetSize(size or 28, size or 28)
-    UI.Backdrop(button, { C.field[1], C.field[2], C.field[3], .82 }, { .12, .54, .70, .88 })
+    UI.Backdrop(button, { C.field[1], C.field[2], C.field[3], .82 }, C.line)
 
     button.glow = button:CreateTexture(nil, "BACKGROUND")
     button.glow:SetPoint("TOPLEFT", 1, -1)
@@ -325,9 +384,13 @@ function UI.IconButton(parent, texturePath, size)
     button.icon:SetTexture(texturePath)
 
     button:SetScript("OnEnter", function(self) self.hovered = true; IconButtonVisual(self) end)
-    button:SetScript("OnLeave", function(self) self.hovered = false; IconButtonVisual(self) end)
+    button:SetScript("OnLeave", function(self)
+        self.hovered = false
+        ResetIconButtonPress(self)
+        IconButtonVisual(self)
+    end)
     button:SetScript("OnEnable", IconButtonVisual)
-    button:SetScript("OnDisable", IconButtonVisual)
+    button:SetScript("OnDisable", function(self) ResetIconButtonPress(self); IconButtonVisual(self) end)
     button:SetScript("OnMouseDown", function(self)
         if self:IsEnabled() then
             self.icon:ClearAllPoints()
@@ -335,11 +398,9 @@ function UI.IconButton(parent, texturePath, size)
             self.icon:SetPoint("BOTTOMRIGHT", -1, 1)
         end
     end)
-    button:SetScript("OnMouseUp", function(self)
-        self.icon:ClearAllPoints()
-        self.icon:SetPoint("TOPLEFT", 2, -2)
-        self.icon:SetPoint("BOTTOMRIGHT", -2, 2)
-    end)
+    button:SetScript("OnMouseUp", ResetIconButtonPress)
+    button:HookScript("OnClick", ResetIconButtonPress)
+    button:HookScript("OnHide", ResetIconButtonPress)
     IconButtonVisual(button)
     return button
 end
@@ -594,6 +655,10 @@ function UI.Portrait(parent, size, thickness)
     model:SetPoint("BOTTOMRIGHT", -4, 4)
     model:SetFrameLevel(ring:GetFrameLevel() + 1)
     model:EnableMouse(false)
+    -- A hidden PlayerModel may never start loading on retail. Keep it alive
+    -- but transparent until OnModelLoaded, with the 2D face underneath.
+    model:SetAlpha(0)
+    model:Show()
     model:SetScript("OnModelLoaded", function(self)
         -- SetPortraitZoom(1) — тот же путь, которым пользуется современный
         -- Z-Perl. Camera 0 в Midnight у некоторых обликов показывает всё тело.
@@ -604,7 +669,10 @@ function UI.Portrait(parent, size, thickness)
         if portrait.animated ~= false and portrait.unit then
             portrait.modelPending = nil
             portrait.face:Hide()
-            self:Show()
+            self:SetAlpha(1)
+            -- PlayerModel is already visible before SetUnit. Calling Show()
+            -- from OnModelLoaded fires OnModelLoaded again on Retail and
+            -- recurses until C stack overflow.
         end
     end)
     portrait.ring, portrait.face, portrait.model = ring, face, model
@@ -619,6 +687,7 @@ function UI.Portrait(parent, size, thickness)
         if not force and self.unit == unit and self.model:IsShown() then return end
         self.unit = unit
         self.face:SetVertexColor(1, 1, 1, 1)
+        if type(self.face.SetDesaturated) == "function" then self.face:SetDesaturated(false) end
         local exists = unit and UnitExists(unit)
         local missing = type(exists) == "boolean" and not issecretvalue(exists) and not exists
         local textureOK = false
@@ -632,7 +701,8 @@ function UI.Portrait(parent, size, thickness)
 
         if unit and not missing and self.animated ~= false then
             pcall(self.model.ClearModel, self.model)
-            self.model:Hide()
+            self.model:SetAlpha(0)
+            self.model:Show()
             self.face:Show()
             self.modelPending = true
             local modelOK = pcall(self.model.SetUnit, self.model, unit)
@@ -640,12 +710,14 @@ function UI.Portrait(parent, size, thickness)
                 pcall(self.model.SetPortraitZoom, self.model, 1)
             else
                 self.modelPending = nil
+                self.model:SetAlpha(0)
                 self.model:Hide()
                 self.face:Show()
             end
         else
             self.modelPending = nil
             pcall(self.model.ClearModel, self.model)
+            self.model:SetAlpha(0)
             self.model:Hide()
             self.face:Show()
         end
@@ -659,7 +731,7 @@ function UI.Portrait(parent, size, thickness)
     end
 
     function portrait:SetStateAlpha(alpha)
-        self.ring:SetBackdropBorderColor(.50, .50, .50, alpha or 1)
+        self.ring:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], alpha or 1)
         self.ring:SetAlpha(math.max(alpha or 1, .55))
     end
     return portrait

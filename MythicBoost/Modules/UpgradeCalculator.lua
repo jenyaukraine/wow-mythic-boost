@@ -2,7 +2,7 @@ local _, JP = ...
 local L = JP.L
 local UpgradeCalculator = {}
 local UI, C = JP.UI, JP.UI.colors
-local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon"
+local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon.tga"
 
 -- Сколько гербов нужно, чтобы докачать снаряжение до потолка.
 --
@@ -480,6 +480,34 @@ local function HideComparisonTooltips()
     end
 end
 
+local function ShowCurrencyDetailsTooltip(owner)
+    if not owner or not owner.currencyID then return end
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+
+    -- Keep Blizzard's full currency tooltip: it owns the description, sources
+    -- and live seasonal/total cap. MythicBoost only appends its calculation.
+    local nativeShown = false
+    if type(GameTooltip.SetCurrencyByID) == "function" then
+        nativeShown = pcall(GameTooltip.SetCurrencyByID, GameTooltip, owner.currencyID)
+    end
+    if not nativeShown then
+        local link = CurrencyLink(owner.currencyID)
+        if link and type(GameTooltip.SetHyperlink) == "function" then
+            nativeShown = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
+        end
+    end
+    if not nativeShown then GameTooltip:SetText(owner.label or L("Герб")) end
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("MythicBoost", C.accent[1], C.accent[2], C.accent[3])
+    GameTooltip:AddDoubleLine(L("Нужно"), tostring(owner.needed or 0), 1, .82, .18, 1, 1, 1)
+    GameTooltip:AddDoubleLine(L("Есть"), tostring(owner.owned or 0), 1, .82, .18, 1, 1, 1)
+    local missing = owner.missing or 0
+    GameTooltip:AddDoubleLine(L("Не хватает"), tostring(missing), 1, .82, .18,
+        missing > 0 and 1 or .25, missing > 0 and .42 or 1, missing > 0 and .18 or .45)
+    GameTooltip:Show()
+end
+
 local function BuildRow(page, index)
     local row = CreateFrame("Frame", nil, page, "BackdropTemplate")
     row:SetPoint("TOPLEFT", 8, ROWS_TOP - (index - 1) * ROW_STEP)
@@ -583,10 +611,7 @@ local function BuildTrackTotals(page)
         block:SetScript("OnEnter", function(self)
             if not self.currencyID then return end
             self:SetBackdropColor(.075, .090, .110, 1)
-            UI.Tooltip(self, self.label or L("Герб"),
-                (L("Нужно: %d")):format(self.needed or 0),
-                (L("Есть: %d")):format(self.owned or 0),
-                (L("Не хватает: %d")):format(self.missing or 0))
+            ShowCurrencyDetailsTooltip(self)
         end)
         block:SetScript("OnLeave", function(self)
             self:SetBackdropColor(.052, .064, .080, .96)
@@ -863,16 +888,26 @@ end
 function UpgradeCalculator:EnsureUpgraderShortcut()
     if self.upgraderShortcut or not _G.ItemUpgradeFrame then return end
     local frame = _G.ItemUpgradeFrame
-    local button = UI.IconButton(frame, ICON, 30)
-    button:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -38, -4)
-    button:SetFrameLevel(frame:GetFrameLevel() + 20)
+    local button = UI.IconButton(frame, ICON, 24)
+    local function AnchorShortcut()
+        button:ClearAllPoints()
+        local close = frame.CloseButton or _G.ItemUpgradeFrameCloseButton
+        if close then
+            button:SetPoint("RIGHT", close, "LEFT", -7, 0)
+            button:SetFrameLevel(math.max(frame:GetFrameLevel() + 50, close:GetFrameLevel() + 1))
+        else
+            button:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -48, -8)
+            button:SetFrameLevel(frame:GetFrameLevel() + 50)
+        end
+    end
+    AnchorShortcut()
     button:SetScript("OnClick", function() UpgradeCalculator:OpenFromUpgrader() end)
     button:HookScript("OnEnter", function(owner)
         UI.Tooltip(owner, "MythicBoost", L("Сканировать"))
     end)
     button:HookScript("OnLeave", GameTooltip_Hide)
-    frame:HookScript("OnShow", function(owner)
-        button:SetFrameLevel(owner:GetFrameLevel() + 20)
+    frame:HookScript("OnShow", function()
+        AnchorShortcut()
         button:Show()
     end)
     self.upgraderShortcut = button

@@ -301,6 +301,11 @@ end
 ---------------------------------------------------------------------------
 
 local function InitializeDatabase()
+    -- A complete reference HUD is a good first-run experience, but a terrible
+    -- surprise on an established profile that is merely upgrading from an old
+    -- release. Only a genuinely empty SavedVariables table receives invasive
+    -- visual defaults; every explicit value always wins.
+    local freshProfile = type(MythicBoostDB) ~= "table" or next(MythicBoostDB) == nil
     MythicBoostDB = type(MythicBoostDB) == "table" and MythicBoostDB or {}
     local db = MythicBoostDB
     local function Default(settings, key, value)
@@ -341,20 +346,22 @@ local function InitializeDatabase()
     -- Старый режим захвата штатной кнопки удалён: MythicBoost теперь
     -- открывается только своей кнопкой внутри Blizzard Group Finder.
     db.replaceGroupFinder = false
-    -- Минималистичный интерфейс выключен по умолчанию намеренно: это не
-    -- галочка возможности, а полный рескин чужих панелей, миникарты и
-    -- трекера. Такое включают осознанно, а не получают при обновлении.
-    if db.minimalUI == nil then db.minimalUI = false end
+    -- The approved bottom-centre HUD is the product default for a new user.
+    -- Missing flags on an established database stay conservative instead of
+    -- suddenly taking ownership of Blizzard frames after an update.
+    if db.minimalUI == nil then db.minimalUI = freshProfile end
     db.minimalUIOptions = type(db.minimalUIOptions) == "table" and db.minimalUIOptions or {}
     -- Отдельное владение миникартой: старым пользователям сохраняем прежний
     -- вид, но теперь его можно выключить независимо от остального Minimal UI.
-    if db.minimalUIOptions.minimap == nil then db.minimalUIOptions.minimap = true end
-    -- The bottom HUD takes ownership of positions, so upgrades never enable
-    -- it behind the player's back.  The one-time layout proposal turns it on
-    -- only after explicit acceptance.
-    if db.minimalUIOptions.bottomDock == nil then db.minimalUIOptions.bottomDock = false end
-    if db.minimalUIOptions.compactActionBars == nil then db.minimalUIOptions.compactActionBars = false end
-    if db.minimalUIOptions.hideStanceBar == nil then db.minimalUIOptions.hideStanceBar = false end
+    if db.minimalUIOptions.minimap == nil then db.minimalUIOptions.minimap = freshProfile end
+    if db.minimalUIOptions.hideStanceBar == nil then db.minimalUIOptions.hideStanceBar = freshProfile end
+    -- Removed layout-takeover settings are scrubbed from old profiles. The
+    -- addon no longer owns ChatFrame/DamageMeter positions or action-bar roots.
+    db.minimalUIOptions.bottomDock = nil
+    db.minimalUIOptions.bottomDockTab = nil
+    db.minimalUIOptions.compactActionBars = nil
+    db.layoutOnboardingRevision = nil
+    db.bottomDockSafetyRevision = nil
     db.convenience = type(db.convenience) == "table" and db.convenience or {}
     -- Actions that accept dialogs, spend money, alter quests or invite other
     -- people are explicit opt-ins. Inserting a Keystone is the only automatic
@@ -363,7 +370,7 @@ local function InitializeDatabase()
         autoKeystone = true,
         autoQuests = false,
         guildRepair = true,
-        hideBags = true,
+        hideBags = freshProfile,
         merchantSummary = true,
         repair = false,
         resurrection = false,
@@ -374,13 +381,13 @@ local function InitializeDatabase()
     }
     for key, value in pairs(convenienceDefaults) do Default(db.convenience, key, value) end
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
-    Default(db.unitFrames, "enabled", false)
-    Default(db.unitFrames, "hideBlizzard", true)
+    Default(db.unitFrames, "enabled", freshProfile)
+    Default(db.unitFrames, "hideBlizzard", freshProfile)
     -- The compact player/target capsule is optional, but once enabled it must
     -- be a complete HUD component rather than a fixed mock-up. These values
     -- are deliberately independent so an existing profile only receives the
     -- settings it did not already choose.
-    Default(db.unitFrames, "scale", 1)
+    Default(db.unitFrames, "scale", 1.5)
     Default(db.unitFrames, "opacity", 1)
     Default(db.unitFrames, "showHealthText", true)
     Default(db.unitFrames, "showPowerText", true)
@@ -388,14 +395,14 @@ local function InitializeDatabase()
     Default(db.unitFrames, "showBadges", true)
     Default(db.unitFrames, "badgesUnlocked", false)
     Default(db.unitFrames, "badgeShape", 1)
-    Default(db.unitFrames, "alwaysShowTarget", false)
+    Default(db.unitFrames, "alwaysShowTarget", true)
     db.unitFrames.badgePositions = type(db.unitFrames.badgePositions) == "table"
         and db.unitFrames.badgePositions or {}
     Default(db.unitFrames, "showPlayerAuras", true)
     Default(db.unitFrames, "showTargetAuras", true)
-    Default(db.unitFrames, "aurasAbove", false)
+    Default(db.unitFrames, "aurasAbove", true)
     Default(db.unitFrames, "showResourcePips", true)
-    Default(db.unitFrames, "showEmptyResources", true)
+    Default(db.unitFrames, "showEmptyResources", false)
     Default(db.unitFrames, "resourceHeight", 10)
     Default(db.unitFrames, "resourceGap", 2)
     Default(db.unitFrames, "resourceOpacity", 1)
@@ -404,27 +411,99 @@ local function InitializeDatabase()
         if not value then value = fallback end
         db.unitFrames[key] = math.max(minimum, math.min(maximum, value))
     end
-    ClampFrameNumber("scale", .75, 2.00, 1)
-    ClampFrameNumber("badgeShape", 1, 3, 1)
+    ClampFrameNumber("scale", .75, 2.00, 1.5)
+    ClampFrameNumber("badgeShape", 1, 4, 1)
     ClampFrameNumber("opacity", .55, 1, 1)
     ClampFrameNumber("resourceHeight", 6, 16, 10)
     ClampFrameNumber("resourceGap", 0, 6, 2)
     ClampFrameNumber("resourceOpacity", .30, 1, 1)
     db.castBar = type(db.castBar) == "table" and db.castBar or {}
-    Default(db.castBar, "enabled", false)
+    Default(db.castBar, "enabled", freshProfile)
     db.lootUI = type(db.lootUI) == "table" and db.lootUI or {}
-    Default(db.lootUI, "enabled", false)
+    Default(db.lootUI, "enabled", freshProfile)
     Default(db.lootUI, "atCursor", true)
     Default(db.lootUI, "showRolls", true)
     Default(db.lootUI, "showHistory", true)
     db.smartClick = type(db.smartClick) == "table" and db.smartClick or {}
     Default(db.smartClick, "buff", false)
     Default(db.smartClick, "res", false)
+    db.positiveAuraTracker = type(db.positiveAuraTracker) == "table" and db.positiveAuraTracker or {}
+    Default(db.positiveAuraTracker, "enabled", false)
+    db.positiveAuraTracker.spellIDs = type(db.positiveAuraTracker.spellIDs) == "table"
+        and db.positiveAuraTracker.spellIDs or {}
+    Default(db.positiveAuraTracker, "showWhenMissing", false)
+    Default(db.positiveAuraTracker, "showSeconds", true)
+    Default(db.positiveAuraTracker, "showStacks", true)
+    Default(db.positiveAuraTracker, "showIcon", true)
+    -- Earlier builds hid the spell icon by default, which left multiple active
+    -- bars as anonymous countdowns. Enable identification once for existing
+    -- profiles; later user changes remain untouched.
+    if db.positiveAuraTracker.identityRevision ~= 1 then
+        db.positiveAuraTracker.showIcon = true
+        db.positiveAuraTracker.identityRevision = 1
+    end
+    if db.positiveAuraTracker.wingLayoutRevision ~= 1 then
+        db.positiveAuraTracker.barHeight = 190
+        db.positiveAuraTracker.barWidth = 72
+        db.positiveAuraTracker.sideGap = 110
+        db.positiveAuraTracker.barSpacing = 12
+        db.positiveAuraTracker.colorPreset = 2
+        db.positiveAuraTracker.texturePreset = 1
+        db.positiveAuraTracker.fontSize = 24
+        db.positiveAuraTracker.pulse = true
+        db.positiveAuraTracker.pulseSpeed = .8
+        db.positiveAuraTracker.x = 0
+        db.positiveAuraTracker.y = -20
+        db.positiveAuraTracker.wingLayoutRevision = 1
+    end
+    Default(db.positiveAuraTracker, "barHeight", 190)
+    Default(db.positiveAuraTracker, "barWidth", 72)
+    Default(db.positiveAuraTracker, "sideGap", 110)
+    Default(db.positiveAuraTracker, "barSpacing", 12)
+    Default(db.positiveAuraTracker, "colorPreset", 2)
+    Default(db.positiveAuraTracker, "texturePreset", 1)
+    Default(db.positiveAuraTracker, "fontSize", 24)
+    Default(db.positiveAuraTracker, "pulse", true)
+    Default(db.positiveAuraTracker, "pulseSpeed", .8)
+    Default(db.positiveAuraTracker, "barTexture", nil)
+    Default(db.positiveAuraTracker, "maxIcons", 8)
+    Default(db.positiveAuraTracker, "x", 0)
+    Default(db.positiveAuraTracker, "y", -20)
+    Default(db.positiveAuraTracker, "unlocked", false)
+    db.positiveAuraTracker.barHeight = math.max(100, math.min(300, tonumber(db.positiveAuraTracker.barHeight) or 190))
+    db.positiveAuraTracker.barWidth = math.max(36, math.min(120, tonumber(db.positiveAuraTracker.barWidth) or 72))
+    db.positiveAuraTracker.sideGap = math.max(40, math.min(240, tonumber(db.positiveAuraTracker.sideGap) or 110))
+    db.positiveAuraTracker.barSpacing = math.max(0, math.min(40, tonumber(db.positiveAuraTracker.barSpacing) or 12))
+    db.positiveAuraTracker.colorPreset = math.max(1, math.min(6, tonumber(db.positiveAuraTracker.colorPreset) or 2))
+    db.positiveAuraTracker.texturePreset = math.max(1, math.min(2, tonumber(db.positiveAuraTracker.texturePreset) or 1))
+    db.positiveAuraTracker.fontSize = math.max(12, math.min(48, tonumber(db.positiveAuraTracker.fontSize) or 24))
+    db.positiveAuraTracker.pulseSpeed = math.max(.3, math.min(2, tonumber(db.positiveAuraTracker.pulseSpeed) or .8))
     db.rcLoot = type(db.rcLoot) == "table" and db.rcLoot or {}
     Default(db.rcLoot, "enabled", false)
     db.errorGuard = type(db.errorGuard) == "table" and db.errorGuard or {}
     Default(db.errorGuard, "enabled", false)
     Default(db.errorGuard, "keepBetweenSessions", true)
+    -- Remove only signatures produced by fixed MythicBoost integration bugs.
+    -- Other third-party and current errors remain available for support.
+    if db.errorGuard.stabilityPrunedRevision ~= 3 then
+        if type(db.errorGuard.log) == "table" then
+            for index = #db.errorGuard.log, 1, -1 do
+                local entry = db.errorGuard.log[index]
+                local message = type(entry) == "table" and type(entry.message) == "string" and entry.message or ""
+                local stack = type(entry) == "table" and type(entry.stack) == "string" and entry.stack or ""
+                local fixedMeterProbe = message:find("Blizzard_DamageMeter/DamageMeterEntry.lua", 1, true)
+                    and stack:find("MythicBoost/Modules/MinimalUI.lua", 1, true)
+                local fixedPortraitLoop = message == "C stack overflow"
+                    and stack:find("MythicBoost/UI.lua", 1, true)
+                local fixedAuraTrackerInit = message:find("MythicBoost/Modules/PositiveAuraTracker.lua:42", 1, true)
+                    and message:find("attempt to call a nil value", 1, true)
+                if fixedMeterProbe or fixedPortraitLoop or fixedAuraTrackerInit then
+                    table.remove(db.errorGuard.log, index)
+                end
+            end
+        end
+        db.errorGuard.stabilityPrunedRevision = 3
+    end
     db.bagUI = type(db.bagUI) == "table" and db.bagUI or {}
     -- The unified inventory replaces protected Blizzard bag behaviour, so it
     -- must be an explicit opt-in. Apply this once to profiles that inherited
@@ -457,17 +536,20 @@ local function InitializeDatabase()
     if db.interfaceUnlockRevision ~= 2 then
         local unlocked = db.interfaceUnlocked == true or db.unitFrames.unlocked == true
             or db.castBar.unlocked == true or db.convenience.movableKeystoneFrame == true
+            or db.positiveAuraTracker.unlocked == true
         db.interfaceUnlocked = unlocked
         db.unitFrames.unlocked = unlocked
         db.castBar.unlocked = unlocked
         db.convenience.movableKeystoneFrame = unlocked
+        db.positiveAuraTracker.unlocked = unlocked
         db.interfaceUnlockRevision = 2
     else
         db.unitFrames.unlocked = db.unitFrames.unlocked == true
         db.castBar.unlocked = db.castBar.unlocked == true
         db.convenience.movableKeystoneFrame = db.convenience.movableKeystoneFrame == true
+        db.positiveAuraTracker.unlocked = db.positiveAuraTracker.unlocked == true
         db.interfaceUnlocked = db.unitFrames.unlocked or db.castBar.unlocked
-            or db.convenience.movableKeystoneFrame
+            or db.convenience.movableKeystoneFrame or db.positiveAuraTracker.unlocked
     end
     JP.db = db
 end
@@ -621,6 +703,7 @@ local function ShowHelp()
     JP:Print(L("|cff28b8f5/mb restorefilter|r — вернуть фильтр стандартного окна групп"))
     JP:Print(L("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп"))
     JP:Print(L("|cff28b8f5/mb frames|r [reset] — свои фреймы игрока и цели, reset — сбросить позиции"))
+    JP:Print(L("|cff28b8f5/mb testroll|r — показать безопасный тестовый бросок добычи"))
 end
 
 SLASH_MYTHICBOOST1 = "/mythicboost"
@@ -640,6 +723,8 @@ SlashCmdList.MYTHICBOOST = function(input)
         ToggleWindow()
     elseif command == "smartclick" or command == "click" then
         if JP.SmartClick then JP.SmartClick:Diagnose() else JP:Print(L("Модуль SmartClick не загружен.")) end
+    elseif command == "testroll" then
+        if JP.LootUI then JP.LootUI:ShowTestRoll() end
     elseif command == "errors" or command == "error" then
         if JP.ErrorGuard then
             if argument == "clear" then

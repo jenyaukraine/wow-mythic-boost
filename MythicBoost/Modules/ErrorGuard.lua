@@ -26,6 +26,18 @@ local SETTINGS_DEFAULTS = { enabled = false, keepBetweenSessions = true }
 -- ADDON_LOADED, а ошибка может прилететь раньше — тогда она копится здесь
 -- и переезжает в базу при первой возможности.
 local earlyLog = {}
+local refreshQueued = false
+
+local function QueueDirtyRefresh()
+    if refreshQueued or not C_Timer or type(C_Timer.After) ~= "function" then return end
+    refreshQueued = true
+    C_Timer.After(.15, function()
+        refreshQueued = false
+        if not ErrorGuard.dirty then return end
+        ErrorGuard.dirty = false
+        if ErrorGuard:IsEnabled() then ErrorGuard:Refresh() end
+    end)
+end
 
 function ErrorGuard:GetSettings()
     local settings = JP.Settings("errorGuard", SETTINGS_DEFAULTS)
@@ -128,6 +140,7 @@ local function Handler(message)
         end
         Store(message, stack)
         ErrorGuard.dirty = true
+        QueueDirtyRefresh()
     end)
     -- Если даже защищённый разбор упал — молча глотаем. Показать ошибку из
     -- обработчика ошибок нечем, а падать нельзя.
@@ -141,12 +154,19 @@ if type(seterrorhandler) == "function" then seterrorhandler(Handler) end
 -- включена, но не ломаем — выключил функцию, и окно снова работает.
 function ErrorGuard:SuppressBlizzardFrame()
     local frame = _G.ScriptErrorsFrame
-    if not frame or frame.__mbErrorGuardHooked then return end
+    if not frame then return false end
+    if frame.__mbErrorGuardHooked then return true end
     frame.__mbErrorGuardHooked = true
     frame:HookScript("OnShow", function(owner)
-        if ErrorGuard:IsEnabled() and not InCombatLockdown() then owner:Hide() end
+        if ErrorGuard:IsEnabled() and not InCombatLockdown()
+            and not owner.__mbErrorGuardHideActive then
+            owner.__mbErrorGuardHideActive = true
+            pcall(owner.Hide, owner)
+            owner.__mbErrorGuardHideActive = nil
+        end
     end)
     if self:IsEnabled() and frame:IsShown() then frame:Hide() end
+    return true
 end
 
 ---------------------------------------------------------------------------
@@ -405,19 +425,12 @@ end
 ---------------------------------------------------------------------------
 
 function ErrorGuard:UpdateTicker()
-    if self:IsEnabled() then
-        if not self.ticker and C_Timer then
-            self.ticker = C_Timer.NewTicker(1, function()
-                if ErrorGuard.dirty then
-                    ErrorGuard.dirty = false
-                    ErrorGuard:Refresh()
-                end
-            end)
-        end
-    elseif self.ticker then
-        self.ticker:Cancel()
-        self.ticker = nil
-    end
+    -- Historical builds kept a one-second ticker alive for the entire session
+    -- just to notice a dirty bit. Refreshes are now debounced at capture time,
+    -- so idle sessions allocate no repeating timer and perform no background
+    -- work. Keep this method as the settings lifecycle entry point.
+    if self.ticker then self.ticker:Cancel(); self.ticker = nil end
+    if self:IsEnabled() and self.dirty then QueueDirtyRefresh() end
 end
 
 function ErrorGuard:SetEnabled(value)
@@ -435,15 +448,23 @@ function ErrorGuard:Create()
     -- Выключенный перехват не держит фоновый ticker.
     self:UpdateTicker()
 
-    if not self.loader then
+    local settings = self:GetSettings()
+    if settings and settings.keepBetweenSessions == false and not self.sessionLogReset then
+        -- Clear once when this session starts. The old ADDON_LOADED handler
+        -- wiped freshly captured errors every time another Blizzard module
+        -- loaded later in the same session.
+        wipe(settings.log)
+        self.sessionLogReset = true
+    end
+    if not self.loader and not self:SuppressBlizzardFrame() then
         self.loader = CreateFrame("Frame")
         self.loader:RegisterEvent("ADDON_LOADED")
-        self.loader:SetScript("OnEvent", function()
-            ErrorGuard:SuppressBlizzardFrame()
-            local settings = ErrorGuard:GetSettings()
-            -- Журнал прошлой сессии стирается здесь, а не при выходе: на
-            -- выходе SavedVariables уже пишутся, и трогать их поздно.
-            if settings and settings.keepBetweenSessions == false then wipe(settings.log) end
+        self.loader:SetScript("OnEvent", function(owner)
+            if ErrorGuard:SuppressBlizzardFrame() then
+                owner:UnregisterAllEvents()
+                owner:SetScript("OnEvent", nil)
+                ErrorGuard.loader = nil
+            end
         end)
     end
 end

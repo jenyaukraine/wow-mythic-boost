@@ -12,8 +12,12 @@ SIZE.width = 225
 SIZE.height = 58
 
 local DEFAULT_POSITION = {
-    player = { "BOTTOM", -410, 220 },
-    target = { "BOTTOM", 410, 220 },
+    player = { "BOTTOM", -269, 2 },
+    target = { "BOTTOM", 269, 2 },
+}
+local DEFAULT_BADGE_POSITION = {
+    player = { class = { 64.89, 45.62 }, level = { 11.90, 11.85 } },
+    target = { class = { 160.11, 45.62 }, level = { 213.10, 11.85 } },
 }
 local BLIZZARD_FRAMES = { "PlayerFrame", "TargetFrame", "BuffFrame", "DebuffFrame" }
 local XPERL_BACK = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_FrameBack"
@@ -62,14 +66,14 @@ local function ModernBackdrop(frame, alpha)
         sheen:SetPoint("TOPLEFT", 1, -1)
         sheen:SetPoint("TOPRIGHT", -1, -1)
         sheen:SetHeight(1)
-        sheen:SetColorTexture(1, 1, 1, .18)
+        sheen:SetColorTexture(.98, .76, .22, .82)
         frame.__mbModernSheen = sheen
 
         local hollow = frame:CreateTexture(nil, "BORDER", nil, 1)
         hollow:SetPoint("BOTTOMLEFT", 1, 1)
         hollow:SetPoint("BOTTOMRIGHT", -1, 1)
         hollow:SetHeight(1)
-        hollow:SetColorTexture(0, 0, 0, .58)
+        hollow:SetColorTexture(.20, .11, .025, .88)
         frame.__mbModernHollow = hollow
     end
 end
@@ -236,13 +240,13 @@ local function Settings()
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
     local settings = db.unitFrames
     local defaults = {
-        unlocked = false, scale = 1, opacity = 1,
+        unlocked = false, scale = 1.5, opacity = 1,
         showHealthText = true, showPowerText = true,
         animatedPortrait = true, showBadges = true, badgesUnlocked = false, badgeShape = 1,
-        alwaysShowTarget = false,
+        alwaysShowTarget = true,
         showPlayerAuras = true, showTargetAuras = true,
-        aurasAbove = false,
-        showResourcePips = true, showEmptyResources = true,
+        aurasAbove = true,
+        showResourcePips = true, showEmptyResources = false,
         resourceHeight = 10, resourceGap = 2, resourceOpacity = 1,
     }
     for key, value in pairs(defaults) do
@@ -255,28 +259,30 @@ local function Settings()
         settings[key] = value
     end
     Clamp("scale", .75, 2.00)
-    Clamp("badgeShape", 1, 3)
+    Clamp("badgeShape", 1, 4)
     Clamp("opacity", .55, 1)
     Clamp("resourceHeight", 6, 16)
     Clamp("resourceGap", 0, 6)
     Clamp("resourceOpacity", .30, 1)
-    -- Revision 5 adopts the balanced lower layout. Only absent positions and
+    -- Revision 6 adopts the approved bottom-centre layout. Only absent positions and
     -- the exact previous defaults are migrated; manually placed frames stay
     -- where the player left them.
-    if db.unitFrames.positionRevision ~= 5 then
+    if db.unitFrames.positionRevision ~= 6 then
         local player = db.unitFrames.player
         local target = db.unitFrames.target
-        local oldPlayer = type(player) == "table" and player.point == "TOPLEFT"
-            and player.x == 28 and player.y == -28
-        local oldTarget = type(target) == "table" and target.point == "TOPRIGHT"
-            and target.x == -360 and target.y == -28
+        local oldPlayer = type(player) == "table"
+            and ((player.point == "TOPLEFT" and player.x == 28 and player.y == -28)
+                or (player.point == "BOTTOM" and player.x == -410 and player.y == 220))
+        local oldTarget = type(target) == "table"
+            and ((target.point == "TOPRIGHT" and target.x == -360 and target.y == -28)
+                or (target.point == "BOTTOM" and target.x == 410 and target.y == 220))
         if type(player) ~= "table" or oldPlayer then
-            db.unitFrames.player = { point = "BOTTOM", x = -410, y = 220 }
+            db.unitFrames.player = { point = "BOTTOM", x = -269, y = 2 }
         end
         if type(target) ~= "table" or oldTarget then
-            db.unitFrames.target = { point = "BOTTOM", x = 410, y = 220 }
+            db.unitFrames.target = { point = "BOTTOM", x = 269, y = 2 }
         end
-        db.unitFrames.positionRevision = 5
+        db.unitFrames.positionRevision = 6
     end
     return settings
 end
@@ -605,6 +611,131 @@ local function ReadUnitName(unit, fallback)
     return fallback or ""
 end
 
+local function ReadUnitCast(unit)
+    for _, source in ipairs({
+        { getter = UnitChannelInfo, channel = true },
+        { getter = UnitCastingInfo, channel = false },
+    }) do
+        if type(source.getter) == "function" then
+            local result = { pcall(source.getter, unit) }
+            local name, displayName, icon, startMS, endMS = result[2], result[3], result[4], result[5], result[6]
+            if result[1] and type(name) == "string" and not issecretvalue(name)
+                and name ~= "" and IsPlainNumber(startMS) and IsPlainNumber(endMS)
+                and endMS > startMS then
+                if type(displayName) ~= "string" or issecretvalue(displayName) or displayName == "" then
+                    displayName = name
+                end
+                return displayName, startMS / 1000, endMS / 1000, source.channel, icon
+            end
+        end
+    end
+end
+
+local SUCCESSFUL_CAST_STOP = {
+    UNIT_SPELLCAST_STOP = true,
+    UNIT_SPELLCAST_CHANNEL_STOP = true,
+    UNIT_SPELLCAST_EMPOWER_STOP = true,
+}
+
+local FAILED_CAST_STOP = {
+    UNIT_SPELLCAST_FAILED = true,
+    UNIT_SPELLCAST_INTERRUPTED = true,
+}
+
+-- The large corner medallion belongs to the class/cast icon itself.  NPCs and
+-- other units without a readable class must not leave its decorative rim
+-- floating empty beside the portrait.
+local function UpdateClassBadgePanelVisibility(display)
+    if not display or not display.levelPanel then return end
+    local settings = ActiveSettings()
+    local badgesEnabled = settings.showBadges ~= false and settings.badgeShape ~= 4
+    local hasContents = display.hasClassIcon == true or display.hasCastIcon == true
+    display.levelPanel:SetShown(badgesEnabled and hasContents)
+end
+
+local function CastLatency(duration)
+    if type(GetNetStats) ~= "function" then return 0 end
+    local ok, _, _, homeMS, worldMS = pcall(GetNetStats)
+    if not ok then return 0 end
+    local milliseconds = math.max(IsPlainNumber(homeMS) and homeMS or 0,
+        IsPlainNumber(worldMS) and worldMS or 0)
+    return math.min(math.max(0, duration or 0) * .35, .45, milliseconds / 1000)
+end
+
+local function HideUnitCast(display)
+    display.casting = nil
+    display.castChanneling = nil
+    display.castDuration = nil
+    display.castLatency = nil
+    display.castCompleteUntil = nil
+    display.castBar:Hide()
+    display.name:Show()
+    display.hasCastIcon = false
+    if display.castIcon then display.castIcon:Hide() end
+    if display.classIcon then display.classIcon:SetShown(display.hasClassIcon == true) end
+    UpdateClassBadgePanelVisibility(display)
+end
+
+function UnitFrames:UpdateCast(display, event)
+    if not display or not display.castBar then return end
+    local now = GetTime()
+
+    if FAILED_CAST_STOP[event] then
+        HideUnitCast(display)
+        return
+    end
+    if SUCCESSFUL_CAST_STOP[event] and display.casting and display.castDuration then
+        display.castBar:SetValue(display.castChanneling and 0 or display.castDuration)
+        display.castCompleteUntil = now + math.max(.06, display.castLatency or 0)
+        display.castBar:Show()
+        display.name:Hide()
+        return
+    end
+    if display.castCompleteUntil then
+        if now < display.castCompleteUntil then return end
+        HideUnitCast(display)
+        return
+    end
+
+    local name, startTime, endTime, channeling, icon = ReadUnitCast(display.unit)
+    if not name then
+        HideUnitCast(display)
+        return
+    end
+
+    local duration = endTime - startTime
+    local latency = CastLatency(duration)
+    local value = channeling and (endTime - now - latency) or (now - startTime + latency)
+    value = math.max(0, math.min(duration, value))
+    display.casting = true
+    display.castChanneling = channeling and true or nil
+    display.castDuration = duration
+    display.castLatency = latency
+    display.name:Hide()
+    display.castName:SetText(name)
+    local texture = display.castBar:GetStatusBarTexture()
+    if texture then
+        if channeling then
+            texture:SetGradient("VERTICAL", CreateColor(.09, .07, .34, .98), CreateColor(.44, .36, 1, .96))
+        else
+            texture:SetGradient("VERTICAL", CreateColor(.34, .11, .01, .98), CreateColor(1, .49, 0, .96))
+        end
+    end
+    display.hasCastIcon = false
+    if display.castIcon then display.castIcon:Hide() end
+    local iconType = type(icon)
+    if display.castIcon and (iconType == "number" or iconType == "string") and not issecretvalue(icon) then
+        display.castIcon:SetTexture(icon)
+        display.castIcon:Show()
+        display.hasCastIcon = true
+        display.classIcon:Hide()
+    end
+    UpdateClassBadgePanelVisibility(display)
+    display.castBar:SetMinMaxValues(0, duration)
+    display.castBar:SetValue(value)
+    display.castBar:Show()
+end
+
 local function UpdateIdentity(display)
     local name = ReadUnitName(display.unit, display.cachedName)
     if name ~= "" then display.cachedName = name end
@@ -613,7 +744,10 @@ local function UpdateIdentity(display)
     display.level:SetText(UI.UsableNumber(level) and tostring(level) or "")
     local _, class = UnitClass(display.unit)
     if display.classIcon then
-        display.classIcon:SetText(type(class) == "string" and not issecretvalue(class) and UI.ClassIcon(class, 20) or "")
+        display.hasClassIcon = type(class) == "string" and not issecretvalue(class)
+            and UI.SetClassIconTexture(display.classIcon, class) or false
+        display.classIcon:SetShown(display.hasClassIcon and not display.casting)
+        UpdateClassBadgePanelVisibility(display)
     end
     if display.group then
         local groupText = ""
@@ -778,6 +912,10 @@ local function BuildAuraRow(display, count, anchor, y, columns)
 end
 
 local function ReadAuras(display)
+    -- Indexed aura enumeration is restricted in combat on Retail 12.1.
+    -- Preserve the last safe snapshot instead of wiping it and making a
+    -- forbidden API call. PLAYER_REGEN_ENABLED rebuilds it immediately.
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
     wipe(display.cache)
     if not C_UnitAuras or IsBoolean(UnitExists(display.unit), false) then return end
     for _, filter in ipairs({ "HARMFUL", "HELPFUL" }) do
@@ -794,6 +932,9 @@ local function ReadAuras(display)
 end
 
 local function ApplyAuraUpdate(display, updateInfo)
+    -- updateInfo and aura-instance lookups are protected in restricted combat.
+    -- Never inspect them from addon code; keep the pre-combat snapshot.
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
     if not updateInfo then ReadAuras(display); return true end
     -- isFullUpdate в Midnight приходит ЗАЩИЩЁННЫМ булевым, и прямая проверка
     -- `if updateInfo.isFullUpdate` на нём падает. Читать поле можно, нельзя
@@ -850,14 +991,22 @@ local function FillIcon(icon, data, display)
     icon.dispel:SetShown(IsBoolean(data.isHarmful, true) and CanDispel(data)); icon:Show()
 end
 
-local function LayoutRow(row, list)
-    for index, icon in ipairs(row.icons) do
-        local data = list[index]
-        if data then FillIcon(icon, data, row.display)
-        else icon:Hide(); icon.auraInstanceID, icon.expires = nil, nil end
-    end
+local function LayoutRow(row, list, gravityToFrame)
     local visible = math.min(#list, #row.icons)
     local lines = math.max(1, math.ceil(visible / row.columns))
+    for index, icon in ipairs(row.icons) do
+        local data = list[index]
+        if data then
+            local column = (index - 1) % row.columns
+            local sourceLine = math.floor((index - 1) / row.columns)
+            local line = gravityToFrame and (lines - 1 - sourceLine) or sourceLine
+            local offset = column * (SIZE.aura + SIZE.auraGap)
+            icon:ClearAllPoints()
+            icon:SetPoint(row.display.mirror and "TOPRIGHT" or "TOPLEFT",
+                row.display.mirror and -offset or offset, -line * (SIZE.aura + SIZE.auraGap))
+            FillIcon(icon, data, row.display)
+        else icon:Hide(); icon.auraInstanceID, icon.expires = nil, nil end
+    end
     -- Скрытый ряд всё равно держит свою высоту, а следующий ряд привязан к его
     -- нижнему краю — из-за этого под фреймом зияла пустая полоса в высоту
     -- иконки. Пустой ряд схлопываем, чтобы всё под ним подтянулось вверх.
@@ -886,7 +1035,9 @@ local function RefreshAuras(display)
         end
     end
     table.sort(debuffs, SortAuras); table.sort(buffs, SortAuras)
-    LayoutRow(display.debuffRow, debuffs); LayoutRow(display.buffRow, buffs)
+    local gravityToFrame = settings.aurasAbove == true
+    LayoutRow(display.debuffRow, debuffs, gravityToFrame)
+    LayoutRow(display.buffRow, buffs, gravityToFrame)
 
     -- Не резервируем невидимую строку. Раньше у дружелюбной цели сначала
     -- стоял скрытый ряд дебаффов, а бафы из-за него висели на 20+ px ниже.
@@ -960,7 +1111,7 @@ local function CreateBadgeLayer(panel, size, layer, sublevel)
 end
 
 local function ApplyBadgeShape(panel, shape)
-    shape = math.max(1, math.min(3, tonumber(shape) or 1))
+    shape = math.max(1, math.min(4, tonumber(shape) or 1))
     if not panel or panel.__mbBadgeShape == shape then return end
     panel.__mbBadgeShape = shape
     for _, layer in ipairs(panel.__mbBadgeLayers or {}) do
@@ -974,6 +1125,10 @@ local function ApplyBadgeShape(panel, shape)
         mask:SetSize(size, size)
         if shape == 1 then texture:AddMaskTexture(mask); layer.masked = true end
     end
+end
+
+local function BadgePanel(display, key)
+    return key == "class" and display.levelPanel or display.classPanel
 end
 
 function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
@@ -1012,21 +1167,77 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
         mirror and "LEFT" or "RIGHT", mirror and 7 or -7, 0)
     display.group:SetWidth(24)
     display.group:SetJustifyH(mirror and "LEFT" or "RIGHT")
-    display.name = UI.Text(namePanel, "GameFontNormal", "", C.amber)
-    display.name:SetPoint("TOPLEFT", 24, 0)
-    display.name:SetPoint("BOTTOMRIGHT", -24, 1)
+    display.name = UI.Text(namePanel, "GameFontNormalSmall", "", C.amber)
+    local nameFont, _, nameFlags = display.name:GetFont()
+    if nameFont then display.name:SetFont(nameFont, 11, nameFlags or "OUTLINE") end
+    display.name:SetPoint("TOPLEFT", 10, 0)
+    display.name:SetPoint("BOTTOMRIGHT", -10, 1)
     display.name:SetJustifyH("CENTER")
     display.name:SetWordWrap(false)
     if type(display.name.SetMaxLines) == "function" then display.name:SetMaxLines(1) end
+
+    -- Casting reuses the name plate instead of creating another HUD block.
+    -- Its spell artwork temporarily occupies the existing class medallion.
+    local castBar = CreateFrame("StatusBar", nil, namePanel)
+    castBar:SetPoint("TOPLEFT", namePanel, "TOPLEFT", 1, -1)
+    castBar:SetPoint("BOTTOMRIGHT", namePanel, "BOTTOMRIGHT", -1, 1)
+    castBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    castBar:SetStatusBarColor(1, 1, 1, 1)
+    castBar:SetMinMaxValues(0, 1)
+    castBar:SetValue(0)
+    castBar:SetFrameLevel(namePanel:GetFrameLevel() + 2)
+    local castFill = castBar:GetStatusBarTexture()
+    if castFill then
+        castFill:SetGradient("VERTICAL",
+            CreateColor(.34, .11, .01, .98),
+            CreateColor(1, .49, 0, .96))
+    end
+    local castBed = castBar:CreateTexture(nil, "BACKGROUND")
+    castBed:SetAllPoints()
+    castBed:SetColorTexture(.006, .012, .018, .76)
+    local castShine = castBar:CreateTexture(nil, "OVERLAY", nil, -3)
+    castShine:SetPoint("TOPLEFT")
+    castShine:SetPoint("TOPRIGHT")
+    castShine:SetHeight(math.max(3, math.floor(SIZE.headerH * .48)))
+    castShine:SetColorTexture(1, 1, 1, 1)
+    castShine:SetBlendMode("ADD")
+    castShine:SetGradient("VERTICAL",
+        CreateColor(1, 1, 1, .02),
+        CreateColor(.72, .94, 1, .24))
+    local castReflect = castBar:CreateTexture(nil, "OVERLAY", nil, -2)
+    castReflect:SetPoint("BOTTOMLEFT")
+    castReflect:SetPoint("BOTTOMRIGHT")
+    castReflect:SetHeight(4)
+    castReflect:SetColorTexture(.45, .86, 1, .10)
+    local castRimTop = castBar:CreateTexture(nil, "OVERLAY", nil, -1)
+    castRimTop:SetPoint("TOPLEFT"); castRimTop:SetPoint("TOPRIGHT"); castRimTop:SetHeight(1)
+    castRimTop:SetColorTexture(1, 1, 1, .28)
+    local castRimBottom = castBar:CreateTexture(nil, "OVERLAY", nil, -1)
+    castRimBottom:SetPoint("BOTTOMLEFT"); castRimBottom:SetPoint("BOTTOMRIGHT"); castRimBottom:SetHeight(1)
+    castRimBottom:SetColorTexture(0, 0, 0, .66)
+    display.castName = UI.Text(castBar, "GameFontNormal", "", C.text)
+    display.castName:SetPoint("TOPLEFT", 8, 0)
+    display.castName:SetPoint("BOTTOMRIGHT", -8, 1)
+    display.castName:SetJustifyH("CENTER")
+    display.castName:SetWordWrap(false)
+    if type(display.castName.SetMaxLines) == "function" then display.castName:SetMaxLines(1) end
+    castBar:SetScript("OnUpdate", function(_, elapsed)
+        display.castElapsed = (display.castElapsed or 0) + elapsed
+        if display.castElapsed < .02 then return end
+        display.castElapsed = 0
+        UnitFrames:UpdateCast(display)
+    end)
+    castBar:Hide()
+    display.castBar = castBar
 
     -- The class/spec badge is the larger companion to the level seal: 28 px
     -- versus 20 px (1.4x), centred over the upper portrait/body junction.
     local levelPanel = CreateFrame("Frame", nil, holder)
     levelPanel:SetSize(28, 28)
-    levelPanel:SetPoint("CENTER", display.portrait.ring,
-        mirror and "TOPRIGHT" or "TOPLEFT", mirror and -1 or 1, -1)
+    local classDefault = DEFAULT_BADGE_POSITION[unit].class
+    levelPanel:SetPoint("CENTER", holder, "BOTTOMLEFT", classDefault[1], classDefault[2])
     display.classBadgeDefault = {
-        "CENTER", display.portrait.ring, mirror and "TOPRIGHT" or "TOPLEFT", mirror and -1 or 1, -1,
+        "CENTER", holder, "BOTTOMLEFT", classDefault[1], classDefault[2],
     }
     levelPanel:SetFrameLevel(display.portrait.ring:GetFrameLevel() + 9)
     CreateBadgeLayer(levelPanel, 28, "BACKGROUND", 0):SetVertexColor(C.edge[1], C.edge[2], C.edge[3], .92)
@@ -1036,8 +1247,16 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     classGloss:SetGradient("VERTICAL",
         CreateColor(1, 1, 1, 0),
         CreateColor(.68, .91, 1, .16))
-    display.classIcon = UI.Text(levelPanel, "GameFontNormalSmall", "")
-    display.classIcon:SetPoint("CENTER", 0, 0)
+    -- The class art is a real texture layer, not inline font markup, so the
+    -- same medallion mask can trim it exactly like the temporary spell icon.
+    display.classIcon = CreateBadgeLayer(levelPanel, 22, "OVERLAY", 6)
+    display.classIcon:Hide()
+    -- Register the spell texture as a badge layer too. This gives it exactly
+    -- the same circular mask as the medallion instead of laying a square icon
+    -- over the cyan ring. The 22 px inset leaves the dark seat and rim visible.
+    display.castIcon = CreateBadgeLayer(levelPanel, 22, "OVERLAY", 7)
+    display.castIcon:SetTexCoord(.08, .92, .08, .92)
+    display.castIcon:Hide()
     display.levelPanel = levelPanel
 
     -- Значок уровня круглый, а не квадратный: рядом с круглым
@@ -1050,10 +1269,10 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     -- Seat the level medallion across the portrait corner. Besides reading as
     -- a deliberate corner seal, this hides the tiny junction where the
     -- portrait and the lower frame edge meet.
-    classPanel:SetPoint("CENTER", display.portrait.ring,
-        mirror and "BOTTOMRIGHT" or "BOTTOMLEFT", mirror and -1 or 1, 1)
+    local levelDefault = DEFAULT_BADGE_POSITION[unit].level
+    classPanel:SetPoint("CENTER", holder, "BOTTOMLEFT", levelDefault[1], levelDefault[2])
     display.levelBadgeDefault = {
-        "CENTER", display.portrait.ring, mirror and "BOTTOMRIGHT" or "BOTTOMLEFT", mirror and -1 or 1, 1,
+        "CENTER", holder, "BOTTOMLEFT", levelDefault[1], levelDefault[2],
     }
     classPanel:SetFrameLevel(display.portrait.ring:GetFrameLevel() + 8)
     CreateBadgeLayer(classPanel, 20, "BACKGROUND", 0):SetVertexColor(C.edge[1], C.edge[2], C.edge[3], .80)
@@ -1154,6 +1373,11 @@ function UnitFrames:ConfigureBadgeDisplay(display)
             panel:SetPoint(unpack(badge.default))
         end
         ApplyBadgeShape(panel, settings.badgeShape)
+        local shown = settings.showBadges ~= false and settings.badgeShape ~= 4
+        if badgeKey == "class" then
+            shown = shown and (display.hasClassIcon == true or display.hasCastIcon == true)
+        end
+        panel:SetShown(shown)
         panel:SetMovable(true)
         panel:RegisterForDrag("LeftButton")
         panel:EnableMouse(settings.badgesUnlocked == true)
@@ -1171,6 +1395,18 @@ function UnitFrames:ConfigureBadgeDisplay(display)
                     active.badgePositions = type(active.badgePositions) == "table" and active.badgePositions or {}
                     active.badgePositions[display.unit] = active.badgePositions[display.unit] or {}
                     active.badgePositions[display.unit][badgeKey] = { x = x, y = y }
+                    local otherUnit = display.unit == "player" and "target" or "player"
+                    local otherDisplay = UnitFrames.displays and UnitFrames.displays[otherUnit]
+                    if otherDisplay and otherDisplay.holder then
+                        local mirroredX = (otherDisplay.holder:GetWidth() or SIZE.width) - x
+                        active.badgePositions[otherUnit] = active.badgePositions[otherUnit] or {}
+                        active.badgePositions[otherUnit][badgeKey] = { x = mirroredX, y = y }
+                        local otherPanel = BadgePanel(otherDisplay, badgeKey)
+                        if otherPanel then
+                            otherPanel:ClearAllPoints()
+                            otherPanel:SetPoint("CENTER", otherDisplay.holder, "BOTTOMLEFT", mirroredX, y)
+                        end
+                    end
                 end
             end)
         end
@@ -1316,23 +1552,51 @@ end
 
 local function ShowTargetPlaceholder(display, moving)
     if not InCombatLockdown() then display.holder:Show() end
+    display.placeholder = true
     display.portrait:SetUnit(nil)
-    display.portrait:SetStateAlpha(.82)
-    display.name:SetText(moving and L("ЦЕЛЬ") or L("ЦЕЛИ НЕТ"))
-    display.group:SetText("")
-    display.level:SetText("")
-    if display.classIcon then display.classIcon:SetText("") end
-
+    display.portrait.face:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+    display.portrait.face:SetTexCoord(0, 1, 0, 1)
+    if type(display.portrait.face.SetDesaturated) == "function" then
+        display.portrait.face:SetDesaturated(true)
+    end
+    display.portrait.face:SetVertexColor(.82, .65, .26, .92)
+    display.portrait.face:Show()
+    display.portrait.model:Hide()
+    display.portrait.ring:Show()
+    display.portrait:SetStateAlpha(.76)
+    display.levelPanel:Hide()
+    display.classPanel:Hide()
+    display.statsPanel:Show()
+    display.panel:ClearAllPoints()
+    display.panel:SetSize(SIZE.panelWidth, SIZE.headerH)
+    display.panel:SetPoint(display.mirror and "TOPRIGHT" or "TOPLEFT", display.portrait.ring,
+        display.mirror and "TOPLEFT" or "TOPRIGHT", display.mirror and 1 or SIZE.gap, 0)
+    ModernBackdrop(display.panel, .82)
+    display.statsPanel:ClearAllPoints()
+    display.statsPanel:SetSize(SIZE.panelWidth, SIZE.statsH)
+    display.statsPanel:SetPoint("TOPLEFT", display.panel, "BOTTOMLEFT", 0, 0)
     LayoutStats(display, true)
     display.health:SetMinMaxValues(0, 1)
     display.health:SetValue(1)
+    display.health:SetAlpha(.46)
+    MatteBarColor(display.health, .34, .25, .08)
     display.healthValue:SetText("")
-    MatteBarColor(display.health, .18, .46, .34)
-    display.power.holder:Show()
     display.power:SetMinMaxValues(0, 1)
     display.power:SetValue(1)
+    display.power:SetAlpha(.40)
+    MatteBarColor(display.power, .10, .12, .15)
     display.powerValue:SetText("")
-    MatteBarColor(display.power, .16, .34, .56)
+    display.name:SetText(moving and L("Цель") or L("Цель не выбрана"))
+    display.name:Show()
+    if display.castBar then display.castBar:Hide() end
+    display.name:SetTextColor(C.muted[1], C.muted[2], C.muted[3], .92)
+    display.group:SetText("")
+    display.level:SetText("")
+    display.hasClassIcon = false
+    display.hasCastIcon = false
+    if display.classIcon then display.classIcon:Hide() end
+    if display.castIcon then display.castIcon:Hide() end
+    UpdateClassBadgePanelVisibility(display)
 
     wipe(display.cache)
     if display.debuffRow then
@@ -1340,6 +1604,30 @@ local function ShowTargetPlaceholder(display, moving)
         LayoutRow(display.buffRow, {})
     end
     if display.moveOverlay then display.moveOverlay:SetShown(moving == true) end
+end
+
+local function RestoreTargetPlaceholder(display)
+    if not display.placeholder then return end
+    display.placeholder = nil
+    local mirror = display.mirror
+    display.portrait.ring:Show()
+    display.panel:ClearAllPoints()
+    display.panel:SetSize(SIZE.panelWidth, SIZE.headerH)
+    display.panel:SetPoint(mirror and "TOPRIGHT" or "TOPLEFT", display.portrait.ring,
+        mirror and "TOPLEFT" or "TOPRIGHT", mirror and 1 or SIZE.gap, 0)
+    ModernBackdrop(display.panel, .95)
+    display.name:Show()
+    display.statsPanel:ClearAllPoints()
+    display.statsPanel:SetSize(SIZE.panelWidth, SIZE.statsH)
+    display.statsPanel:SetPoint("TOPLEFT", display.panel, "BOTTOMLEFT", 0, 0)
+    display.statsPanel:Show()
+    display.health:SetAlpha(1)
+    display.power:SetAlpha(1)
+    local settings = ActiveSettings()
+    local showBadges = settings.showBadges ~= false and settings.badgeShape ~= 4
+    display.levelPanel:SetShown(showBadges)
+    display.classPanel:SetShown(showBadges)
+    display.name:SetTextColor(C.amber[1], C.amber[2], C.amber[3], 1)
 end
 
 function UnitFrames:RefreshDisplay(display, full)
@@ -1363,8 +1651,10 @@ function UnitFrames:RefreshDisplay(display, full)
         return
     end
     if not InCombatLockdown() then display.holder:Show() end
+    if display.unit == "target" then RestoreTargetPlaceholder(display) end
     display.holder:SetAlpha(1)
     UpdateIdentity(display); UpdateHealth(display); UpdatePower(display); UpdateResourcePips(display); UpdateState(display)
+    self:UpdateCast(display)
     if full and display.debuffRow then
         local settings = ActiveSettings()
         local aurasEnabled = display.unit == "player" and settings.showPlayerAuras ~= false
@@ -1395,7 +1685,7 @@ function UnitFrames:ApplySettings()
         if display.portrait and display.portrait.SetAnimated then
             display.portrait:SetAnimated(settings.animatedPortrait ~= false)
         end
-        if display.levelPanel then display.levelPanel:SetShown(settings.showBadges ~= false) end
+        if display.levelPanel then UpdateClassBadgePanelVisibility(display) end
         if display.classPanel then display.classPanel:SetShown(settings.showBadges ~= false) end
         self:ConfigureBadgeDisplay(display)
         UpdateResourcePips(display)
@@ -1588,10 +1878,15 @@ local function DemoDisplay(display, data, settings)
     display.holder:SetScale(settings.scale)
     display.holder:SetAlpha(settings.opacity)
     display.holder:Show()
+    display.placeholder = nil
+    display.castBar:Hide()
+    display.castIcon:Hide()
+    display.hasClassIcon = UI.SetClassIconTexture(display.classIcon, data.class)
+    display.classIcon:SetShown(display.hasClassIcon)
+    display.name:Show()
     display.name:SetText(data.name)
     display.group:SetText(data.group or "G1")
     display.level:SetText("80")
-    display.classIcon:SetText(UI.ClassIcon(data.class, 20))
     display.levelPanel:SetShown(settings.showBadges ~= false)
     display.classPanel:SetShown(settings.showBadges ~= false)
     display.portrait:SetAnimated(false)
@@ -1770,6 +2065,10 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
             if display.portrait and display.portrait.unit ~= display.unit then
                 display.portrait:SetUnit(display.unit)
             end
+            if display.debuffRow then
+                ReadAuras(display)
+                RefreshAuras(display)
+            end
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
         self:RefreshDispelSet(); self:RefreshAll()
@@ -1799,6 +2098,7 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
             if display.debuffRow and aurasEnabled and ApplyAuraUpdate(display, updateInfo) then
                 RefreshAuras(display)
             end
+        elseif event:find("^UNIT_SPELLCAST") then self:UpdateCast(display, event)
         elseif event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then UpdateHealth(display); UpdateState(display)
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER"
             or event == "UNIT_POWER_POINT_CHARGE" then
@@ -1828,6 +2128,12 @@ function UnitFrames:Enable()
         "UNIT_AURA", "UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_NAME_UPDATE",
         "UNIT_FACTION", "UNIT_CONNECTION",
     }) do events:RegisterUnitEvent(event, "player", "target") end
+    for _, event in ipairs({
+        "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",
+        "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
+        "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_UPDATE", "UNIT_SPELLCAST_CHANNEL_STOP",
+        "UNIT_SPELLCAST_EMPOWER_START", "UNIT_SPELLCAST_EMPOWER_UPDATE", "UNIT_SPELLCAST_EMPOWER_STOP",
+    }) do pcall(events.RegisterUnitEvent, events, event, "player", "target") end
     if not C_EventUtils or not C_EventUtils.IsEventValid or C_EventUtils.IsEventValid("UNIT_POWER_POINT_CHARGE") then
         events:RegisterUnitEvent("UNIT_POWER_POINT_CHARGE", "player")
     end

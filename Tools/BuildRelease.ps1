@@ -90,7 +90,11 @@ try {
         "README.txt",
         "LICENSE-XPERL.txt",
         "NOTICE-XPERL.txt",
-        "Media\MythicBoostIcon.png",
+        "Media\MythicBoostIcon.tga",
+        "Media\LootGlass.tga",
+        "Media\LootGlow.tga",
+        "Media\AuraWingMask.tga",
+        "Media\AuraLunarMask.tga",
         "Media\XPerl_FrameBack.blp",
         "Media\XPerl_ThinEdge.blp"
     )

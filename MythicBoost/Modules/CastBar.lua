@@ -13,7 +13,7 @@ local CHANNEL_COLOR = { .32, .30, 1 }
 local COMPLETE_COLOR = { .12, .86, .15 }
 local FAILED_COLOR = { 1, .09, 0 }
 local TIME_PANEL_WIDTH = 58
-local SETTINGS_DEFAULTS = { enabled = false, unlocked = false }
+local SETTINGS_DEFAULTS = { enabled = true, unlocked = false }
 
 local function MatteBarColor(bar, color)
     local r, g, b = unpack(color)
@@ -28,15 +28,35 @@ end
 
 local function Settings()
     local settings = JP.Settings("castBar", SETTINGS_DEFAULTS) or {}
-    if settings.layoutRevision ~= 2 then
-        settings.point, settings.relativePoint = "BOTTOM", "BOTTOM"
-        settings.x, settings.y = 0, 250
-        settings.layoutRevision = 2
+    if settings.layoutRevision ~= 3 then
+        local oldDefault = settings.layoutRevision == 2 and settings.point == "BOTTOM"
+            and settings.x == 0 and settings.y == 250
+        if type(settings.point) ~= "string" or oldDefault then
+            settings.point, settings.relativePoint = "BOTTOM", "BOTTOM"
+            settings.x, settings.y = 2, 161
+        end
+        settings.layoutRevision = 3
     end
     return settings
 end
 
 local PlainNumber = UI.UsableNumber
+
+local function PlainToken(value)
+    local kind = type(value)
+    return (kind == "string" or kind == "number") and not issecretvalue(value)
+end
+
+local function MatchesActiveCast(self, castGUID, spellID)
+    if not self.active then return false end
+    if PlainToken(self.castGUID) then
+        return PlainToken(castGUID) and self.castGUID == castGUID
+    end
+    if PlainNumber(self.castSpellID) then
+        return PlainNumber(spellID) and self.castSpellID == spellID
+    end
+    return not PlainToken(castGUID) and not PlainNumber(spellID)
+end
 
 local function UnitMatches(unit)
     return unit == "player" or unit == "vehicle"
@@ -116,7 +136,7 @@ function CastBar:RestorePosition()
     if type(settings.point) == "string" and PlainNumber(settings.x) and PlainNumber(settings.y) then
         frame:SetPoint(settings.point, UIParent, settings.relativePoint or settings.point, settings.x, settings.y)
     else
-        frame:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 250)
+        frame:SetPoint("BOTTOM", UIParent, "BOTTOM", 2, 161)
     end
 end
 
@@ -146,12 +166,12 @@ function CastBar:UpdateLatency(duration)
     frame.latency:Show()
 end
 
-function CastBar:Start(channel, empower)
+function CastBar:Start(channel, empower, castGUID, eventSpellID)
     -- Quartz может создать свой Player bar позже MythicBoost. Проверяем
     -- конкурирующие полосы перед каждым новым кастом, чтобы дубликат не успел
     -- появиться даже при необычном порядке загрузки аддонов.
     self:ParkBlizzard()
-    local name, displayName, icon, startMS, endMS = ReadCast(channel or empower)
+    local name, displayName, icon, startMS, endMS, _, readSpellID = ReadCast(channel or empower)
     if not name or not PlainNumber(startMS) or not PlainNumber(endMS) or endMS <= startMS then return end
 
     local wasActive = self.active and true or false
@@ -160,6 +180,9 @@ function CastBar:Start(channel, empower)
     self.channeling = channel and not empower
     self.casting = not self.channeling
     self.active, self.fadeUntil = true, nil
+    self.castGUID = PlainToken(castGUID) and castGUID or nil
+    self.castSpellID = PlainNumber(eventSpellID) and eventSpellID
+        or (PlainNumber(readSpellID) and readSpellID or nil)
     self.appearUntil = not wasActive and GetTime() + .12 or nil
     self.flashUntil = nil
     if not wasActive then self.castLatency = nil end
@@ -168,7 +191,13 @@ function CastBar:Start(channel, empower)
     local frame = self.frame
     frame:SetAlpha(wasActive and 1 or 0)
     frame.icon:SetTexture(icon or 136243)
-    local target = self.targetName
+    local sentMatches = PlainToken(self.sentGUID) and PlainToken(self.castGUID)
+        and self.sentGUID == self.castGUID
+    if not sentMatches and PlainNumber(self.sentSpellID) and PlainNumber(self.castSpellID) then
+        sentMatches = self.sentSpellID == self.castSpellID
+    end
+    local target = sentMatches and self.targetName or nil
+    self.sentGUID, self.sentSpellID, self.targetName = nil, nil, nil
     if type(target) == "string" and not issecretvalue(target) and target ~= "" and target ~= UnitName("player") then
         frame.name:SetFormattedText("%s  |cff8fa1b5> %s|r", displayName or name, target)
     else
@@ -188,15 +217,16 @@ function CastBar:Start(channel, empower)
     frame:Show()
 end
 
-function CastBar:RefreshCast()
-    if self.empowering then self:Start(false, true)
-    elseif self.channeling then self:Start(true, false)
-    elseif self.casting then self:Start(false, false) end
+function CastBar:RefreshCast(castGUID, spellID)
+    if self.empowering then self:Start(false, true, castGUID, spellID)
+    elseif self.channeling then self:Start(true, false, castGUID, spellID)
+    elseif self.casting then self:Start(false, false, castGUID, spellID) end
 end
 
 function CastBar:Finish(success)
-    if not self.frame then return end
+    if not self.frame or not self.active then return end
     self.active, self.casting, self.channeling, self.empowering = nil, nil, nil, nil
+    self.castGUID, self.castSpellID = nil, nil
     MatteBarColor(self.frame.bar, success and COMPLETE_COLOR or FAILED_COLOR)
     local _, maximum = self.frame.bar:GetMinMaxValues()
     self.frame.bar:SetValue(maximum)
@@ -260,24 +290,31 @@ function CastBar:OnUpdate()
     end
 end
 
-function CastBar:OnEvent(event, unit, arg2)
+function CastBar:OnEvent(event, unit, arg2, arg3, arg4)
     if event == "ADDON_LOADED" then
         if unit == "Quartz" then self:ParkBlizzard() end
         return
     end
     if event == "UNIT_SPELLCAST_SENT" then
-        if UnitMatches(unit) then self.sentAt, self.targetName = GetTime(), arg2 end
+        if UnitMatches(unit) then
+            self.sentAt, self.targetName = GetTime(), arg2
+            self.sentGUID = PlainToken(arg3) and arg3 or nil
+            self.sentSpellID = PlainNumber(arg4) and arg4 or nil
+        end
         return
     end
     if unit and not UnitMatches(unit) then return end
-    if event == "UNIT_SPELLCAST_START" then self:Start(false, false)
-    elseif event == "UNIT_SPELLCAST_CHANNEL_START" then self:Start(true, false)
-    elseif event == "UNIT_SPELLCAST_EMPOWER_START" then self:Start(false, true)
+    if event == "UNIT_SPELLCAST_START" then self:Start(false, false, arg2, arg3)
+    elseif event == "UNIT_SPELLCAST_CHANNEL_START" then self:Start(true, false, arg2, arg3)
+    elseif event == "UNIT_SPELLCAST_EMPOWER_START" then self:Start(false, true, arg2, arg3)
     elseif event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE"
-        or event == "UNIT_SPELLCAST_EMPOWER_UPDATE" then self:RefreshCast()
-    elseif event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then self:Finish(false)
+        or event == "UNIT_SPELLCAST_EMPOWER_UPDATE" then
+        if MatchesActiveCast(self, arg2, arg3) then self:RefreshCast(arg2, arg3) end
+    elseif event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
+        if MatchesActiveCast(self, arg2, arg3) then self:Finish(false) end
     elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_STOP"
-        or event == "UNIT_SPELLCAST_EMPOWER_STOP" then self:Finish(true)
+        or event == "UNIT_SPELLCAST_EMPOWER_STOP" then
+        if MatchesActiveCast(self, arg2, arg3) then self:Finish(true) end
     end
 end
 
@@ -288,6 +325,7 @@ function CastBar:SetUnlocked(unlocked)
     frame:EnableMouse(settings.unlocked)
     if settings.unlocked then
         self.active, self.fadeUntil = nil, nil
+        self.castGUID, self.castSpellID = nil, nil
         frame:SetAlpha(1)
         frame.icon:SetTexture("Interface\\Icons\\Spell_Holy_MagicalSentry")
         frame.name:SetText(L("Перетащи кастбар"))
@@ -324,8 +362,11 @@ function CastBar:ParkBlizzard()
                 bar.__mbCustomCastBarHook = true
                 bar:HookScript("OnShow", function(owner)
                     if CastBar.enabled and MythicBoostDB and MythicBoostDB.castBar
-                        and MythicBoostDB.castBar.enabled ~= false then
-                        owner:Hide()
+                        and MythicBoostDB.castBar.enabled ~= false
+                        and not owner.__mbCastBarHideActive then
+                        owner.__mbCastBarHideActive = true
+                        pcall(owner.Hide, owner)
+                        owner.__mbCastBarHideActive = nil
                     end
                 end)
             end
@@ -499,6 +540,7 @@ end
 function CastBar:Disable()
     if self.events then self.events:UnregisterAllEvents() end
     self.active, self.fadeUntil = nil, nil
+    self.castGUID, self.castSpellID = nil, nil
     if self.frame then self.frame:Hide() end
     self:RestoreBlizzard()
 end
