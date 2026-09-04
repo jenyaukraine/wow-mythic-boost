@@ -485,7 +485,7 @@ local function InitializeDatabase()
     Default(db.errorGuard, "keepBetweenSessions", true)
     -- Remove only signatures produced by fixed MythicBoost integration bugs.
     -- Other third-party and current errors remain available for support.
-    if db.errorGuard.stabilityPrunedRevision ~= 3 then
+    if db.errorGuard.stabilityPrunedRevision ~= 4 then
         if type(db.errorGuard.log) == "table" then
             for index = #db.errorGuard.log, 1, -1 do
                 local entry = db.errorGuard.log[index]
@@ -497,12 +497,17 @@ local function InitializeDatabase()
                     and stack:find("MythicBoost/UI.lua", 1, true)
                 local fixedAuraTrackerInit = message:find("MythicBoost/Modules/PositiveAuraTracker.lua:42", 1, true)
                     and message:find("attempt to call a nil value", 1, true)
-                if fixedMeterProbe or fixedPortraitLoop or fixedAuraTrackerInit then
+                local combined = message .. "\n" .. stack
+                local fixedAuraTimerLoop = message:find("script ran too long", 1, true)
+                    and combined:find("MythicBoost/Modules/PositiveAuraTracker.lua", 1, true)
+                    and combined:find("UpdateTimers", 1, true)
+                    and combined:find("Refresh", 1, true)
+                if fixedMeterProbe or fixedPortraitLoop or fixedAuraTrackerInit or fixedAuraTimerLoop then
                     table.remove(db.errorGuard.log, index)
                 end
             end
         end
-        db.errorGuard.stabilityPrunedRevision = 3
+        db.errorGuard.stabilityPrunedRevision = 4
     end
     db.bagUI = type(db.bagUI) == "table" and db.bagUI or {}
     -- The unified inventory replaces protected Blizzard bag behaviour, so it

@@ -301,6 +301,19 @@ function PositiveAuraTracker:ApplySettings()
     self:SetUnlocked(settings.unlocked or MythicBoostDB.interfaceUnlocked == true)
 end
 
+-- Never refresh synchronously from UpdateTimers. The aura API may briefly
+-- return an already expired record, so Refresh -> UpdateTimers -> Refresh
+-- would recurse until WoW aborts the script. One deferred callback coalesces
+-- every expired slot and lets the UNIT_AURA state settle first.
+function PositiveAuraTracker:QueueRefresh()
+    if self.refreshQueued then return end
+    self.refreshQueued = true
+    C_Timer.After(0, function()
+        self.refreshQueued = nil
+        if self.frame and self.frame:IsShown() then self:Refresh() end
+    end)
+end
+
 function PositiveAuraTracker:UpdateTimers()
     if not self.frame or not self.frame:IsShown() then return end
     local settings, now = Settings(), GetTime()
@@ -320,7 +333,7 @@ function PositiveAuraTracker:UpdateTimers()
             if icon.expiration and icon.duration and icon.duration > 0 then
                 remaining = math.max(0, icon.expiration - now)
                 progress = math.max(0, math.min(1, remaining / icon.duration))
-                if remaining <= 0 then expired = true end
+                if remaining <= 0 then expired = true; icon:Hide() end
             end
             local height = math.max(1, settings.barHeight * progress)
             icon.fill:ClearAllPoints()
@@ -339,11 +352,12 @@ function PositiveAuraTracker:UpdateTimers()
             end
         end
     end
-    if expired then self:Refresh() end
+    if expired then self:QueueRefresh() end
 end
 
 function PositiveAuraTracker:Refresh()
-    if not self.frame then return end
+    if not self.frame or self.refreshing then return end
+    self.refreshing = true
     local settings = Settings()
     for _, icon in ipairs(self.frame.icons) do
         icon:Hide(); icon.expiration = nil; icon.duration = nil
@@ -352,16 +366,20 @@ function PositiveAuraTracker:Refresh()
     end
     if settings.enabled ~= true or #settings.spellIDs == 0 then
         self.frame:SetShown(settings.unlocked == true)
+        self.refreshing = nil
         return
     end
 
-    local visible, missing = 0, {}
+    local visible, missing, refreshNow = 0, {}, GetTime()
     for _, spellID in ipairs(settings.spellIDs) do
         if visible >= math.min(8, tonumber(settings.maxIcons) or 8) then break end
         if UI.UsableNumber(spellID) then
             local aura, blocked = UI.SafeUnitAura("player", spellID)
             if not blocked then
                 local _, spellName, spellTexture = SpellInfo(spellID)
+                local duration = aura and UI.SafeNumber(aura.duration)
+                local expiration = aura and UI.SafeNumber(aura.expirationTime)
+                if duration and duration > 0 and expiration and expiration <= refreshNow then aura = nil end
                 if settings.showWhenMissing and aura == nil then
                     missing[#missing + 1] = { spellID, spellName, spellTexture }
                 elseif not settings.showWhenMissing and aura ~= nil then
@@ -372,8 +390,6 @@ function PositiveAuraTracker:Refresh()
                     icon.texture:SetShown(settings.showIcon ~= false)
                     icon.textureBorder:SetShown(settings.showIcon ~= false)
                     icon.spellID, icon.spellName = spellID, spellName
-                    local duration = aura and UI.SafeNumber(aura.duration)
-                    local expiration = aura and UI.SafeNumber(aura.expirationTime)
                     icon.duration, icon.expiration = duration, expiration
                     if settings.showStacks and aura then
                         local count = UI.SafeNumber(aura.applications)
@@ -398,6 +414,7 @@ function PositiveAuraTracker:Refresh()
         icon:Show()
     end
     self.frame:SetShown(visible > 0 or settings.unlocked == true)
+    self.refreshing = nil
     self:UpdateTimers()
 end
 

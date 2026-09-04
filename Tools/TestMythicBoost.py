@@ -115,7 +115,7 @@ def test_safe_defaults():
     assert db.lootUI.enabled is True
     assert db.smartClick.buff is False and db.smartClick.res is False
     assert db.rcLoot.enabled is False and db.errorGuard.enabled is False
-    assert db.errorGuard.stabilityPrunedRevision == 3
+    assert db.errorGuard.stabilityPrunedRevision == 4
 
     # A non-empty legacy profile with no HUD keys must not be taken over by an
     # update. The same visual defaults above are reserved for genuinely fresh
@@ -1019,8 +1019,9 @@ def test_restricted_auras_use_targeted_friendly_lookup():
     assert "showIcon = true" in tracker
     assert 'Default(db.positiveAuraTracker, "showIcon", true)' in core
     assert "db.positiveAuraTracker.identityRevision ~= 1" in core
-    assert "db.errorGuard.stabilityPrunedRevision ~= 3" in core
+    assert "db.errorGuard.stabilityPrunedRevision ~= 4" in core
     assert 'message:find("MythicBoost/Modules/PositiveAuraTracker.lua:42", 1, true)' in core
+    assert 'local fixedAuraTimerLoop = message:find("script ran too long", 1, true)' in core
     assert "icon.textureBorder:SetShown(settings.showIcon ~= false)" in tracker
     assert '"! " .. icon.missingCount' in tracker
     assert "if settings.showWhenMissing and #missing > 0 then" in tracker
@@ -1033,6 +1034,10 @@ def test_restricted_auras_use_targeted_friendly_lookup():
     assert 'Modules/PositiveAuraTracker.lua' in toc
     assert 'for index = 1, 8 do frame.icons[index] = CreateIcon(frame) end' in tracker
     assert 'if self.elapsed >= .10' in tracker
+    assert 'if expired then self:QueueRefresh() end' in tracker
+    assert 'if expired then self:Refresh() end' not in tracker
+    assert 'if not self.frame or self.refreshing then return end' in tracker
+    assert 'expiration <= refreshNow then aura = nil' in tracker
     assert 'Media\\AuraWingMask.tga' in (ROOT / "Tools/BuildRelease.ps1").read_text(encoding="utf-8")
     assert (ROOT / "MythicBoost/Media/AuraWingMask.tga").stat().st_size > 100_000
     assert (ROOT / "MythicBoost/Media/AuraLunarMask.tga").stat().st_size > 100_000
@@ -1095,6 +1100,28 @@ def test_restricted_auras_use_targeted_friendly_lookup():
     assert jp.PositiveAuraTracker.GetTextureName(jp.PositiveAuraTracker, 3) == "Лунар"
     jp.PositiveAuraTracker.SetTexturePreset(jp.PositiveAuraTracker, 3)
     assert "AuraLunarOriginal" in jp.PositiveAuraTracker.GetBarTexture(jp.PositiveAuraTracker)
+    lua.execute("""
+        timerCallbacks={}; refreshCalls=0
+        C_Timer={After=function(_, callback) table.insert(timerCallbacks, callback) end}
+        GetTime=function() return 10 end
+        trackerDB.pulse=false
+        trackerDB.showSeconds=true
+        trackerDB.barHeight=190
+        local noop=function() end
+        local icon={expiration=9,duration=5,rightSide=false,missing=false,
+            fill={SetAlpha=noop,ClearAllPoints=noop,SetPoint=noop,SetHeight=noop,SetTexCoord=noop},
+            glow={SetAlpha=noop},seconds={SetText=noop}}
+        function icon:IsShown() return true end
+        function icon:Hide() self.hidden=true end
+        JP.PositiveAuraTracker.frame={icons={icon}}
+        function JP.PositiveAuraTracker.frame:IsShown() return true end
+        JP.PositiveAuraTracker.Refresh=function() refreshCalls=refreshCalls+1 end
+        JP.PositiveAuraTracker:UpdateTimers()
+        JP.PositiveAuraTracker:UpdateTimers()
+        assert(#timerCallbacks==1 and refreshCalls==0 and icon.hidden==true)
+        timerCallbacks[1]()
+        assert(refreshCalls==1)
+    """)
 
 
 if __name__ == "__main__":
