@@ -966,6 +966,13 @@ def test_loot_roll_preview_is_local_and_draggable():
     assert 'L("Показать тестовый бросок")' in settings
     assert 'Heading(lootPage, L("ГРУППОВАЯ ДОБЫЧА"), 28, -322, 764)' in settings
     assert 'command == "testroll"' in core
+    assert "local ROLL_CHOICE_COLORS" in loot
+    assert 'button.glass:SetGradient("VERTICAL"' in loot
+    assert 'row.qualityWash:SetGradient("HORIZONTAL"' in loot
+    assert 'row.iconFrame:SetBackdropBorderColor(r, g, b, 1)' in loot
+    assert 'row.timerPanel:SetBackdropBorderColor(r, g, b, .72)' in loot
+    assert 'local glassWave = .68 + .18 * math.sin' in loot
+    assert 'UI.Backdrop(rollFrame.header, C.raised, C.surfaceEdge)' in loot
 
 
 def test_unit_frame_badges_target_placeholder_and_aura_order():
@@ -1023,6 +1030,16 @@ def test_cast_events_are_correlated_and_capsule_uses_glass_progress():
     assert "endTime - now - latency" in frames
     assert "display.castCompleteUntil = now + math.max(.06, display.castLatency or 0)" in frames
     assert "self:UpdateCast(display, event)" in frames
+
+
+def test_castbar_time_cap_is_integrated_without_a_visual_hole():
+    cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
+    assert "local TIME_PANEL_WIDTH = 52" in cast
+    assert 'frame.timePanel:SetBackdropBorderColor(.38, .43, .49, .96)' in cast
+    assert 'frame.timePanel.divider:SetColorTexture(.95, .58, .14, .78)' in cast
+    assert 'frame.bar:SetPoint("BOTTOMRIGHT", frame.timePanel, "BOTTOMLEFT", 0, 0)' in cast
+    assert 'frame.name:SetPoint("RIGHT", frame.bar, "RIGHT", -6, 0)' in cast
+    assert 'frame.bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -3, 3)' not in cast
 
 
 def test_unit_frames_magnetize_to_blizzard_action_bars():
@@ -1242,6 +1259,7 @@ if __name__ == "__main__":
     test_loot_roll_preview_is_local_and_draggable()
     test_unit_frame_badges_target_placeholder_and_aura_order()
     test_cast_events_are_correlated_and_capsule_uses_glass_progress()
+    test_castbar_time_cap_is_integrated_without_a_visual_hole()
     test_unit_frames_magnetize_to_blizzard_action_bars()
     test_blizzard_edit_mode_keeps_native_frame_ownership()
     test_unit_frame_health_can_optionally_use_class_color()

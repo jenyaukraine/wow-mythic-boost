@@ -464,6 +464,14 @@ local ROLL_CHOICE_TEXTURES = {
     [4] = "Interface\\MINIMAP\\TRACKING\\Transmogrifier",
 }
 
+local ROLL_CHOICE_COLORS = {
+    [0] = { .48, .54, .62 },
+    [1] = { .22, .92, .48 },
+    [2] = { 1.00, .72, .16 },
+    [3] = { .72, .32, 1.00 },
+    [4] = { .18, .78, 1.00 },
+}
+
 local function BuildRollChoice(row, label, rollType)
     local button = CreateFrame("Button", nil, row, "BackdropTemplate")
     button:SetSize(24, 24)
@@ -472,24 +480,35 @@ local function BuildRollChoice(row, label, rollType)
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
-    button:SetBackdropColor(.015, .020, .026, .96)
-    button:SetBackdropBorderColor(.14, .42, .52, .96)
+    local choiceColor = ROLL_CHOICE_COLORS[rollType] or ROLL_CHOICE_COLORS[0]
+    button:SetBackdropColor(choiceColor[1] * .08, choiceColor[2] * .08, choiceColor[3] * .08, .98)
+    button:SetBackdropBorderColor(choiceColor[1], choiceColor[2], choiceColor[3], .82)
+    button.glass = button:CreateTexture(nil, "BACKGROUND", nil, 2)
+    button.glass:SetPoint("TOPLEFT", 1, -1); button.glass:SetPoint("BOTTOMRIGHT", -1, 1)
+    button.glass:SetColorTexture(1, 1, 1, 1)
+    button.glass:SetGradient("VERTICAL",
+        CreateColor(choiceColor[1] * .18, choiceColor[2] * .18, choiceColor[3] * .18, .14),
+        CreateColor(choiceColor[1], choiceColor[2], choiceColor[3], .34))
     button.icon = button:CreateTexture(nil, "ARTWORK")
     button.icon:SetPoint("TOPLEFT", 2, -2)
     button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     button.icon:SetTexture(ROLL_CHOICE_TEXTURES[rollType])
     button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
     button.highlight:SetAllPoints(button.icon)
-    button.highlight:SetColorTexture(.12, .78, 1, .22)
+    button.highlight:SetColorTexture(choiceColor[1], choiceColor[2], choiceColor[3], .34)
     button.rollType = rollType
     button.choiceLabel = label
     button:SetFrameLevel(row:GetFrameLevel() + 4)
     button:SetScript("OnEnter", function(owner)
+        owner:SetBackdropBorderColor(choiceColor[1], choiceColor[2], choiceColor[3], 1)
         GameTooltip:SetOwner(owner, "ANCHOR_TOP")
         GameTooltip:SetText(owner.choiceLabel)
         GameTooltip:Show()
     end)
-    button:SetScript("OnLeave", GameTooltip_Hide)
+    button:SetScript("OnLeave", function(owner)
+        owner:SetBackdropBorderColor(choiceColor[1], choiceColor[2], choiceColor[3], .82)
+        GameTooltip_Hide()
+    end)
     button:SetScript("OnClick", function(owner)
         if not row.rollID or row.selectionMade then return end
         -- A preview roll is local-only: it exercises layout and choice states
@@ -528,25 +547,48 @@ function LootUI:BuildRollRow(index)
         edgeSize = 1,
     })
     row:SetBackdropColor(.004, .007, .011, .98)
+    row.qualityWash = row:CreateTexture(nil, "BACKGROUND", nil, 1)
+    row.qualityWash:SetPoint("TOPLEFT", 1, -1); row.qualityWash:SetPoint("BOTTOMRIGHT", -1, 1)
+    row.qualityWash:SetColorTexture(1, 1, 1, 1)
+    row.glassTop = row:CreateTexture(nil, "ARTWORK", nil, 1)
+    row.glassTop:SetPoint("TOPLEFT", 1, -1); row.glassTop:SetPoint("TOPRIGHT", -1, -1)
+    row.glassTop:SetHeight(20)
+    row.glassTop:SetColorTexture(1, 1, 1, 1)
+    row.glassTop:SetGradient("VERTICAL",
+        CreateColor(.55, .70, .84, 0), CreateColor(.88, .95, 1, .16))
+    row.qualityEdge = row:CreateTexture(nil, "OVERLAY", nil, 1)
+    row.qualityEdge:SetPoint("TOPLEFT", 1, -1); row.qualityEdge:SetPoint("BOTTOMLEFT", 1, 3)
+    row.qualityEdge:SetWidth(3)
     row.progress = CreateFrame("StatusBar", nil, row)
     row.progress:SetPoint("BOTTOMLEFT", 1, 1)
     row.progress:SetPoint("BOTTOMRIGHT", -1, 1)
-    row.progress:SetHeight(2)
+    row.progress:SetHeight(3)
     row.progress:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     row.progress:SetStatusBarColor(C.accent[1], C.accent[2], C.accent[3], .90)
     row.progress:SetFrameLevel(row:GetFrameLevel())
-    row.icon = row:CreateTexture(nil, "ARTWORK", nil, 3)
-    row.icon:SetPoint("TOPLEFT", 3, -3)
-    row.icon:SetSize(40, 40)
+    row.iconFrame = CreateFrame("Frame", nil, row, "BackdropTemplate")
+    row.iconFrame:SetPoint("TOPLEFT", 5, -4); row.iconFrame:SetSize(39, 39)
+    row.iconFrame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    row.iconFrame:SetBackdropColor(.01, .014, .020, .98)
+    row.icon = row.iconFrame:CreateTexture(nil, "ARTWORK", nil, 3)
+    row.icon:SetPoint("TOPLEFT", 2, -2); row.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     row.icon:SetTexCoord(.07, .93, .07, .93)
     row.name = UI.Text(row, "GameFontNormal", "", C.text)
-    row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 7, -1)
-    row.name:SetPoint("RIGHT", -48, 0)
+    row.name:SetPoint("TOPLEFT", row.iconFrame, "TOPRIGHT", 8, 0)
+    row.name:SetPoint("RIGHT", -54, 0)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
-    row.timer = UI.Text(row, "GameFontNormal", "", C.text)
-    row.timer:SetPoint("TOPRIGHT", -6, -3)
-    row.timer:SetJustifyH("RIGHT")
+    row.timerPanel = CreateFrame("Frame", nil, row, "BackdropTemplate")
+    row.timerPanel:SetPoint("TOPRIGHT", -5, -4); row.timerPanel:SetSize(43, 20)
+    row.timerPanel:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    row.timerPanel:SetBackdropColor(.025, .035, .050, .90)
+    row.timer = UI.Text(row.timerPanel, "GameFontNormal", "", C.text)
+    row.timer:SetPoint("CENTER")
+    row.timer:SetJustifyH("CENTER")
     row.result = UI.Text(row, "GameFontNormalSmall", "", C.accent)
     row.result:SetPoint("BOTTOMRIGHT", -6, 5)
     row.result:Hide()
@@ -590,6 +632,13 @@ function LootUI:RefreshRolls()
             row.progress:SetMinMaxValues(0, math.max(.1, data.duration or 1))
             local r, g, b = QualityColor(data.quality)
             row:SetBackdropBorderColor(r, g, b, .96)
+            row:SetBackdropColor(r * .025, g * .025, b * .025, .98)
+            row.qualityWash:SetGradient("HORIZONTAL",
+                CreateColor(r, g, b, .22), CreateColor(r, g, b, .015))
+            row.qualityEdge:SetColorTexture(r, g, b, .98)
+            row.iconFrame:SetBackdropBorderColor(r, g, b, 1)
+            row.timerPanel:SetBackdropBorderColor(r, g, b, .72)
+            row.progress:SetStatusBarColor(r, g, b, .96)
             row.name:SetTextColor(r, g, b, 1)
             -- Права на бросок приходят от API и могут быть защищёнными, а
             -- сравнивать такое значение нельзя. Снимаем защиту сразу здесь,
@@ -610,8 +659,8 @@ function LootUI:RefreshRolls()
             for choiceIndex, choice in ipairs(visibleChoices) do
                 choice:SetSize(choiceWidth, choiceWidth)
                 choice:ClearAllPoints()
-                choice:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT",
-                    7 + (choiceIndex - 1) * (choiceWidth + choiceGap), 2)
+                choice:SetPoint("BOTTOMLEFT", row.iconFrame, "BOTTOMRIGHT",
+                    8 + (choiceIndex - 1) * (choiceWidth + choiceGap), 0)
             end
             row.result:SetShown(data.selected ~= nil)
             row:Show()
@@ -723,6 +772,9 @@ function LootUI:UpdateRollTimers(elapsed)
             row.progress:SetValue(remaining)
             row.timer:SetFormattedText(remaining < 10 and "%.1f" or "%d", remaining)
             local ratio = remaining / math.max(.1, data.duration or 1)
+            local glassWave = .68 + .18 * math.sin(now * 2.4 + (row.rollID or 0) % 7)
+            row.glassTop:SetAlpha(glassWave)
+            row.qualityWash:SetAlpha(.82 + .12 * math.sin(now * 1.7))
             if ratio > .45 then row.timer:SetTextColor(.90, .96, 1, 1)
             elseif ratio > .18 then row.timer:SetTextColor(1, .72, .18, 1)
             else row.timer:SetTextColor(1, .24, .18, 1) end
@@ -911,8 +963,15 @@ function LootUI:BuildAuxiliaryFrames()
     rollFrame:SetFrameStrata("DIALOG")
     rollFrame:SetClampedToScreen(true)
     rollFrame:SetMovable(true)
-    UI.Backdrop(rollFrame, { .004, .007, .011, .97 }, { .08, .58, .72, .98 })
+    UI.Backdrop(rollFrame, C.surface, C.surfaceEdge)
     BuildAuxiliaryHeader(rollFrame, L("БРОСКИ ГРУППЫ"), "rollPosition", ROLL_HEADER_HEIGHT)
+    UI.Backdrop(rollFrame.header, C.raised, C.surfaceEdge)
+    rollFrame.headerGlass = rollFrame.header:CreateTexture(nil, "ARTWORK", nil, 1)
+    rollFrame.headerGlass:SetPoint("TOPLEFT", 1, -1); rollFrame.headerGlass:SetPoint("BOTTOMRIGHT", -1, 1)
+    rollFrame.headerGlass:SetColorTexture(1, 1, 1, 1)
+    rollFrame.headerGlass:SetGradient("HORIZONTAL",
+        CreateColor(C.accent[1], C.accent[2], C.accent[3], .20),
+        CreateColor(C.amber[1], C.amber[2], C.amber[3], .06))
     rollFrame.close = UI.CloseButton(rollFrame)
     rollFrame.close:SetSize(18, 18)
     rollFrame.close:SetPoint("TOPRIGHT", -1, -1)

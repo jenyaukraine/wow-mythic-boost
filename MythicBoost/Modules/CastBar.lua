@@ -12,7 +12,7 @@ local CAST_COLOR = { 1.00, .49, 0 }
 local CHANNEL_COLOR = { .32, .30, 1 }
 local COMPLETE_COLOR = { .12, .86, .15 }
 local FAILED_COLOR = { 1, .09, 0 }
-local TIME_PANEL_WIDTH = 58
+local TIME_PANEL_WIDTH = 52
 local SETTINGS_DEFAULTS = { enabled = true, unlocked = false }
 
 local function MatteBarColor(bar, color)
@@ -399,15 +399,20 @@ function CastBar:Create()
     frame.timePanel:SetPoint("TOPRIGHT", -3, -3)
     frame.timePanel:SetPoint("BOTTOMRIGHT", -3, 3)
     frame.timePanel:SetWidth(TIME_PANEL_WIDTH)
-    frame.timePanel:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
-    frame.timePanel:SetBackdropColor(0, 0, 0, 0)
+    frame.timePanel:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    frame.timePanel:SetBackdropColor(C.raised[1], C.raised[2], C.raised[3], .98)
+    frame.timePanel:SetBackdropBorderColor(.38, .43, .49, .96)
     frame.timePanel:SetFrameLevel(frame:GetFrameLevel() + 6)
     frame.timePanel.scrim = frame.timePanel:CreateTexture(nil, "BACKGROUND", nil, 0)
     frame.timePanel.scrim:SetAllPoints()
     frame.timePanel.scrim:SetColorTexture(1, 1, 1, 1)
     frame.timePanel.scrim:SetGradient("HORIZONTAL",
-        CreateColor(.004, .006, .010, .08),
-        CreateColor(.004, .006, .010, .76))
+        CreateColor(.12, .15, .19, .08),
+        CreateColor(.02, .025, .035, .32))
     frame.timePanel.danger = frame.timePanel:CreateTexture(nil, "BACKGROUND", nil, 1)
     frame.timePanel.danger:SetPoint("BOTTOMLEFT", 0, 0)
     frame.timePanel.danger:SetPoint("BOTTOMRIGHT", 0, 0)
@@ -420,11 +425,11 @@ function CastBar:Create()
     frame.timePanel.divider:SetPoint("TOPLEFT", 0, 0)
     frame.timePanel.divider:SetPoint("BOTTOMLEFT", 0, 0)
     frame.timePanel.divider:SetWidth(1)
-    frame.timePanel.divider:SetColorTexture(.62, .10, .06, 0)
+    frame.timePanel.divider:SetColorTexture(.95, .58, .14, .78)
 
     frame.bar = CreateFrame("StatusBar", nil, frame)
     frame.bar:SetPoint("TOPLEFT", 32, -3)
-    frame.bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -3, 3)
+    frame.bar:SetPoint("BOTTOMRIGHT", frame.timePanel, "BOTTOMLEFT", 0, 0)
     frame.bar:SetStatusBarTexture(XPERL_BAR)
     frame.bar:SetClipsChildren(true)
     frame.bar.background = frame.bar:CreateTexture(nil, "BACKGROUND")
@@ -488,7 +493,7 @@ function CastBar:Create()
 
     frame.name = UI.Text(frame.bar, "GameFontHighlight", "")
     frame.name:SetPoint("LEFT", 5, 0)
-    frame.name:SetPoint("RIGHT", frame.bar, "RIGHT", -TIME_PANEL_WIDTH - 6, 0)
+    frame.name:SetPoint("RIGHT", frame.bar, "RIGHT", -6, 0)
     frame.name:SetJustifyH("LEFT")
     frame.name:SetWordWrap(false)
     local nameFont = frame.name:GetFont()
