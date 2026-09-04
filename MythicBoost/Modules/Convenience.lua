@@ -19,6 +19,35 @@ local function PrintMoney(prefix, copper)
     JP:Print(prefix .. ": " .. text)
 end
 
+local function IsInsideRaid()
+    if type(IsInInstance) ~= "function" then return false end
+    local ok, inInstance, instanceType = pcall(IsInInstance)
+    return ok and inInstance == true and instanceType == "raid"
+end
+
+-- The total belongs to one continuous visit to a raid instance. It is kept
+-- only in memory, cannot grow between sessions, and is reset as soon as the
+-- player leaves the raid. Zone events maintain the boundary; Repair checks it
+-- again so a missed transition cannot start a total outside a raid.
+function Convenience:UpdateRaidRepairSession()
+    if not IsInsideRaid() then
+        self.raidRepairActive = nil
+        self.raidRepairTotal = 0
+        return false
+    end
+    if not self.raidRepairActive then
+        self.raidRepairActive = true
+        self.raidRepairTotal = 0
+    end
+    return true
+end
+
+function Convenience:AddRaidRepairCost(copper)
+    if not UI.UsableNumber(copper) or copper <= 0 or not self:UpdateRaidRepairSession() then return nil end
+    self.raidRepairTotal = (UI.UsableNumber(self.raidRepairTotal) and self.raidRepairTotal or 0) + copper
+    return self.raidRepairTotal
+end
+
 local function IsKeystone(itemID)
     if type(itemID) ~= "number" or issecretvalue(itemID) then return false end
     if C_Item and type(C_Item.IsItemKeystoneByID) == "function" then
@@ -113,10 +142,15 @@ end
 function Convenience:Repair()
     if not Enabled("repair") or IsShiftKeyDown() or not CanMerchantRepair or not CanMerchantRepair() then return end
     local cost, needed = GetRepairAllCost()
-    if not needed or not cost or cost <= 0 then return end
+    if not needed or not UI.UsableNumber(cost) or cost <= 0 then return end
     local useGuild = Enabled("guildRepair") and IsInGuild() and CanGuildBankRepair and CanGuildBankRepair()
-    pcall(RepairAllItems, useGuild and true or false)
-    if Settings().merchantSummary then PrintMoney(L("Ремонт"), cost) end
+    local repaired = pcall(RepairAllItems, useGuild and true or false)
+    if not repaired then return end
+    local raidTotal = self:AddRaidRepairCost(cost)
+    if Settings().merchantSummary then
+        PrintMoney(L("Ремонт"), cost)
+        if raidTotal then PrintMoney(L("За время рейда"), raidTotal) end
+    end
 end
 
 function Convenience:AutomateQuest(event)
@@ -172,10 +206,12 @@ function Convenience:Create()
     for _, event in ipairs({
         "MERCHANT_SHOW", "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE", "GOSSIP_SHOW",
         "CONFIRM_SUMMON", "RESURRECT_REQUEST", "CHAT_MSG_WHISPER", "ADDON_LOADED",
-        "CHALLENGE_MODE_KEYSTONE_RECEPTABLE_OPEN",
+        "CHALLENGE_MODE_KEYSTONE_RECEPTABLE_OPEN", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA",
     }) do self.events:RegisterEvent(event) end
     self.events:SetScript("OnEvent", function(_, event, ...)
-        if event == "ADDON_LOADED" then
+        if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+            self:UpdateRaidRepairSession()
+        elseif event == "ADDON_LOADED" then
             local addon = ...
             if addon == "Blizzard_ChallengesUI" then self:SetupKeystoneFrame() end
         elseif event == "CHALLENGE_MODE_KEYSTONE_RECEPTABLE_OPEN" then

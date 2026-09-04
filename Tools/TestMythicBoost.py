@@ -151,6 +151,42 @@ def test_safe_defaults():
     assert db.interfaceUnlocked is True
 
 
+def test_raid_repair_total_resets_after_leaving_instance():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+        inRaid=true; repairCost=100; messages={}; repairs=0
+        function issecretvalue(_) return false end
+        function IsInInstance() return inRaid, inRaid and 'raid' or 'none' end
+        function IsShiftKeyDown() return false end
+        function CanMerchantRepair() return true end
+        function GetRepairAllCost() return repairCost, true end
+        function IsInGuild() return false end
+        function RepairAllItems() repairs=repairs+1 end
+        function GetMoneyString(value) return tostring(value) end
+        convenienceDB={repair=true,guildRepair=false,merchantSummary=true}
+        JP={L=function(x) return x end,
+            UI={UsableNumber=function(v) return type(v)=='number' end},
+            Settings=function() return convenienceDB end,
+            Print=function(_, message) table.insert(messages,message) end,
+            RegisterModule=function(self,name,module) self[name]=module end}
+    """)
+    jp = lua.globals().JP
+    load(lua, "MythicBoost/Modules/Convenience.lua", jp)
+    lua.execute("""
+        JP.Convenience:Repair()
+        repairCost=250
+        JP.Convenience:Repair()
+        assert(repairs==2 and #messages==4)
+        assert(messages[1]=='Ремонт: 100' and messages[2]=='За время рейда: 100')
+        assert(messages[3]=='Ремонт: 250' and messages[4]=='За время рейда: 350')
+        inRaid=false
+        JP.Convenience:UpdateRaidRepairSession()
+        inRaid=true; repairCost=75
+        JP.Convenience:Repair()
+        assert(messages[5]=='Ремонт: 75' and messages[6]=='За время рейда: 75')
+    """)
+
+
 def test_application_plan():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute("""
@@ -1127,6 +1163,7 @@ def test_restricted_auras_use_targeted_friendly_lookup():
 if __name__ == "__main__":
     test_completion_api()
     test_safe_defaults()
+    test_raid_repair_total_resets_after_leaving_instance()
     test_application_plan()
     test_rejected_search_results()
     test_launch_decision()
