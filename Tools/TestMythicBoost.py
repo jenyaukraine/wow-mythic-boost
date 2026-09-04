@@ -1025,8 +1025,15 @@ def test_blizzard_edit_mode_keeps_native_frame_ownership():
     cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
 
     assert 'local BLIZZARD_FRAMES = { "PlayerFrame", "TargetFrame" }' in frames
+    assert 'local NATIVE_AURA_FRAMES = { "BuffFrame", "DebuffFrame" }' in frames
     assert 'holder:SetClampedToScreen(true)' in frames
     assert 'self:MagnetizeToActionBars(display)' in frames
+    assert 'function UnitFrames:SetNativeAurasHidden(hidden)' in frames
+    assert 'self:SetNativeAurasHidden(replacesBlizzard and settings.showPlayerAuras ~= false)' in frames
+    native_aura_hide = frames.split("function UnitFrames:SetNativeAurasHidden", 1)[1].split("\nend", 1)[0]
+    assert ":ClearAllPoints(" not in native_aura_hide
+    assert ":SetPoint(" not in native_aura_hide
+    assert ":SetScale(" not in native_aura_hide
     aura_style = minimal.split("function MinimalUI:StylePlayerAuras", 1)[1].split("\nend", 1)[0]
     assert "BuffFrame" not in aura_style
     assert "DebuffFrame" not in aura_style

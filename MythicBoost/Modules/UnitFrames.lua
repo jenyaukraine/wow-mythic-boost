@@ -23,6 +23,7 @@ local DEFAULT_BADGE_POSITION = {
 -- children of the player capsule and must remain owned by Blizzard even when
 -- our replacement unit frames are enabled.
 local BLIZZARD_FRAMES = { "PlayerFrame", "TargetFrame" }
+local NATIVE_AURA_FRAMES = { "BuffFrame", "DebuffFrame" }
 local XPERL_BACK = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_FrameBack"
 local XPERL_THIN = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_ThinEdge"
 -- The bundled Perl v2 texture has a cloudy/noisy fill. The original 2.4.3
@@ -1559,6 +1560,31 @@ function UnitFrames:RestoreBlizzard()
     return true
 end
 
+-- The custom player capsule already renders its own aura row. Hide the native
+-- duplicate only while that replacement is active, without ever touching the
+-- Blizzard anchor, scale or Edit Mode layout. Restoring the original parent
+-- makes the native row reappear at exactly the position Blizzard saved.
+function UnitFrames:SetNativeAurasHidden(hidden)
+    if InCombatLockdown() then return false end
+    self.parkedAuras = self.parkedAuras or {}
+    if hidden then
+        for _, name in ipairs(NATIVE_AURA_FRAMES) do
+            local frame = _G[name]
+            if frame and not self.parkedAuras[name] then
+                self.parkedAuras[name] = frame:GetParent() or UIParent
+                frame:SetParent(self:Hider())
+            end
+        end
+    else
+        for _, name in ipairs(NATIVE_AURA_FRAMES) do
+            local frame, parent = _G[name], self.parkedAuras[name]
+            if frame and parent then frame:SetParent(parent) end
+            self.parkedAuras[name] = nil
+        end
+    end
+    return true
+end
+
 local function ShowTargetPlaceholder(display, moving)
     if not InCombatLockdown() then display.holder:Show() end
     display.placeholder = true
@@ -1706,8 +1732,9 @@ function UnitFrames:ApplySettings()
             RefreshAuras(display)
         end
     end
-    if settings.enabled ~= false and settings.hideBlizzard ~= false then self:HideBlizzard()
-    else self:RestoreBlizzard() end
+    local replacesBlizzard = settings.enabled ~= false and settings.hideBlizzard ~= false
+    if replacesBlizzard then self:HideBlizzard() else self:RestoreBlizzard() end
+    self:SetNativeAurasHidden(replacesBlizzard and settings.showPlayerAuras ~= false)
     return true
 end
 
@@ -2157,7 +2184,10 @@ function UnitFrames:Disable()
     for _, display in pairs(self.displays or {}) do
         if display.moveOverlay then display.moveOverlay:Hide() end
     end
-    self:AfterCombat("restoreBlizzard", function(module) module:RestoreBlizzard() end)
+    self:AfterCombat("restoreBlizzard", function(module)
+        module:RestoreBlizzard()
+        module:SetNativeAurasHidden(false)
+    end)
 end
 
 function UnitFrames:Destroy() self:Disable() end
