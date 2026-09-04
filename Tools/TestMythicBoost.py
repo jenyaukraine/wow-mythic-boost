@@ -639,6 +639,20 @@ def test_run_history_can_invite_by_whisper():
     assert 'interfaceMove:SetPoint("TOPLEFT", 28, -406)' in settings
 
 
+def test_last_run_report_uses_compact_metric_cards():
+    source = (ROOT / "MythicBoost/Modules/RunHistory.lua").read_text(encoding="utf-8")
+    assert 'report:SetHeight(136)' in source
+    assert 'local function MetricCard(x, label, color)' in source
+    assert 'self.reportTime = MetricCard(16, L("ВРЕМЯ"), C.text)' in source
+    assert 'self.reportDeaths = MetricCard(172, L("СМЕРТИ"), C.red)' in source
+    assert 'self.reportInterrupts = MetricCard(328, L("ПРЕРЫВАНИЯ"), C.amber)' in source
+    assert 'self.reportStatusText:SetText(status)' in source
+    assert 'self.reportLoss:SetText(loss)' in source
+    assert 'self.reportSegment:SetText(segment or "")' in source
+    assert 'self.reportSummary' not in source
+    assert 'self.reportDetail' not in source
+
+
 def test_settings_steppers_use_supported_glyphs():
     source = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
     stepper = source.split("function SettingsHub:AddStepper", 1)[1].split(
@@ -1212,6 +1226,7 @@ if __name__ == "__main__":
     test_exact_key_search_uses_blizzard_range_syntax()
     test_basicminimap_owns_the_minimap()
     test_run_history_can_invite_by_whisper()
+    test_last_run_report_uses_compact_metric_cards()
     test_warcraft_logs_character_urls()
     test_buff_button_is_prepared_before_combat()
     test_target_identity_and_portrait_have_fallbacks()

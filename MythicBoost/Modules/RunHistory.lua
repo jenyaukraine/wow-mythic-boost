@@ -291,36 +291,71 @@ end
 function RunHistory:Build(_, page)
     self.page = page
     local report = UI.Panel(page, C.panel, C.line)
-    report:SetPoint("TOPLEFT", 10, -10); report:SetPoint("TOPRIGHT", -10, -10); report:SetHeight(112)
-    local title = UI.Text(report, "GameFontNormalLarge", L("ПОСЛЕДНИЙ КЛЮЧ"), C.accent)
-    title:SetPoint("TOPLEFT", 14, -12)
-    self.reportTitle = UI.Text(report, "GameFontNormal", L("Пока нет записанных прохождений"), C.text)
-    self.reportTitle:SetPoint("TOPLEFT", 14, -42)
-    self.reportSummary = UI.Text(report, "GameFontHighlightSmall", "", C.muted)
-    self.reportSummary:SetPoint("TOPLEFT", 14, -66); self.reportSummary:SetPoint("RIGHT", -14, 0)
-    self.reportDetail = UI.Text(report, "GameFontHighlightSmall", "", C.faint)
-    self.reportDetail:SetPoint("TOPLEFT", 14, -88); self.reportDetail:SetPoint("RIGHT", -14, 0)
+    report:SetPoint("TOPLEFT", 10, -10); report:SetPoint("TOPRIGHT", -10, -10); report:SetHeight(136)
+    local accent = report:CreateTexture(nil, "ARTWORK")
+    accent:SetPoint("TOPLEFT", 2, -2); accent:SetPoint("BOTTOMLEFT", 2, 2); accent:SetWidth(3)
+    accent:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .92)
+
+    local title = UI.Text(report, "GameFontNormalSmall", L("ПОСЛЕДНИЙ КЛЮЧ"), C.accent)
+    title:SetPoint("TOPLEFT", 16, -11)
+    self.reportTitle = UI.Text(report, "GameFontNormalLarge", L("Пока нет записанных прохождений"), C.text)
+    self.reportTitle:SetPoint("TOPLEFT", 16, -31)
+
+    self.reportStatus = UI.Panel(report, C.field, C.lineSoft)
+    self.reportStatus:SetSize(126, 26); self.reportStatus:SetPoint("TOPRIGHT", -12, -11)
+    self.reportStatusText = UI.Text(self.reportStatus, "GameFontNormalSmall", "", C.green)
+    self.reportStatusText:SetPoint("CENTER")
+    self.reportTitle:SetPoint("RIGHT", self.reportStatus, "LEFT", -14, 0)
+    self.reportTitle:SetJustifyH("LEFT")
+
+    local function MetricCard(x, label, color)
+        local card = UI.Panel(report, C.field, C.lineSoft)
+        card:SetSize(146, 58); card:SetPoint("BOTTOMLEFT", x, 12)
+        local caption = UI.Text(card, "GameFontNormalSmall", label, C.faint)
+        caption:SetPoint("TOPLEFT", 10, -7)
+        card.value = UI.Text(card, "GameFontNormalLarge", "—", color)
+        card.value:SetPoint("BOTTOMLEFT", 10, 9)
+        card.note = UI.Text(card, "GameFontHighlightSmall", "", C.muted)
+        card.note:SetPoint("BOTTOMRIGHT", -9, 11)
+        card.note:SetJustifyH("RIGHT")
+        return card
+    end
+    self.reportTime = MetricCard(16, L("ВРЕМЯ"), C.text)
+    self.reportDeaths = MetricCard(172, L("СМЕРТИ"), C.red)
+    self.reportInterrupts = MetricCard(328, L("ПРЕРЫВАНИЯ"), C.amber)
+
+    self.reportInsight = UI.Panel(report, C.field, C.lineSoft)
+    self.reportInsight:SetPoint("TOPLEFT", self.reportInterrupts, "TOPRIGHT", 10, 0)
+    self.reportInsight:SetPoint("BOTTOMRIGHT", -12, 12)
+    self.reportLossLabel = UI.Text(self.reportInsight, "GameFontNormalSmall", L("ГЛАВНАЯ ПОТЕРЯ"), C.faint)
+    self.reportLossLabel:SetPoint("TOPLEFT", 11, -8)
+    self.reportLoss = UI.Text(self.reportInsight, "GameFontHighlightSmall", "", C.text)
+    self.reportLoss:SetPoint("TOPLEFT", 11, -25); self.reportLoss:SetPoint("TOPRIGHT", -11, -25)
+    self.reportLoss:SetJustifyH("LEFT")
+    self.reportSegment = UI.Text(self.reportInsight, "GameFontHighlightSmall", "", C.muted)
+    self.reportSegment:SetPoint("TOPLEFT", 11, -42); self.reportSegment:SetPoint("TOPRIGHT", -11, -42)
+    self.reportSegment:SetJustifyH("LEFT")
 
     local heading = UI.Text(page, "GameFontNormalSmall", L("ИСТОРИЯ НАПАРНИКОВ - СОРТИРОВКА ПО RIO"), C.accent)
-    heading:SetPoint("TOPLEFT", 16, -140)
+    heading:SetPoint("TOPLEFT", 16, -164)
     local headers = {
         { L("ИГРОК"), 22, 250, "LEFT" }, { "RIO", 280, 90 }, { L("ВМЕСТЕ"), 380, 90 },
         { L("В ТАЙМЕР"), 480, 90 }, { L("ПОСЛЕДНИЙ КЛЮЧ"), 580, 220, "LEFT" }, { L("КОГДА"), -118, 130, "RIGHT", true },
     }
     for _, data in ipairs(headers) do
         local text = UI.Text(page, "GameFontNormalSmall", data[1], C.faint)
-        if data[5] then text:SetPoint("TOPRIGHT", data[2], -162) else text:SetPoint("TOPLEFT", data[2], -162) end
+        if data[5] then text:SetPoint("TOPRIGHT", data[2], -186) else text:SetPoint("TOPLEFT", data[2], -186) end
         text:SetWidth(data[3]); text:SetJustifyH(data[4] or "CENTER")
     end
     self.rows = {}
     for index = 1, MAX_ROWS do
         local row = CreateHistoryRow(page, index)
-        row:SetPoint("TOPLEFT", 12, -180 - (index - 1) * ROW_HEIGHT)
-        row:SetPoint("TOPRIGHT", -12, -180 - (index - 1) * ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", 12, -204 - (index - 1) * ROW_HEIGHT)
+        row:SetPoint("TOPRIGHT", -12, -204 - (index - 1) * ROW_HEIGHT)
         self.rows[index] = row
     end
     self.scrollBar = UI.ScrollBar(page)
-    self.scrollBar:SetPoint("TOPRIGHT", -5, -180)
+    self.scrollBar:SetPoint("TOPRIGHT", -5, -204)
     self.scrollBar:SetPoint("BOTTOMRIGHT", -5, 12)
     self.scrollBar:SetScript("OnValueChanged", function(_, value)
         local offset = math.floor(value + .5)
@@ -336,7 +371,7 @@ function RunHistory:Layout()
     if not self.page or not self.rows then return end
     local height = self.page:GetHeight()
     if height < 100 then return end
-    self.visibleRows = math.max(2, math.min(MAX_ROWS, math.floor((height - 198) / ROW_HEIGHT)))
+    self.visibleRows = math.max(2, math.min(MAX_ROWS, math.floor((height - 222) / ROW_HEIGHT)))
     for index, row in ipairs(self.rows) do
         row.layoutVisible = index <= self.visibleRows
         if not row.layoutVisible then row:Hide() end
@@ -395,12 +430,20 @@ function RunHistory:Refresh()
     if last then
         local status = last.practiceRun and L("ТРЕНИРОВОЧНЫЙ")
             or (last.onTime and L("В ТАЙМЕР") or L("НЕ В ТАЙМЕР"))
-        self.reportTitle:SetText(("%s  +%d  %s"):format(
-            last.mapName or L("Неизвестное подземелье"), tonumber(last.level) or 0, status))
-        self.reportSummary:SetText((L("Время %s   -   смерти %d (%s штрафа)   -   прерывания %d")):format(
-            FormatDuration(last.duration), tonumber(last.deaths) or 0,
-            FormatDuration(last.deathTime), tonumber(last.interrupts) or 0)
-            .. (last.trackingPartial and L("   -   прерывания записаны после /reload") or ""))
+        self.reportTitle:SetText(("%s  •  +%d"):format(
+            last.mapName or L("Неизвестное подземелье"), tonumber(last.level) or 0))
+        local statusColor = last.practiceRun and C.amber or (last.onTime and C.green or C.red)
+        self.reportStatusText:SetText(status)
+        self.reportStatusText:SetTextColor(UI.Unpack(statusColor))
+        self.reportStatus:SetBackdropBorderColor(UI.Unpack(statusColor))
+        self.reportStatus:Show()
+        self.reportTime.value:SetText(FormatDuration(last.duration))
+        self.reportTime.note:SetText("")
+        self.reportDeaths.value:SetText(tostring(tonumber(last.deaths) or 0))
+        self.reportDeaths.note:SetText("+" .. FormatDuration(last.deathTime))
+        self.reportInterrupts.value:SetText(tostring(tonumber(last.interrupts) or 0))
+        self.reportInterrupts.note:SetText(last.trackingPartial and L("после /reload") or "")
+        self.reportTime:Show(); self.reportDeaths:Show(); self.reportInterrupts:Show(); self.reportInsight:Show()
         local duration, deathTime = tonumber(last.duration) or 0, tonumber(last.deathTime) or 0
         local deathShare = duration > 0 and math.min(100, math.floor(deathTime / duration * 100 + .5)) or 0
         local loss = deathTime > 0
@@ -408,9 +451,13 @@ function RunHistory:Refresh()
             or L("Штрафа за смерти не было — ищи потери в маршруте, простоях и уроне.")
         local segmentLabel, segmentTime = LongestSegment(last)
         local segment = segmentLabel and (L("самый длинный отрезок: %s — %s")):format(segmentLabel, FormatDuration(segmentTime))
-        self.reportDetail:SetText(segment and (loss .. "   -   " .. segment) or loss)
+        self.reportLoss:SetText(loss)
+        self.reportLoss:SetTextColor(UI.Unpack(deathTime > 0 and C.amber or C.green))
+        self.reportSegment:SetText(segment or "")
     else
-        self.reportTitle:SetText(L("Пока нет записанных прохождений")); self.reportSummary:SetText(""); self.reportDetail:SetText("")
+        self.reportTitle:SetText(L("Пока нет записанных прохождений"))
+        self.reportStatus:Hide()
+        self.reportTime:Hide(); self.reportDeaths:Hide(); self.reportInterrupts:Hide(); self.reportInsight:Hide()
     end
 
     local players = {}
