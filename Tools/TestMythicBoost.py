@@ -1019,6 +1019,22 @@ def test_unit_frames_magnetize_to_blizzard_action_bars():
     assert "horizontalDistance > 44" in source
 
 
+def test_blizzard_edit_mode_keeps_native_frame_ownership():
+    frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    minimal = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
+    cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
+
+    assert 'local BLIZZARD_FRAMES = { "PlayerFrame", "TargetFrame" }' in frames
+    assert 'holder:SetClampedToScreen(true)' in frames
+    assert 'self:MagnetizeToActionBars(display)' in frames
+    aura_style = minimal.split("function MinimalUI:StylePlayerAuras", 1)[1].split("\nend", 1)[0]
+    assert "BuffFrame" not in aura_style
+    assert "DebuffFrame" not in aura_style
+    assert ":SetPoint(" not in aura_style
+    assert "Quartz3CastBarPlayer" not in cast
+    assert '"ADDON_LOADED",\n        "UNIT_SPELLCAST_SENT"' not in cast
+
+
 def test_approved_hud_is_the_new_profile_default():
     frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
     cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
@@ -1192,6 +1208,7 @@ if __name__ == "__main__":
     test_unit_frame_badges_target_placeholder_and_aura_order()
     test_cast_events_are_correlated_and_capsule_uses_glass_progress()
     test_unit_frames_magnetize_to_blizzard_action_bars()
+    test_blizzard_edit_mode_keeps_native_frame_ownership()
     test_approved_hud_is_the_new_profile_default()
     test_restricted_auras_use_targeted_friendly_lookup()
     print("MythicBoost executable smoke tests: all passed")

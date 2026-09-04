@@ -19,7 +19,10 @@ local DEFAULT_BADGE_POSITION = {
     player = { class = { 64.89, 45.62 }, level = { 11.90, 11.85 } },
     target = { class = { 160.11, 45.62 }, level = { 213.10, 11.85 } },
 }
-local BLIZZARD_FRAMES = { "PlayerFrame", "TargetFrame", "BuffFrame", "DebuffFrame" }
+-- BuffFrame and DebuffFrame are independent Edit Mode systems. They are not
+-- children of the player capsule and must remain owned by Blizzard even when
+-- our replacement unit frames are enabled.
+local BLIZZARD_FRAMES = { "PlayerFrame", "TargetFrame" }
 local XPERL_BACK = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_FrameBack"
 local XPERL_THIN = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_ThinEdge"
 -- The bundled Perl v2 texture has a cloudy/noisy fill. The original 2.4.3
@@ -1137,6 +1140,7 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     local holder = CreateFrame("Frame", nil, options.parent or self.container)
     holder:SetSize(SIZE.width, SIZE.height)
     holder:SetMovable(true)
+    holder:SetClampedToScreen(true)
     display.holder = holder
 
     if not options.preview then

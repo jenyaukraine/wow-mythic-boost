@@ -291,10 +291,6 @@ function CastBar:OnUpdate()
 end
 
 function CastBar:OnEvent(event, unit, arg2, arg3, arg4)
-    if event == "ADDON_LOADED" then
-        if unit == "Quartz" then self:ParkBlizzard() end
-        return
-    end
     if event == "UNIT_SPELLCAST_SENT" then
         if UnitMatches(unit) then
             self.sentAt, self.targetName = GetTime(), arg2
@@ -351,7 +347,6 @@ function CastBar:ParkBlizzard()
     for _, bar in ipairs({
         _G.PlayerCastingBarFrame,
         _G.CastingBarFrame,
-        _G.Quartz3CastBarPlayer,
     }) do
         if bar and bar ~= self.frame and not seen[bar] then
             seen[bar] = true
@@ -528,7 +523,6 @@ function CastBar:Enable()
     self.events = self.events or CreateFrame("Frame")
     self.events:SetScript("OnEvent", function(_, event, ...) self:OnEvent(event, ...) end)
     for _, event in ipairs({
-        "ADDON_LOADED",
         "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP",
         "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
         "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_UPDATE", "UNIT_SPELLCAST_CHANNEL_STOP",

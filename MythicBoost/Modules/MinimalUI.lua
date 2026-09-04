@@ -1995,15 +1995,6 @@ function MinimalUI:StyleNativeDamageMeter(enabled)
     for _, candidate in ipairs(candidates) do self:SkinNativeDamageMeterFrame(candidate, true) end
 end
 
-local function CaptureFrameLayout(frame)
-    if not frame or type(frame.GetNumPoints) ~= "function" then return end
-    local state = { scale = frame:GetScale(), points = {} }
-    for index = 1, frame:GetNumPoints() do
-        state.points[index] = { frame:GetPoint(index) }
-    end
-    return state
-end
-
 local function RestoreFrameLayout(frame, state)
     if not frame or not state then return end
     frame:ClearAllPoints()
@@ -2011,52 +2002,14 @@ local function RestoreFrameLayout(frame, state)
     if state.scale then frame:SetScale(state.scale) end
 end
 
--- Keep the familiar Blizzard aura buttons, only move and scale their native
--- container. This preserves right-click cancellation, durations and tooltips.
-function MinimalUI:StylePlayerAuras(enabled)
-    local buffs, player = _G.BuffFrame, _G.PlayerFrame
-    if not buffs or not player then return end
+-- Blizzard Edit Mode exclusively owns the native aura containers. Older
+-- versions of MythicBoost could have captured and moved them in the current
+-- session, so keep a restoration-only migration path, then release them.
+function MinimalUI:StylePlayerAuras(_)
     if InCombatLockdown() then return end
-
-    local customPlayer = MythicBoostDB and MythicBoostDB.unitFrames and MythicBoostDB.unitFrames.enabled ~= false
-        and JP.UnitFrames and JP.UnitFrames.displays and JP.UnitFrames.displays.player
-    if customPlayer then
-        -- UnitFrames рисует собственные бафы в контейнере шириной с фрейм.
-        -- Не перетягиваем поверх него широкую штатную ленту Blizzard.
-        if self.playerAuraAnchor then self.playerAuraAnchor:Hide() end
-        return
-    end
-
-    self.auraLayouts = self.auraLayouts or UI.WeakKeys()
-    if not self.auraLayouts[buffs] then self.auraLayouts[buffs] = CaptureFrameLayout(buffs) end
-
-    if enabled then
-        if not self.playerAuraAnchor then
-            local anchor = CreateFrame("Frame", nil, UIParent)
-            anchor:SetSize(190, 180)
-            self.playerAuraAnchor = anchor
-        end
-        local anchor = self.playerAuraAnchor
-        anchor:ClearAllPoints()
-        anchor:SetPoint("TOPRIGHT", player, "BOTTOMRIGHT", 0, -7)
-        anchor:Show()
-
-        buffs:ClearAllPoints()
-        buffs:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", 0, 0)
-        buffs:SetScale(.68)
-
-        local debuffs = _G.DebuffFrame
-        if debuffs and debuffs ~= buffs then
-            if not self.auraLayouts[debuffs] then self.auraLayouts[debuffs] = CaptureFrameLayout(debuffs) end
-            debuffs:ClearAllPoints()
-            debuffs:SetPoint("TOPRIGHT", buffs, "BOTTOMRIGHT", 0, -4)
-            debuffs:SetScale(.68)
-        end
-    else
-        for frame, state in pairs(self.auraLayouts) do RestoreFrameLayout(frame, state) end
-        wipe(self.auraLayouts)
-        if self.playerAuraAnchor then self.playerAuraAnchor:Hide() end
-    end
+    for frame, state in pairs(self.auraLayouts or {}) do RestoreFrameLayout(frame, state) end
+    if self.auraLayouts then wipe(self.auraLayouts) end
+    if self.playerAuraAnchor then self.playerAuraAnchor:Hide() end
 end
 
 function MinimalUI:Apply()
@@ -2087,8 +2040,9 @@ function MinimalUI:Apply()
     self:StyleBags(hideBags)
 
     -- Страховочный проход для тех слоёв, у которых нет своего события: панель
-    -- кулдаунов и окна Details создаются на лету чужим кодом, лента
-    -- бафов и миникарта перестраиваются молча.
+    -- кулдаунов и окна Details создаются на лету чужим кодом, а миникарта
+    -- перестраивается молча. Штатные ауры здесь намеренно не трогаются:
+    -- их положением полностью управляет Blizzard Edit Mode.
     --
     -- Микроменю, трекер и панели кнопок отсюда убраны — у каждого
     -- есть точный триггер, и тикер повторял их работу вхолостую:
@@ -2113,7 +2067,6 @@ function MinimalUI:Apply()
             self:StyleMinimap(ownMinimap)
             self:StyleCooldownEffectBars(true)
             self:StyleDetails(true)
-            self:StylePlayerAuras(true)
             self:StyleBags(MythicBoostDB.convenience and MythicBoostDB.convenience.hideBags ~= false)
         end)
     elseif not enabled and self.maintenanceTicker then
