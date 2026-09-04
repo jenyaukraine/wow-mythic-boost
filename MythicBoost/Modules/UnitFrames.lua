@@ -244,7 +244,7 @@ local function Settings()
     local settings = db.unitFrames
     local defaults = {
         unlocked = false, scale = 1.5, opacity = 1,
-        showHealthText = true, showPowerText = true,
+        showHealthText = true, classColoredHealth = false, showPowerText = true,
         animatedPortrait = true, showBadges = true, badgesUnlocked = false, badgeShape = 1,
         alwaysShowTarget = true,
         showPlayerAuras = true, showTargetAuras = true,
@@ -291,7 +291,7 @@ local function Settings()
 end
 
 local APPEARANCE_KEYS = {
-    "scale", "opacity", "showHealthText", "showPowerText", "animatedPortrait", "showBadges",
+    "scale", "opacity", "showHealthText", "classColoredHealth", "showPowerText", "animatedPortrait", "showBadges",
     "badgesUnlocked", "badgeShape",
     "alwaysShowTarget",
     "showPlayerAuras", "showTargetAuras", "showResourcePips", "showEmptyResources",
@@ -332,8 +332,13 @@ end
 local function UnitBarColor(unit)
     local dead, connected = UnitIsDeadOrGhost(unit), UnitIsConnected(unit)
     if IsBoolean(dead, true) or IsBoolean(connected, false) then return .30, .32, .36 end
-    -- На своём фрейме здоровье всегда зелёное: цвет класса остаётся в
-    -- имени/портрете и не превращает полосу друида в оранжевую.
+    local settings = UnitFrames.appliedSettings or Settings()
+    if settings.classColoredHealth == true and IsBoolean(UnitIsPlayer(unit), true) then
+        local _, class = UnitClass(unit)
+        if type(class) == "string" and not issecretvalue(class) then return UI.ClassColor(class) end
+    end
+    -- По умолчанию здоровье игрока остаётся привычным зелёным. Цвет класса
+    -- включается только явной галочкой и не меняет старые профили.
     if unit == "player" then return .05, .78, .08 end
     local isPlayer = UnitIsPlayer(unit)
     if IsBoolean(isPlayer, true) then
@@ -1685,6 +1690,7 @@ function UnitFrames:ApplySettings()
         display.holder:SetScale(settings.scale)
         display.holder:SetAlpha(settings.opacity)
         display.healthValue:SetShown(settings.showHealthText ~= false)
+        UpdateHealth(display)
         display.powerValue:SetShown(settings.showPowerText ~= false)
         if display.portrait and display.portrait.SetAnimated then
             display.portrait:SetAnimated(settings.animatedPortrait ~= false)

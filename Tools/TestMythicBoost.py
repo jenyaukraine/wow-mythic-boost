@@ -1035,6 +1035,19 @@ def test_blizzard_edit_mode_keeps_native_frame_ownership():
     assert '"ADDON_LOADED",\n        "UNIT_SPELLCAST_SENT"' not in cast
 
 
+def test_unit_frame_health_can_optionally_use_class_color():
+    core = (ROOT / "MythicBoost/Core.lua").read_text(encoding="utf-8")
+    frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
+
+    assert 'Default(db.unitFrames, "classColoredHealth", false)' in core
+    assert 'classColoredHealth = false' in frames
+    assert 'settings.classColoredHealth == true' in frames
+    assert 'return UI.ClassColor(class)' in frames
+    assert 'L("Цвет здоровья по классу")' in settings
+    assert 'classColoredHealth = false' in settings
+
+
 def test_approved_hud_is_the_new_profile_default():
     frames = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
     cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
@@ -1209,6 +1222,7 @@ if __name__ == "__main__":
     test_cast_events_are_correlated_and_capsule_uses_glass_progress()
     test_unit_frames_magnetize_to_blizzard_action_bars()
     test_blizzard_edit_mode_keeps_native_frame_ownership()
+    test_unit_frame_health_can_optionally_use_class_color()
     test_approved_hud_is_the_new_profile_default()
     test_restricted_auras_use_targeted_friendly_lookup()
     print("MythicBoost executable smoke tests: all passed")

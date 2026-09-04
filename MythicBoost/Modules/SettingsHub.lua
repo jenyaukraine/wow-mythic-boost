@@ -414,7 +414,7 @@ function SettingsHub:Build(_, parent)
     local unitFrameSettings = JP.Settings("unitFrames", {
         enabled = true, hideBlizzard = true, unlocked = false,
         scale = 1.5, opacity = 1,
-        showHealthText = true, showPowerText = true,
+        showHealthText = true, classColoredHealth = false, showPowerText = true,
         animatedPortrait = true, showBadges = true,
         badgesUnlocked = false, badgeShape = 1,
         alwaysShowTarget = true,
@@ -457,20 +457,22 @@ function SettingsHub:Build(_, parent)
         .55, 1, .05, Percent, ApplyFrameSettings, "frameOpacity")
     self:AddColumnCheck(framesPage, unitFrameSettings, "showHealthText",
         L("Показывать числа здоровья"), false, -298, ApplyFrameSettings, "frameHealthText")
+    self:AddColumnCheck(framesPage, unitFrameSettings, "classColoredHealth",
+        L("Цвет здоровья по классу"), false, -332, ApplyFrameSettings, "frameClassHealth")
     self:AddColumnCheck(framesPage, unitFrameSettings, "showPowerText",
-        L("Показывать числа ресурса"), false, -332, ApplyFrameSettings, "framePowerText")
+        L("Показывать числа ресурса"), false, -366, ApplyFrameSettings, "framePowerText")
     self:AddColumnCheck(framesPage, unitFrameSettings, "animatedPortrait",
-        L("Живой 3D-портрет"), false, -366, ApplyFrameSettings, "frameAnimatedPortrait")
+        L("Живой 3D-портрет"), false, -400, ApplyFrameSettings, "frameAnimatedPortrait")
     self:AddColumnCheck(framesPage, unitFrameSettings, "showBadges",
-        L("Показывать класс и уровень"), false, -400, ApplyFrameSettings, "frameBadges")
+        L("Показывать класс и уровень"), false, -434, ApplyFrameSettings, "frameBadges")
     self:AddColumnCheck(framesPage, unitFrameSettings, "badgesUnlocked",
-        L("Перемещать значки класса и уровня"), false, -434, ApplyFrameSettings,
+        L("Перемещать значки класса и уровня"), false, -468, ApplyFrameSettings,
         "frameBadgesUnlocked", 24)
     self:AddColumnCheck(framesPage, unitFrameSettings, "alwaysShowTarget",
-        L("Всегда показывать рамку цели"), false, -468, ApplyFrameSettings,
+        L("Всегда показывать рамку цели"), false, -502, ApplyFrameSettings,
         "frameAlwaysTarget")
     local resetFrames = UI.Button(framesPage, L("Сбросить позиции капсул"), 210, 28)
-    resetFrames:SetPoint("TOPLEFT", 28, -506)
+    resetFrames:SetPoint("TOPLEFT", 28, -540)
     resetFrames:SetScript("OnClick", function()
         if JP.UnitFrames then
             JP.UnitFrames:AfterCombat("resetPositions", function(module) module:ResetPositions() end)
@@ -513,7 +515,7 @@ function SettingsHub:Build(_, parent)
     resetAppearance:SetScript("OnClick", function()
         local defaults = {
             scale = 1.5, opacity = 1,
-            showHealthText = true, showPowerText = true,
+            showHealthText = true, classColoredHealth = false, showPowerText = true,
             animatedPortrait = true, showBadges = true,
             badgesUnlocked = false, badgeShape = 1,
             alwaysShowTarget = true,
