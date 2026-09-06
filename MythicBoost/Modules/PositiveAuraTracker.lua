@@ -360,7 +360,9 @@ function PositiveAuraTracker:UpdateTimers()
                 icon.seconds:SetText(icon.missingCount and icon.missingCount > 1
                     and ("! " .. icon.missingCount) or "!")
             elseif settings.showSeconds and remaining then
-                icon.seconds:SetText(remaining >= 60 and math.ceil(remaining / 60) .. L("м") or tostring(math.ceil(remaining)))
+                local seconds = math.ceil(remaining)
+                icon.seconds:SetText(seconds >= 60 and string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+                    or tostring(seconds))
             else
                 icon.seconds:SetText("")
             end
