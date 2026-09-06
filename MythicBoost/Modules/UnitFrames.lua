@@ -1271,7 +1271,7 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     local moveOverlay = CreateFrame("Frame", nil, holder, "BackdropTemplate")
     moveOverlay:SetAllPoints(holder)
     moveOverlay:SetFrameLevel(statsPanel:GetFrameLevel() + 30)
-    moveOverlay:EnableMouse(false)
+    moveOverlay:EnableMouse(true)
     moveOverlay:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
     moveOverlay:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
     local moveText = UI.Text(moveOverlay, "GameFontNormalSmall",
@@ -1480,17 +1480,23 @@ function UnitFrames:BuildButton(display, name)
     button:SetAttribute("toggleForVehicle", true)
     button.unit = display.unit
     button:SetScript("OnEnter", UnitTooltip); button:SetScript("OnLeave", UnitTooltipHide)
-    button:RegisterForDrag("LeftButton")
-    button:SetScript("OnDragStart", function()
+    local function StartDrag()
         if IsUnlocked() and not InCombatLockdown() then display.holder:StartMoving() end
-    end)
-    button:SetScript("OnDragStop", function()
+    end
+    local function StopDrag()
         if not IsUnlocked() or InCombatLockdown() then return end
         display.holder:StopMovingOrSizing()
         self:MagnetizeToActionBars(display)
         local point, _, _, x, y = display.holder:GetPoint()
         Settings()[display.unit] = { point = point, x = x, y = y }
-    end)
+    end
+    -- UnitWatch hides the secure button when there is no target. The plain
+    -- editor overlay stays available over the placeholder and never targets.
+    for _, handle in ipairs({button, display.moveOverlay}) do
+        handle:RegisterForDrag("LeftButton")
+        handle:SetScript("OnDragStart", StartDrag)
+        handle:SetScript("OnDragStop", StopDrag)
+    end
     ClickCastFrames = ClickCastFrames or {}; ClickCastFrames[button] = true
     RegisterUnitWatch(button)
     display.button = button

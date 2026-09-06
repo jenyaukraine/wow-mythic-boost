@@ -186,11 +186,49 @@ def test_auction_button_layer_and_reopen():
     ''')
 
 
+def test_empty_target_editor_drag():
+    from TestDungeonHUD import runtime
+    lua = runtime()
+    frames = source('Modules/UnitFrames.lua')
+    build = frames.split('function UnitFrames:BuildButton', 1)[1].split('\nfunction UnitFrames:Hider', 1)[0]
+    lua.execute('''
+        UnitFrames={}; settings={}; unlocked=true
+        function Settings() return settings end
+        function IsUnlocked() return unlocked end
+        function UnitTooltip() end
+        function UnitTooltipHide() end
+        function UnitFrames:MagnetizeToActionBars() self.snaps=(self.snaps or 0)+1 end
+    ''')
+    lua.execute('function UnitFrames:BuildButton' + build)
+    lua.execute('''
+        local holder=CreateFrame('Frame',nil,UIParent)
+        holder:SetPoint('CENTER',UIParent,'CENTER',111,222)
+        local d={unit='target',holder=holder,statsPanel=CreateFrame('Frame',nil,holder),
+            moveOverlay=CreateFrame('Frame',nil,holder)}
+        UnitFrames:BuildButton(d,'TestEmptyTarget')
+        assert(not d.button.shown and d.button.watched,'no target hides secure hit area')
+        assert(not ClickCastFrames[d.moveOverlay] and not d.moveOverlay:GetAttribute('unit'))
+        d.moveOverlay.scripts.OnDragStart(); assert(holder.moving)
+        d.moveOverlay.scripts.OnDragStop(); assert(not holder.moving)
+        assert(settings.target.x==111 and settings.target.y==222 and UnitFrames.snaps==1)
+        local built=allocations
+        combat=true; d.moveOverlay.scripts.OnDragStart(); d.moveOverlay.scripts.OnDragStop()
+        assert(not holder.moving and UnitFrames.snaps==1)
+        combat=false; unlocked=false; d.moveOverlay.scripts.OnDragStart()
+        assert(not holder.moving)
+        unlocked=true; units.target={}; d.button:Show()
+        d.moveOverlay.scripts.OnDragStart(); assert(holder.moving)
+        d.moveOverlay.scripts.OnDragStop()
+        assert(allocations==built and d.button.watched)
+    ''')
+    assert 'moveOverlay:EnableMouse(true)' in frames
+
+
 if __name__ == '__main__':
     for test in (test_default_positions_and_saved_layout,
                  test_native_filtered_spell_source_and_late_details,
                  test_player_spell_hover_and_cleanup,
-                 test_auction_button_layer_and_reopen):
+                 test_auction_button_layer_and_reopen, test_empty_target_editor_drag):
         test()
         print(test.__name__ + ': OK')
     preset=source('Modules/LayoutPresets.lua').split('Presets.Main = [=[',1)[1].split(']=]',1)[0]
