@@ -235,8 +235,8 @@ function Lab:CreateUI()
     end
     self.createRow = CreateRow
 
-    self.empty = Label(f, "", 16, -448, 568, C.muted); self.empty:SetWordWrap(true); self.empty:SetHeight(22)
-    self.compare = Label(f, "", 16, -474, 568, C.amber); self.compare:SetWordWrap(true); self.compare:SetHeight(40)
+    self.empty = Label(f, "", 16, -448, 568, C.muted); self.empty:SetWordWrap(true); self.empty:SetHeight(44)
+    self.compare = Label(f, "", 16, -500, 568, C.amber); self.compare:SetWordWrap(true); self.compare:SetHeight(64)
     f:SetScript("OnHide", function()
         HideTooltip()
         self.latestRun, self.sampleRuns = nil, nil
@@ -384,8 +384,20 @@ function Lab:Render()
     local state = sample and (sample.mixed and L("Смешанная сборка: смена талантов отмечена; данные не объединяются.")
         or sample.complete ~= true and L("Снимок неполный: неизвестное и нераспределённое не оценивается.") or "") or
         L("Нет измеримого снимка: отключённые или неизвестные данные не заменяются нулями.")
-    self.empty:SetText(state)
-    self.compare:SetText(self:CompareText(runs, self.metric))
+    local unit = self.metric == "healing" and "HPS" or "DPS"
+    local measured = total and duration and duration > 0
+        and (unit .. ": " .. Compact(total / duration) .. " | " .. Compact(total) .. " | " .. FormatDuration(duration)) or ""
+    self.empty:SetText(measured ~= "" and (measured .. "\n" .. state) or state)
+    local observed = Lab.ObservedComparison and Lab:ObservedComparison(runs, latest, self.metric)
+    if observed then
+        local delta = observed.percent and ("%+.1f%%"):format(observed.percent) or "—"
+        self.compare:SetText((L("Замеры %s: выбранный %s (%s), другой %s (%s). Разница: %s.")):format(
+            unit, Compact(observed.current), FormatDuration(observed.currentDuration),
+            Compact(observed.previous), FormatDuration(observed.previousDuration), delta)
+            .. "\n" .. (observed.uncertain
+                and L("Есть неполные или смешанные данные. Это разница записанных отрезков, не эффект смены талантов.")
+                or L("Условия и состав группы влияют на результат.")))
+    else self.compare:SetText(self:CompareText(runs, self.metric)) end
 end
 
 function Lab:Show()

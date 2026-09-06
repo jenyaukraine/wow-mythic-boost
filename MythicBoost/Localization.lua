@@ -2263,3 +2263,14 @@ if translations then
     }
     for key, value in pairs(extra) do translations[key] = value end
 end
+
+if translations then
+    local extra = locale == "deDE" and {
+        ["Замеры %s: выбранный %s (%s), другой %s (%s). Разница: %s."] = "%s-Messungen: ausgewählt %s (%s), andere %s (%s). Differenz: %s.",
+        ["Есть неполные или смешанные данные. Это разница записанных отрезков, не эффект смены талантов."] = "Unvollständige oder gemischte Daten: Unterschied aufgezeichneter Abschnitte, kein Effekt eines Talentwechsels.",
+    } or {
+        ["Замеры %s: выбранный %s (%s), другой %s (%s). Разница: %s."] = "%s samples: selected %s (%s), other %s (%s). Difference: %s.",
+        ["Есть неполные или смешанные данные. Это разница записанных отрезков, не эффект смены талантов."] = "Includes incomplete or mixed data. Difference between recorded segments, not the effect of changing talents.",
+    }
+    for key, value in pairs(extra) do translations[key] = value end
+end

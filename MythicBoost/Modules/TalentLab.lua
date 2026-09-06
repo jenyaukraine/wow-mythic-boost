@@ -349,6 +349,34 @@ end
 
 JP:RegisterModule("TalentLab", Lab)
 
+-- Descriptive run totals, including partial/mixed captures. Never used for
+-- talent recommendations or the complete-build comparison above.
+function Lab:ObservedComparison(runs, selected, metric)
+    local current = selected and Table(selected.talentSample)
+    local function Rate(sample)
+        local total = sample and PlainNumber(metric == "healing" and sample.overallHealing or sample.overallDamage)
+        local duration = sample and PlainNumber(sample.duration, 86400)
+        if total and duration and duration > 0 then return total / duration end
+    end
+    local rate = Rate(current)
+    if not rate then return end
+    for i = 1, math.min(#(Table(runs) or {}), MAX_RUNS) do
+        local run = Table(runs[i])
+        local other = run and run ~= selected and Table(run.talentSample)
+        if other and other.mapID == current.mapID and other.level == current.level
+            and other.gameBuild == current.gameBuild
+            and (other.specID == current.specID or other.specID == 0 or current.specID == 0) then
+            local previous = Rate(other)
+            if previous then
+                return {current=rate,previous=previous,currentDuration=current.duration,
+                    previousDuration=other.duration,percent=previous>0 and (rate/previous-1)*100 or nil,
+                    uncertain=current.complete~=true or other.complete~=true or current.mixed==true
+                        or other.mixed==true or current.specID==0 or other.specID==0}
+            end
+        end
+    end
+end
+
 -- Exposure-weighted shares: only keys where this exact talent/rank was selected.
 -- Missing attribution is never treated as zero; these are not causal DPS gains.
 function Lab:HistoricalShares(runs, metric, specID, gameBuild, includePartial)

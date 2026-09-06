@@ -187,7 +187,23 @@ def test_applied_not_preview_and_active_hero_only():
     ''')
 
 
+def test_observed_run_comparison():
+    lua=fixture()
+    lua.execute('''
+        local a={talentSample={mapID=250,level=10,gameBuild='test',specID=105,
+            overallHealing=2000,duration=20,complete=false,mixed=false}}
+        local b={talentSample={mapID=250,level=10,gameBuild='test',specID=0,
+            overallHealing=500,duration=10,complete=false,mixed=true}}
+        local result=lab:ObservedComparison({a,b},a,'healing')
+        assert(result.current==100 and result.previous==50 and result.percent==100 and result.uncertain)
+        b.talentSample.duration=0; assert(lab:ObservedComparison({a,b},a,'healing')==nil)
+        b.talentSample.duration=10; b.talentSample.level=11
+        assert(lab:ObservedComparison({a,b},a,'healing')==nil)
+    ''')
+
+
 if __name__=='__main__':
+    test_observed_run_comparison()
     for test in [test_actual_collector_and_immutable_build,test_weighted_compare_and_compatibility,
                  test_missing_secret_reset_and_build_change,test_bounds_collectibility_and_integrity,
                  test_applied_not_preview_and_active_hero_only]:
