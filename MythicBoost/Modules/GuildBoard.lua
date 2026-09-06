@@ -31,7 +31,90 @@ end
 local function MemberProfile(name)
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local ok, profile = pcall(RaiderIO.GetProfile, name)
-    return ok and profile and profile.mythicKeystoneProfile or nil
+    return ok and type(profile) == "table" and profile or nil
+end
+
+function GuildBoard:HideKeyTooltip(owner)
+    local tip = self.keyTooltip
+    if tip and (not owner or tip.owner == owner) then
+        tip.owner = nil
+        tip:Hide()
+    end
+end
+
+function GuildBoard:ShowKeyTooltip(owner)
+    local entry, search = owner.entry, JP.GroupSearchUI
+    if not entry or not search then self:HideKeyTooltip(); return end
+    local columns = search:GetPartyDungeonColumns()
+    -- Reuse the exact profile that supplied the score. A second name lookup
+    -- can disagree with Raider.IO's own name/realm normalization.
+    local cells = search:GetDungeonCells(entry.fullName, entry.classFile, entry.profile)
+    if not self.keyTooltip then
+        local tip = UI.Panel(UIParent, C.surface, C.line)
+        tip:SetWidth(440)
+        tip:SetFrameStrata("TOOLTIP")
+        tip:SetClampedToScreen(true)
+        tip:EnableMouse(false)
+        tip.title = UI.Text(tip, "GameFontNormalLarge", "", C.text)
+        tip.title:SetPoint("TOPLEFT", 12, -12)
+        tip.title:SetPoint("TOPRIGHT", -90, -12)
+        tip.title:SetJustifyH("LEFT"); tip.title:SetWordWrap(false)
+        tip.score = UI.Text(tip, "GameFontNormalLarge", "", C.amber)
+        tip.score:SetPoint("TOPRIGHT", -12, -12)
+        local label = UI.Text(tip, "GameFontNormalSmall", L("ПОДЗЕМЕЛЬЯ СЕЗОНА"), C.muted)
+        label:SetPoint("TOPLEFT", 12, -42)
+        local best = UI.Text(tip, "GameFontNormalSmall", L("ЛУЧШИЙ КЛЮЧ"), C.muted)
+        best:SetPoint("TOPRIGHT", -12, -42)
+        tip.rows = {}
+        for index = 1, 8 do
+            local row = UI.Panel(tip, index % 2 == 0 and C.rowAlt or C.row, C.lineSoft)
+            row:SetPoint("TOPLEFT", 10, -62 - (index-1)*30)
+            row:SetPoint("TOPRIGHT", -10, -62 - (index-1)*30)
+            row:SetHeight(28)
+            row.icon = row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(24, 24); row.icon:SetPoint("LEFT", 2, 0)
+            row.icon:SetTexCoord(.06, .94, .06, .94)
+            row.name = UI.Text(row, "GameFontHighlightSmall", "", C.text)
+            row.name:SetPoint("LEFT", 34, 0); row.name:SetPoint("RIGHT", -80, 0)
+            row.name:SetJustifyH("LEFT"); row.name:SetWordWrap(false)
+            row.value = UI.Text(row, "GameFontNormal", "", C.text)
+            row.value:SetPoint("RIGHT", -8, 0)
+            tip.rows[index] = row
+        end
+        tip.footer = UI.Text(tip, "GameFontHighlightSmall", "", C.muted)
+        tip.footer:SetPoint("BOTTOMLEFT", 12, 9)
+        self.keyTooltip = tip
+    end
+    local tip = self.keyTooltip
+    tip.owner = owner
+    tip.title:SetText(UI.ClassIcon(entry.classFile, 20) .. "  " .. entry.fullName)
+    tip.title:SetTextColor(UI.ClassColor(entry.classFile))
+    tip.score:SetText(math.floor(entry.score))
+    local count = math.min(8, #columns)
+    for index, row in ipairs(tip.rows) do
+        local column, cell = columns[index], cells and cells[index]
+        if column then
+            row.icon:SetTexture(column.texture or 134400)
+            row.name:SetText(column.name or column.label)
+            row.value:SetText(cell and cell.value or "—")
+            row.value:SetTextColor(UI.Unpack(search:GetRunGradeColor(cell and cell.grade or "missing")))
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+    tip.footer:SetText(cells and "Raider.IO" or L("Нет данных"))
+    tip:SetHeight(88 + count*30)
+    tip:ClearAllPoints()
+    tip:SetPoint("TOPRIGHT", owner, "BOTTOMRIGHT", 0, -6)
+    tip:Show()
+end
+
+local function HookKeyTooltip(frame)
+    frame:EnableMouse(true)
+    frame:SetScript("OnEnter", function(owner) GuildBoard:ShowKeyTooltip(owner) end)
+    frame:SetScript("OnLeave", function(owner) GuildBoard:HideKeyTooltip(owner) end)
+    frame:HookScript("OnHide", function(owner) GuildBoard:HideKeyTooltip(owner) end)
 end
 
 function GuildBoard:Collect(force)
@@ -63,12 +146,17 @@ function GuildBoard:Collect(force)
             scanned = scanned + 1
             -- Имена гильдейцев однозначны: свой реалм либо явный суффикс.
             local fullName = name:find("-", 1, true) and name or (realm and (name .. "-" .. realm)) or name
-            local keystone = MemberProfile(fullName)
+            local profile = MemberProfile(fullName)
+            local keystone = profile and profile.mythicKeystoneProfile
             local score = UI.KeystoneScore(keystone)
             if score then
+                local profileName = SafeString(profile.name)
+                local profileRealm = SafeString(profile.realm)
+                if profileName and profileRealm then fullName = profileName .. "-" .. profileRealm end
                 entries[#entries + 1] = {
                     name = name:match("^([^%-]+)") or name,
                     fullName = fullName,
+                    profile = profile,
                     classFile = classFile,
                     score = score,
                     bestKey = BestKeyLevel(keystone),
@@ -96,6 +184,7 @@ end
 local function CreatePodiumCard(parent, place)
     local card = UI.Panel(parent, C.raised, C.line)
     card.place = place
+    HookKeyTooltip(card)
 
     local medal = UI.Text(card, "GameFontNormalHuge", tostring(place), MEDAL_COLORS[place])
     medal:SetPoint("TOPLEFT", 14, -12)
@@ -126,6 +215,7 @@ end
 
 local function CreateListRow(parent, index)
     local row = UI.Panel(parent, index % 2 == 0 and C.rowAlt or C.row, C.lineSoft)
+    HookKeyTooltip(row)
     row:SetHeight(26)
 
     row.rank = UI.Text(row, "GameFontHighlightSmall", "", C.faint)
@@ -159,6 +249,7 @@ local function CreateListRow(parent, index)
 end
 
 function GuildBoard:Build(welcome, page)
+    page:HookScript("OnHide", function() self:HideKeyTooltip() end)
     local title = UI.Text(page, "GameFontNormalSmall", L("РЕЙТИНГ ГИЛЬДИИ"), C.muted)
     title:SetPoint("TOPLEFT", 16, -14)
 
@@ -272,6 +363,8 @@ function GuildBoard:RenderRows()
     for index, row in ipairs(self.rows or {}) do
         local entryIndex = PODIUM_COUNT + offset + index
         local entry = row.layoutVisible ~= false and entries[entryIndex]
+        if row.entry ~= entry then self:HideKeyTooltip(row) end
+        row.entry = entry
         if entry then
             row.rank:SetText(tostring(entryIndex))
             row.name:SetText(UI.ClassIcon(entry.classFile, 16) .. "  " .. entry.name)
@@ -299,6 +392,8 @@ function GuildBoard:Refresh()
 
     for place, card in ipairs(self.podium) do
         local entry = entries and entries[place]
+        if card.entry ~= entry then self:HideKeyTooltip(card) end
+        card.entry = entry
         if entry then
             card.name:SetText(UI.ClassIcon(entry.classFile, 20) .. "  " .. entry.name)
             card.name:SetTextColor(UI.ClassColor(entry.classFile))
@@ -360,8 +455,8 @@ function GuildBoard:Create()
 end
 
 function GuildBoard:Enable() end
-function GuildBoard:Disable() end
-function GuildBoard:Destroy() end
+function GuildBoard:Disable() self:HideKeyTooltip() end
+function GuildBoard:Destroy() self:Disable() end
 
 JP.GuildBoard = GuildBoard
 JP:RegisterModule("GuildBoard", GuildBoard)

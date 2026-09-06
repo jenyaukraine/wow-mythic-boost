@@ -11,32 +11,8 @@ local C = UI.colors
 -- показываем ровно то, по чему принимают решение: кто это, какая роль,
 -- экипировка, рейтинг и нужен ли он группе прямо сейчас.
 
-local MAX_ROWS = 14
-local ROW_HEIGHT, ROW_STEP = 62, 66
 local PARTY_ROWS, PARTY_ROW_HEIGHT = 5, 26
 local PARTY_TOP, PARTY_SECTION_BOTTOM = -52, -190
-local ROW_LEFT_INSET, ROW_RIGHT_INSET = 12, 18
-
--- Одна таблица геометрии на заголовки и на строки, чтобы колонки не разъехались.
-local COL = {
-    declineWidth = 34, declineRight = 12,
-    inviteWidth = 104, inviteRight = 52,
-    statusWidth = 104, statusRight = 162,
-    ratingWidth = 74, ratingRight = 272,
-    ilvlWidth = 62, ilvlRight = 350,
-    roleWidth = 52, roleRight = 416,
-    contentRight = 474,
-    nameLeft = 16,
-}
-
-local STATUS = {
-    best = { label = L("ЛУЧШИЙ"), color = C.amber },
-    needed = { label = L("ПОДХОДИТ"), color = { .62, .40, .95, 1 } },
-    keyReady = { label = L("ПОД КЛЮЧ"), color = C.green },
-    keyClose = { label = L("МОЖНО БРАТЬ"), color = C.accent },
-    keyRisk = { label = L("МАЛО ОПЫТА"), color = { .95, .38, .30, 1 } },
-    wrongRole = { label = L("НЕ ТА РОЛЬ"), color = { .95, .38, .30, 1 } },
-}
 
 -- Возможность помечается как потенциальная: часть диспелов и контроля зависит
 -- от специализации/таланта, которых LFG API не раскрывает. Гарантированными
@@ -90,29 +66,6 @@ local function CellForMap(cells, mapID)
     end
 end
 
-local function PackagePresentation(entry)
-    local roster = entry.packageRoster
-    if type(roster) ~= "table" or #roster <= 1 then return "", nil end
-    local peers, full = {}, {}
-    for _, member in ipairs(roster) do
-        local classIcon = UI.ClassIcon(member.classFile, 14)
-        local roleIcon = UI.RoleIcon(member.role, 14)
-        local color = UI.ClassColorCode(member.classFile)
-        local identity = ("%s |c%s%s|r"):format(classIcon, color, member.name)
-        full[#full + 1] = ("%s %s"):format(roleIcon, identity)
-        if member.memberIdx ~= entry.memberIdx then peers[#peers + 1] = identity end
-    end
-    local visiblePeers = {}
-    for index = 1, math.min(2, #peers) do visiblePeers[index] = peers[index] end
-    if #peers > 2 then visiblePeers[#visiblePeers + 1] = "+" .. (#peers - 2) end
-    -- Every package member owns a separate row and a separate dungeon table.
-    -- Make that relationship explicit instead of leaving the companion names
-    -- looking like decorative text on the leader's row.
-    local inline = ("  |cffffb93d[%d/%d] ×%d|r  |cff8a939f%s|r %s"):format(
-        entry.memberIdx or 1, #roster, #roster, L("вместе с"), table.concat(visiblePeers, ", "))
-    local tooltip = L("Состав пакетной заявки:") .. "\n" .. table.concat(full, "\n")
-    return inline, tooltip
-end
 
 -- Консервативная сила игрока для конкретного подземелья. Закрытие с запасом
 -- добавляет не больше одного уровня. Точный маленький sample слегка снижает
@@ -326,7 +279,6 @@ function ApplicantBoard:Collect()
     for _, package in ipairs(packages) do
         table.sort(package.entries, function(a, b) return a.memberIdx < b.memberIdx end)
         for _, entry in ipairs(package.entries) do
-            entry.packageInline, entry.packageTooltip = PackagePresentation(entry)
             ordered[#ordered + 1] = entry
         end
     end
@@ -343,136 +295,6 @@ local function Act(action, applicantID, failure)
     return ok
 end
 
----------------------------------------------------------------------------
--- Строки
----------------------------------------------------------------------------
-
-local function CreateRow(parent, index)
-    local row = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    row:SetHeight(ROW_HEIGHT)
-    row:EnableMouse(true)
-    row.baseColor = index % 2 == 0 and C.rowAlt or C.row
-    UI.Backdrop(row, row.baseColor, C.lineSoft)
-
-    row.accent = row:CreateTexture(nil, "OVERLAY")
-    row.accent:SetPoint("TOPLEFT", 1, -1)
-    row.accent:SetPoint("BOTTOMLEFT", 1, 1)
-    row.accent:SetWidth(3)
-
-    row.name = UI.Text(row, "GameFontHighlight", "", C.text)
-    row.name:SetPoint("TOPLEFT", COL.nameLeft, -6)
-    row.name:SetPoint("TOPRIGHT", row, "TOPRIGHT", -COL.contentRight, -6)
-    row.name:SetJustifyH("LEFT")
-    row.name:SetWordWrap(false)
-
-    -- Компактная таблица ключей: названия и значения больше не слипаются в
-    -- одну длинную строку и всегда стоят строго друг под другом.
-    row.dungeonGrid = CreateFrame("Frame", nil, row, "BackdropTemplate")
-    row.dungeonGrid:SetPoint("BOTTOMLEFT", COL.nameLeft, 3)
-    row.dungeonGrid:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -COL.contentRight, 3)
-    row.dungeonGrid:SetHeight(34)
-    row.dungeonTiles = {}
-    for cellIndex = 1, 8 do
-        local tile = CreateFrame("Frame", nil, row.dungeonGrid, "BackdropTemplate")
-        tile:EnableMouse(true)
-        UI.Backdrop(tile, { C.surface[1], C.surface[2], C.surface[3], 1 }, C.lineSoft)
-        tile.image = tile:CreateTexture(nil, "ARTWORK")
-        tile.image:SetPoint("TOPLEFT", 1, -1)
-        tile.image:SetPoint("BOTTOMRIGHT", -1, 1)
-        tile.image:SetTexCoord(.07, .93, .07, .93)
-        tile.shade = tile:CreateTexture(nil, "OVERLAY")
-        tile.shade:SetAllPoints(tile.image)
-        tile.shade:SetColorTexture(0, 0, 0, .54)
-        tile.upgrades = UI.Text(tile, "GameFontNormalSmall", "", C.text)
-        tile.upgrades:SetPoint("TOP", 0, -1)
-        local upgradesFont = tile.upgrades:GetFont()
-        if upgradesFont then tile.upgrades:SetFont(upgradesFont, 10, "THICKOUTLINE") end
-        tile.upgrades:SetShadowColor(0, 0, 0, 1)
-        tile.upgrades:SetShadowOffset(1, -1)
-        tile.value = UI.Text(tile, "GameFontNormalHuge", "—", C.muted)
-        tile.value:SetPoint("BOTTOM", 0, 1)
-        local fontPath = tile.value:GetFont()
-        if fontPath then tile.value:SetFont(fontPath, 16, "THICKOUTLINE") end
-        tile.value:SetShadowColor(0, 0, 0, 1)
-        tile.value:SetShadowOffset(2, -2)
-        tile.valueFont = fontPath
-
-        -- The player's owned Keystone is a decision column, not merely one of
-        -- eight equal dungeon pictures. A separate two-pixel ring survives
-        -- green/purple run-grade borders and remains readable on every icon.
-        tile.ownedGlow = CreateFrame("Frame", nil, tile, "BackdropTemplate")
-        tile.ownedGlow:SetPoint("TOPLEFT", -1, 1)
-        tile.ownedGlow:SetPoint("BOTTOMRIGHT", 1, -1)
-        tile.ownedGlow:SetFrameLevel(tile:GetFrameLevel() + 8)
-        tile.ownedGlow:EnableMouse(false)
-        tile.ownedGlow:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
-        tile.ownedGlow:SetBackdropBorderColor(1, .67, .10, 1)
-        tile.ownedGlow:Hide()
-        tile:SetScript("OnEnter", function(self)
-            row:SetBackdropColor(UI.Unpack(C.rowHover))
-            ShowDungeonTooltip(self)
-        end)
-        tile:SetScript("OnLeave", function()
-            row:SetBackdropColor(UI.Unpack(row.baseColor))
-            GameTooltip_Hide()
-        end)
-        row.dungeonTiles[cellIndex] = tile
-    end
-
-    row.role = UI.Text(row, "GameFontHighlight", "")
-    row.role:SetPoint("RIGHT", -COL.roleRight, 0)
-    row.role:SetWidth(COL.roleWidth)
-    row.role:SetJustifyH("CENTER")
-
-    row.ilvl = UI.Text(row, "GameFontHighlightSmall", "", C.text)
-    row.ilvl:SetPoint("RIGHT", -COL.ilvlRight, 0)
-    row.ilvl:SetWidth(COL.ilvlWidth)
-    row.ilvl:SetJustifyH("CENTER")
-
-    row.rating = UI.Text(row, "GameFontNormal", "", C.amber)
-    row.rating:SetPoint("RIGHT", -COL.ratingRight, 0)
-    row.rating:SetWidth(COL.ratingWidth)
-    row.rating:SetJustifyH("CENTER")
-
-    row.status = UI.Text(row, "GameFontNormalSmall", "")
-    row.status:SetPoint("RIGHT", -COL.statusRight, 0)
-    row.status:SetWidth(COL.statusWidth)
-    row.status:SetJustifyH("CENTER")
-
-    row.invite = UI.Button(row, L("Пригласить"), COL.inviteWidth, 24, true)
-    row.invite:SetPoint("RIGHT", -COL.inviteRight, 0)
-    row.invite:SetScript("OnClick", function(self)
-        if not self.applicantID then return end
-        if Act("InviteApplicant", self.applicantID, L("Blizzard не принял приглашение. Попробуй ещё раз.")) then
-            self:SetText(L("Отправлено"))
-        end
-    end)
-
-    row.decline = UI.Button(row, "×", COL.declineWidth, 24)
-    row.decline:SetPoint("RIGHT", -COL.declineRight, 0)
-    row.decline:SetScript("OnClick", function(self)
-        if self.applicantID then Act("DeclineApplicant", self.applicantID, L("Не удалось отклонить заявку.")) end
-    end)
-    row.decline:HookScript("OnEnter", function(self) UI.Tooltip(self, L("Отклонить заявку")) end)
-    row.decline:HookScript("OnLeave", GameTooltip_Hide)
-
-    row:SetScript("OnEnter", function(self)
-        self:SetBackdropColor(UI.Unpack(C.rowHover))
-        if self.packageSize and self.packageSize > 1 then
-            UI.Tooltip(self, (L("Пакетная заявка ×%d")):format(self.packageSize),
-                self.packageTooltip, self.recommendationReason)
-        elseif self.recommendationReason then
-            UI.Tooltip(self, L("Почему такая оценка"), self.recommendationReason)
-        end
-    end)
-    row:SetScript("OnLeave", function(self)
-        self:SetBackdropColor(UI.Unpack(self.baseColor))
-        GameTooltip_Hide()
-    end)
-
-    row:Hide()
-    return row
-end
 
 ---------------------------------------------------------------------------
 -- Сборка
@@ -643,43 +465,7 @@ function ApplicantBoard:Build(welcome, page)
     divider:SetPoint("TOPLEFT", 12, PARTY_SECTION_BOTTOM - 38)
     divider:SetPoint("TOPRIGHT", -12, PARTY_SECTION_BOTTOM - 38)
 
-    local function Header(text, width, right)
-        local label = UI.Text(page, "GameFontNormalSmall", text, C.faint)
-        -- Значения привязаны к правому краю строки, а сама строка отступает
-        -- от страницы. Шапка обязана учитывать тот же отступ.
-        label:SetPoint("TOPRIGHT", -(right + ROW_RIGHT_INSET), PARTY_SECTION_BOTTOM - 50)
-        label:SetWidth(width)
-        label:SetJustifyH("CENTER")
-    end
-    local nameHeader = UI.Text(page, "GameFontNormalSmall", L("ИГРОК"), C.faint)
-    nameHeader:SetPoint("TOPLEFT", ROW_LEFT_INSET + COL.nameLeft, PARTY_SECTION_BOTTOM - 50)
-    nameHeader:SetJustifyH("LEFT")
-    Header(L("РОЛЬ"), COL.roleWidth, COL.roleRight)
-    Header("iLvL", COL.ilvlWidth, COL.ilvlRight)
-    Header(L("РЕЙТИНГ"), COL.ratingWidth, COL.ratingRight)
-    Header(L("ОТБОР"), COL.statusWidth, COL.statusRight)
-
-    self.rows = {}
-    for index = 1, MAX_ROWS do
-        local row = CreateRow(page, index)
-        row:SetPoint("TOPLEFT", ROW_LEFT_INSET, PARTY_SECTION_BOTTOM - 66 - (index - 1) * ROW_STEP)
-        row:SetPoint("TOPRIGHT", -ROW_RIGHT_INSET, PARTY_SECTION_BOTTOM - 66 - (index - 1) * ROW_STEP)
-        self.rows[index] = row
-    end
-
-    self.scrollBar = UI.ScrollBar(page)
-    self.scrollBar:SetPoint("TOPRIGHT", -6, PARTY_SECTION_BOTTOM - 66)
-    self.scrollBar:SetPoint("BOTTOMRIGHT", -6, 12)
-    self.scrollBar:SetScript("OnValueChanged", function(_, value)
-        local offset = math.floor(value + .5)
-        if offset ~= self.offset then
-            self.offset = offset
-            self:Render()
-        end
-    end)
-    self.scrollBar:Hide()
-
-    UI.BindScrollWheel(page, self.scrollBar, self.rows, function() return self.offset end)
+    JP.ApplicantCards:Build(self, page, Act, ShowDungeonTooltip)
 
     self.message = UI.Text(page, "GameFontHighlight", "", C.muted)
     self.message:SetPoint("TOPLEFT", 24, PARTY_SECTION_BOTTOM - 120)
@@ -702,26 +488,7 @@ function ApplicantBoard:Build(welcome, page)
 end
 
 function ApplicantBoard:Layout()
-    if not self.page then return end
-    local height = self.page:GetHeight()
-    if height < 100 then return end
-    local visible = math.max(2, math.min(MAX_ROWS, math.floor((height + PARTY_SECTION_BOTTOM - 72) / ROW_STEP)))
-    self.visibleRows = visible
-    for index, row in ipairs(self.rows or {}) do
-        row.layoutVisible = index <= visible
-        if not row.layoutVisible then row:Hide() end
-        local gridWidth = math.max(240, row.dungeonGrid:GetWidth())
-        local tileGap = 2
-        local tileSize = math.min(34, math.floor((gridWidth - tileGap * 7) / 8))
-        local startX = 0
-        local startY = -math.max(0, math.floor((34 - tileSize) / 2))
-        for cellIndex = 1, 8 do
-            local tile = row.dungeonTiles[cellIndex]
-            tile:ClearAllPoints()
-            tile:SetPoint("TOPLEFT", startX + (cellIndex - 1) * (tileSize + tileGap), startY)
-            tile:SetSize(tileSize, tileSize)
-        end
-    end
+    self:Render()
 end
 
 local function UnitRole(unit)
@@ -849,9 +616,11 @@ function ApplicantBoard:RefreshParty()
                 self.partyEvidence[#self.partyEvidence + 1] = EvidenceForPlayer(name, profile.cells, ownMapID, ownLevel)
             end
 
+            local presenceName = unit and JP.Reviews and JP.Reviews.FullName(UnitFullName(unit)) or member.name
+            local playerLabel = JP.AddonPresence and JP.AddonPresence:Decorate(presenceName,name) or name
             row.name:SetText(('%s  %s%s'):format(
                 UI.ClassIcon(classFilename, 16),
-                name .. (member.pending and ("  |cffd9a441" .. L("ожидает") .. "|r") or ""),
+                playerLabel .. (member.pending and ("  |cffd9a441" .. L("ожидает") .. "|r") or ""),
                 unit and UnitIsGroupLeader(unit)
                     and "  |TInterface\\GroupFrame\\UI-Group-LeaderIcon:14:14:0:0|t" or ""))
             row.name:SetTextColor(UI.ClassColor(classFilename))
@@ -995,111 +764,18 @@ function ApplicantBoard:UpdateLaunchDecision(entries)
 end
 
 function ApplicantBoard:Render()
-    local entries = self.entries or {}
-    local offset = self.offset or 0
-    local dungeonColumns = JP.GroupSearchUI:GetPartyDungeonColumns()
     local ownMapID, ownLevel = OwnKeyContext()
-    for index, row in ipairs(self.rows) do
-        local entry = entries[offset + index]
-        if entry and row.layoutVisible ~= false then
-            local style = entry.status and STATUS[entry.status]
-
-            row.name:SetText(("%s  %s%s"):format(
-                UI.ClassIcon(entry.classFile, 18), entry.name, entry.packageInline or ""))
-            row.name:SetTextColor(UI.ClassColor(entry.classFile))
-            row.role:SetText(UI.RoleIcon(entry.role, 18))
-            row.ilvl:SetText(entry.itemLevel > 0 and ("%.0f"):format(entry.itemLevel) or "—")
-            row.rating:SetText(entry.score > 0 and tostring(math.floor(entry.score)) or "—")
-            for cellIndex = 1, 8 do
-                local data = entry.dungeonCells and entry.dungeonCells[cellIndex]
-                local column = dungeonColumns[cellIndex]
-                local tile = row.dungeonTiles[cellIndex]
-                tile.tooltipData = data
-                tile.dungeonName = column and column.name
-                tile.image:SetTexture(column and column.texture or 134400)
-                tile.image:SetShown(column and column.texture and true or false)
-                local level = data and tonumber(data.level) or 0
-                tile.value:SetText(level > 0 and tostring(level) or "—")
-                local color = JP.GroupSearchUI:GetRunGradeColor(data and data.grade)
-                local isOwnedKey = ownMapID and column and tonumber(column.key) == tonumber(ownMapID)
-                tile.ownedKey, tile.ownedKeyLevel = isOwnedKey and true or false, isOwnedKey and ownLevel or nil
-                if tile.valueFont then tile.value:SetFont(tile.valueFont, isOwnedKey and 20 or 16, "THICKOUTLINE") end
-                local upgrades = data and tonumber(data.upgrades) or 0
-                tile.upgrades:SetText(upgrades > 0 and string.rep("+", math.min(3, upgrades)) or "")
-                tile.upgrades:SetTextColor(color[1], color[2], color[3], 1)
-                tile.value:SetTextColor(color[1], color[2], color[3], 1)
-                if level <= 0 then
-                    tile:SetBackdropBorderColor(.12, .17, .22, .55)
-                elseif upgrades >= 2 then
-                    tile:SetBackdropBorderColor(color[1], color[2], color[3], .95)
-                elseif upgrades == 1 then
-                    tile:SetBackdropBorderColor(.18, .34, .42, .82)
-                else
-                    tile:SetBackdropBorderColor(.42, .15, .18, .78)
-                end
-                if isOwnedKey then
-                    tile.value:SetTextColor(1, .82, .28, 1)
-                    tile.upgrades:SetTextColor(1, .70, .12, 1)
-                    tile:SetBackdropBorderColor(1, .66, .12, 1)
-                    tile:SetBackdropColor(.10, .050, .005, 1)
-                    tile.shade:SetColorTexture(.18, .08, 0, .28)
-                    tile.value:SetShadowColor(.72, .26, 0, 1)
-                    tile.value:SetShadowOffset(1, -1)
-                    tile.ownedGlow:Show()
-                else
-                    tile:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], 1)
-                    tile.shade:SetColorTexture(0, 0, 0, .54)
-                    tile.value:SetShadowColor(0, 0, 0, 1)
-                    tile.value:SetShadowOffset(2, -2)
-                    tile.ownedGlow:Hide()
-                end
-            end
-
-            if style then
-                row.accent:SetColorTexture(unpack(style.color))
-                row.accent:Show()
-                row.status:SetText(style.label)
-                row.status:SetTextColor(unpack(style.color))
-            else
-                row.accent:Hide()
-                row.status:SetText("")
-            end
-            row.recommendationReason = entry.recommendationReason
-            row.packageSize, row.packageTooltip = entry.numMembers, entry.packageTooltip
-
-            row.invite.applicantID = entry.applicantID
-            row.invite:SetText(entry.numMembers > 1 and (L("Пригласить ×") .. entry.numMembers) or L("Пригласить"))
-            row.decline.applicantID = entry.applicantID
-            row:Show()
-        else
-            row.invite.applicantID = nil
-            row.decline.applicantID = nil
-            row.recommendationReason = nil
-            row.packageSize, row.packageTooltip = nil, nil
-            for _, tile in ipairs(row.dungeonTiles) do
-                tile.tooltipData = nil
-                tile.dungeonName = nil
-            end
-            row:Hide()
-        end
-    end
+    JP.ApplicantCards:Render(self, ownMapID, ownLevel)
 end
 
 function ApplicantBoard:Refresh()
     if not self.page then return end
-    self:Layout()
 
     self:RefreshParty()
     local entries, missing = self:Collect()
     self.entries = entries
     self:UpdateLaunchDecision(entries)
 
-    local visible = self.visibleRows or MAX_ROWS
-    local maximum = math.max(0, #entries - visible)
-    self.scrollBar:SetMinMaxValues(0, maximum)
-    self.offset = math.min(self.offset or 0, maximum)
-    self.scrollBar:SetValue(self.offset)
-    self.scrollBar:SetShown(maximum > 0)
     self:Render()
 
     self.count:SetText(#entries > 0 and tostring(#entries) or "")

@@ -127,7 +127,9 @@ local function CurrencyName(currencyID)
     if not C_CurrencyInfo or type(C_CurrencyInfo.GetCurrencyInfo) ~= "function" then return nil end
     local ok, info = pcall(C_CurrencyInfo.GetCurrencyInfo, currencyID)
     if not ok or type(info) ~= "table" then return nil end
-    return PlainString(info.name), PlainNumber(info.quantity) or 0,
+    -- A missing/secret balance is unknown, not an empty wallet. Callers that
+    -- calculate shortages must preserve that distinction in the UI.
+    return PlainString(info.name), PlainNumber(info.quantity),
         PlainNumber(info.quality), PlainNumber(info.iconFileID)
 end
 
@@ -151,7 +153,7 @@ end
 
 local function OwnedCrests(currencyID)
     local _, quantity = CurrencyName(currencyID)
-    return quantity or 0
+    return quantity
 end
 
 local function ItemLevel(slotID)
@@ -199,6 +201,39 @@ local function TrackCurrency(info)
     return best
 end
 
+-- Keep the per-step public data needed for a read-only wallet forecast. The
+-- live C_ItemUpgrade table is discarded after scanning, so the projection must
+-- be based on the same validated snapshot as the visible rows.
+local function UpgradeLevels(info)
+    local levels = {}
+    if type(info.upgradeLevelInfos) ~= "table" or #info.upgradeLevelInfos > 100 then return end
+    for _, step in ipairs(info.upgradeLevelInfos or {}) do
+        local upgradeLevel = PlainNumber(step.upgradeLevel)
+        local itemLevelIncrement = PlainNumber(step.itemLevelIncrement)
+        if upgradeLevel and itemLevelIncrement and upgradeLevel >= 0 and upgradeLevel <= 100
+            and itemLevelIncrement >= 0 and itemLevelIncrement <= 1000 then
+            -- An unreadable cost must never turn an upgrade into a free one.
+            if type(step.currencyCostsToUpgrade) ~= "table" then return end
+            if step.itemCostsToUpgrade and next(step.itemCostsToUpgrade) then return end
+            local money = step.moneyCost == nil and 0 or PlainNumber(step.moneyCost)
+            if not money or money < 0 or money > 1e15 then return end
+            local costs = {}
+            for _, cost in ipairs(step.currencyCostsToUpgrade or {}) do
+                local currencyID, amount = PlainNumber(cost.currencyID), PlainNumber(cost.cost)
+                if not currencyID or not amount or amount < 0 or amount > 1e15 then return end
+                if amount > 0 then
+                    costs[currencyID] = (costs[currencyID] or 0) + amount
+                end
+            end
+            levels[#levels + 1] = { upgradeLevel = upgradeLevel,
+                itemLevelIncrement = itemLevelIncrement, costs = costs, money = money,
+                blocked = PlainString(step.failureMessage) ~= nil }
+        else return end
+    end
+    table.sort(levels, function(a, b) return a.upgradeLevel < b.upgradeLevel end)
+    return levels
+end
+
 function UpgradeCalculator:UpgraderOpen()
     local frame = _G.ItemUpgradeFrame
     return frame and type(frame.IsShown) == "function" and frame:IsShown() and true or false
@@ -244,6 +279,7 @@ local function RecordFrom(info, slotID)
         maxItemLevel = PlainNumber(info.maxItemLevel),
         trackName = PlainString(info.customUpgradeString),
         trackCurrency = TrackCurrency(info),
+        upgradeLevels = UpgradeLevels(info),
         crests = crests,
         gold = gold,
     }
@@ -435,7 +471,7 @@ function UpgradeCalculator:Scan()
             or (entry.peak > 0 and previous.peak <= 0)
             or (entry.peak == previous.peak and (entry.distance or 99) < (previous.distance or 99))
             or (entry.peak == previous.peak and (entry.distance or 99) == (previous.distance or 99)
-                and quantity > (previous.quantity or 0))
+                and (quantity or -1) > (previous.quantity or -1))
         entry.quantity = quantity
         if prefer then unique[key] = entry end
     end
@@ -459,10 +495,70 @@ function UpgradeCalculator:Scan()
 
     for _, entry in ipairs(rows) do
         entry.track = entry.trackCurrency and byCurrency[entry.trackCurrency] or nil
+        local record = saved[entry.slotID]
+        entry.upgradeLevels = record and record.upgradeLevels
+    end
+
+    local function Forecast()
+        local balances = {}
+        local money = GetMoney and PlainNumber(GetMoney())
+        local baseline, projected = 0, 0
+        for _, entry in ipairs(rows) do
+            local ilvl = PlainNumber(entry.ilvl)
+            if entry.unknown or not ilvl or ilvl ~= ilvl or ilvl < 0 or ilvl > 10000 then return end
+            local weight = 1
+            if entry.slotID == 16 and not GetInventoryItemLink("player", 17) then
+                local link = GetInventoryItemLink("player", 16)
+                if not GetItemInfoInstant then return end
+                local _, _, _, equipLoc = GetItemInfoInstant(link)
+                equipLoc = PlainString(equipLoc)
+                if not equipLoc then return end
+                if equipLoc == "INVTYPE_2HWEAPON" or equipLoc == "INVTYPE_RANGED"
+                    or equipLoc == "INVTYPE_RANGEDRIGHT" then weight = 2 end
+            end
+            do
+                baseline = baseline + ilvl * weight
+                local level = ilvl
+                if not entry.none then
+                    local levels = entry.upgradeLevels
+                    if type(levels) ~= "table" or #levels == 0 or #levels > 100 then return end
+                    local rank = entry.current or 0
+                    for _, step in ipairs(levels) do
+                        if step.upgradeLevel > (entry.current or 0) then
+                            if step.upgradeLevel ~= rank + 1 or step.money == nil then return end
+                            if step.blocked then break end
+                            if step.money > 0 and money == nil then return end
+                            local affordable = true
+                            for currencyID, amount in pairs(step.costs or {}) do
+                                if balances[currencyID] == nil then
+                                    balances[currencyID] = OwnedCrests(currencyID)
+                                    if balances[currencyID] == nil then return end
+                                end
+                                if balances[currencyID] < amount then
+                                    affordable = false; break
+                                end
+                            end
+                            if not affordable or (step.money > 0 and money < step.money) then break end
+                            for currencyID, amount in pairs(step.costs or {}) do
+                                balances[currencyID] = balances[currencyID] - amount
+                            end
+                            if money then money = money - step.money end
+                            -- Blizzard's increment is relative to the equipped
+                            -- item, NOT the preceding rank (3, 6, 9 => +9).
+                            level = ilvl + step.itemLevelIncrement
+                            rank = step.upgradeLevel
+                        end
+                    end
+                end
+                projected = projected + level * weight
+            end
+        end
+        if #rows > 0 then return baseline / #SLOTS, projected / #SLOTS end
     end
 
     self.rows, self.needed, self.gold, self.unknown = rows, needed, gold, unknown
     self.tracks, self.trackByCurrency = tracks, byCurrency
+    self.forecastCurrent, self.forecastAfter = Forecast()
     self.scannedAtUpgrader = self:UpgraderOpen()
     return rows
 end
@@ -514,7 +610,7 @@ local function BuildRow(page, index)
     row:SetPoint("TOPRIGHT", -8, ROWS_TOP - (index - 1) * ROW_STEP)
     row:SetHeight(ROW_HEIGHT)
     row.baseColor = index % 2 == 0 and C.rowAlt or C.row
-    UI.Backdrop(row, row.baseColor, C.lineSoft)
+    UI.Backdrop(row, row.baseColor, C.hudEdge)
 
     -- Тултип надетой вещи — тот же, что в окне персонажа, вместе со сравнением
     -- по Shift. Без него строка называет слот, но не говорит, что в нём лежит.
@@ -528,6 +624,10 @@ local function BuildRow(page, index)
             return
         end
         GameTooltip:Show()
+        if self.crestShortages then
+            GameTooltip:AddLine(L("Не хватает") .. ": " .. self.crestShortages, 1, .82, .18)
+            GameTooltip:Show()
+        end
         -- Для колец и аксессуаров Blizzard при включённом автосравнении
         -- открывает ещё два окна. Здесь строка уже показывает надетую вещь,
         -- поэтому эти дубликаты только закрывают таблицу.
@@ -635,15 +735,19 @@ local function LayoutTrackTotals(page, count)
     local startX = math.floor((pageWidth - totalWidth) / 2)
 
     page.summary:ClearAllPoints()
+    page.forecast:ClearAllPoints()
     page.totalsArea:ClearAllPoints()
+    page.forecast:SetWidth(math.max(240, pageWidth / 2))
     if (page:GetHeight() or 0) >= 590 then
         page.summary:SetPoint("TOPLEFT", 14, TOTALS_TOP)
+        page.forecast:SetPoint("TOPRIGHT", -14, TOTALS_TOP)
         page.totalsArea:SetPoint("TOPLEFT", 8, TOTALS_TOP - 26)
         page.totalsArea:SetPoint("TOPRIGHT", -8, TOTALS_TOP - 26)
     else
         -- В минимальном размере оставляем старую безопасную привязку снизу,
         -- чтобы блок не вышел за границу окна.
         page.summary:SetPoint("BOTTOMLEFT", 14, 107)
+        page.forecast:SetPoint("BOTTOMRIGHT", -14, 107)
         page.totalsArea:SetPoint("BOTTOMLEFT", 8, 8)
         page.totalsArea:SetPoint("BOTTOMRIGHT", -8, 8)
     end
@@ -717,6 +821,8 @@ function UpgradeCalculator:Build(welcome, page)
 
     page.summary = UI.Text(page, "GameFontNormal", "", C.text)
     page.summary:SetJustifyH("LEFT")
+    page.forecast = UI.Text(page, "GameFontNormal", "", C.accent)
+    page.forecast:SetJustifyH("RIGHT")
 
     BuildTrackTotals(page)
     LayoutTrackTotals(page, 1)
@@ -740,6 +846,21 @@ function UpgradeCalculator:FormatCrests(entry)
         end
     end
     return #parts > 0 and table.concat(parts, " ") or "—"
+end
+
+function UpgradeCalculator:FormatCrestShortages(entry)
+    if not entry.crests then return nil end
+    local parts = {}
+    for _, track in ipairs(self.tracks or {}) do
+        local amount = entry.crests[track.currencyID]
+        if amount and amount > 0 then
+            local owned = OwnedCrests(track.currencyID)
+            local missing = owned and math.max(0, amount - owned) or nil
+            parts[#parts + 1] = ShortCrestName(track.label) .. ": "
+                .. (missing and tostring(missing) or "—")
+        end
+    end
+    return #parts > 0 and table.concat(parts, ", ") or nil
 end
 
 local function FormatGold(copper)
@@ -771,6 +892,7 @@ function UpgradeCalculator:Refresh()
         local entry = self.rows[index]
         if not entry then row.slotID = nil; row:Hide() else
             row.slotID = entry.slotID
+            row.crestShortages = self:FormatCrestShortages(entry)
             row.icon:SetTexture(entry.icon)
             row.cells.slot:SetText(entry.label)
             row.cells.ilvl:SetText(entry.ilvl and tostring(entry.ilvl) or "—")
@@ -815,14 +937,15 @@ function UpgradeCalculator:Refresh()
         end
     end
 
-    local missingTotal = 0
+    local missingTotal, unknownBalance = 0, false
     for index, block in ipairs(page.totals) do
         local track = self.tracks[index]
         if not track then block:Hide() else
             local need = self.needed[track.currencyID] or 0
             local have = OwnedCrests(track.currencyID)
-            local missing = math.max(0, need - have)
-            missingTotal = missingTotal + missing
+            local missing = have and math.max(0, need - have) or nil
+            if missing then missingTotal = missingTotal + missing end
+            if not have then unknownBalance = true end
             local link = track.link or CurrencyLink(track.currencyID)
             block.name:SetText(link and LinkWithText(link, ShortCrestName(track.label)) or track.label)
             if link then block.name:SetTextColor(1, 1, 1, 1)
@@ -834,24 +957,46 @@ function UpgradeCalculator:Refresh()
             block.icon:SetTexture(icon)
             block.icon:SetShown(icon ~= nil)
             block.need:SetFormattedText(L("Нужно: |cffffffff%d|r"), need)
-            block.have:SetFormattedText(L("Есть: %d"), have)
-            block.shortage:SetFormattedText(L("Не хватает: %d"), missing)
+            if have then
+                block.have:SetFormattedText(L("Есть: %d"), have)
+            else
+                block.have:SetFormattedText(L("Есть: %s"), "—")
+            end
+            if missing then
+                block.shortage:SetFormattedText(L("Не хватает: %d"), missing)
+            else
+                block.shortage:SetFormattedText(L("Не хватает: %s"), "—")
+            end
             block:SetBackdropBorderColor(track.color[1], track.color[2], track.color[3], .70)
             block.iconBorder:SetBackdropBorderColor(track.color[1], track.color[2], track.color[3], 1)
             block.accent:SetColorTexture(track.color[1], track.color[2], track.color[3], .92)
-            if missing > 0 then
+            if missing and missing > 0 then
                 block.have:SetTextColor(C.amber[1], C.amber[2], C.amber[3], 1)
                 block.shortage:SetTextColor(C.amber[1], C.amber[2], C.amber[3], 1)
-            else
+            elseif missing then
                 block.have:SetTextColor(C.green[1], C.green[2], C.green[3], 1)
                 block.shortage:SetTextColor(C.green[1], C.green[2], C.green[3], 1)
+            else
+                block.have:SetTextColor(C.muted[1], C.muted[2], C.muted[3], 1)
+                block.shortage:SetTextColor(C.muted[1], C.muted[2], C.muted[3], 1)
             end
             block:Show()
         end
     end
 
-    page.summary:SetFormattedText(L("Не хватает гербов: %d      Золото: %s"),
-        missingTotal, FormatGold(self.gold))
+    if unknownBalance then
+        page.summary:SetFormattedText(L("Не хватает гербов: %s      Золото: %s"),
+            "—", FormatGold(self.gold))
+    else
+        page.summary:SetFormattedText(L("Не хватает гербов: %d      Золото: %s"),
+            missingTotal, FormatGold(self.gold))
+    end
+    if self.forecastCurrent and self.forecastAfter then
+        page.forecast:SetFormattedText(L("Средний ilvl: %.1f -> %.1f"),
+            self.forecastCurrent, self.forecastAfter)
+    else
+        page.forecast:SetText(L("Прогноз item level недоступен: обнови замеры у мастера."))
+    end
     LayoutTrackTotals(page, #self.tracks)
 
     if self.scanning then

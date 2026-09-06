@@ -8,3 +8,6 @@ MythicBoostDesktop/dist/
 # Локальные настройки инструментов
 .claude/settings.local.json
 release/
+/dist/
+__pycache__/
+*.py[cod]

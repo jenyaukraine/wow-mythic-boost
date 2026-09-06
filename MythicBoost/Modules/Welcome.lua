@@ -5,16 +5,14 @@ local UI = JP.UI
 local C = UI.colors
 local ICON = "Interface\\AddOns\\MythicBoost\\Media\\MythicBoostIcon.tga"
 
-local DEFAULT_WIDTH, DEFAULT_HEIGHT = 1320, 840
--- Шесть вкладок требуют 12 + 6*146 = 888 пикселей, остальное отдаём под
--- содержимое. Прежние 1160x700 держали окно больше, чем нужно любой из
--- вкладок, и половина высоты уходила в пустоту.
+local DEFAULT_WIDTH, DEFAULT_HEIGHT = 1200, 760
+-- Tab widths adapt to the window, including the reviews database page.
 -- The settings page needs enough vertical room for its last toggle and help
 -- text. At 560 px those controls were clipped even though the resize grip
 -- still allowed that size, so 650 is the truthful minimum for every tab.
 local MIN_WIDTH, MIN_HEIGHT = 1000, 650
-local HEADER_HEIGHT = 64
-local WINDOW_ALPHA = .94
+local HEADER_HEIGHT = 56
+local WINDOW_ALPHA = 1
 local ONBOARDING_VERSION = 1
 
 local function SaveWindow(frame)
@@ -167,7 +165,8 @@ local function BuildGuide(self, owner)
 end
 
 function Welcome:ShowGuide()
-    if self.guide then self.guide:Show() end
+    -- The old onboarding overlay was removed from the main flow. Keep this
+    -- harmless compatibility method for saved UI callbacks from older builds.
 end
 
 -- Пустая выдача без объяснения — худшее, что может показать поиск: «0 из 100»
@@ -196,16 +195,26 @@ function Welcome:Create()
 
     local frame = CreateFrame("Frame", "MythicBoostWelcomeFrame", UIParent, "BackdropTemplate")
     local saved = MythicBoostDB.window
+    -- Only compact the former exact default, never a manually sized window.
+    if not saved.compactRevision then
+        if saved.width == 1320 and saved.height == 840 then
+            saved.width, saved.height = DEFAULT_WIDTH, DEFAULT_HEIGHT
+        end
+        saved.compactRevision = 1
+    end
     frame:SetSize(saved.width or DEFAULT_WIDTH, saved.height or DEFAULT_HEIGHT)
-    frame:SetFrameStrata("DIALOG")
+    -- Dialog strata belongs to Blizzard invitations and role confirmation.
+    -- Keep our entire child hierarchy below it, including onboarding panels.
+    frame:SetFrameStrata("HIGH")
     frame:SetAlpha(WINDOW_ALPHA)
-    frame:SetClampedToScreen(true)
+    frame:SetClampedToScreen(false)
     frame:EnableMouse(true)
     frame:SetMovable(true)
     frame:SetResizable(true)
     frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, 2400, 1400)
     frame:RegisterForDrag("LeftButton")
-    UI.Backdrop(frame, C.window, { .24, .32, .42, 1 })
+    -- Fade only the backdrop, never text, icons, controls or the live HUD.
+    UI.Backdrop(frame, { C.window[1], C.window[2], C.window[3], .87 }, { .24, .32, .42, 1 })
     RestorePosition(frame)
 
     frame:SetScript("OnDragStart", function(self) if not self.maximized then self:StartMoving() end end)
@@ -221,10 +230,12 @@ function Welcome:Create()
         { key = "groups", label = L("НАЙТИ ГРУППУ") },
         { key = "applicants", label = L("СОБРАТЬ ПАТИ") },
         { key = "history", label = L("НАПАРНИКИ") },
+        { key = "reviews", label = L("ОТЗЫВЫ") },
         { key = "guild", label = L("РЕЙТИНГ ГИЛЬДИИ") },
         { key = "upgrades", label = L("УЛУЧШЕНИЯ") },
         { key = "settings", label = L("НАСТРОЙКИ") },
     }
+    self.tabOrder = order
     for index, item in ipairs(order) do
         local tab = UI.Tab(frame, item.label, 140)
         tab:SetPoint("TOPLEFT", 12 + (index - 1) * 146, tabTop)
@@ -238,31 +249,37 @@ function Welcome:Create()
     groups:SetPoint("BOTTOMRIGHT", -12, 12)
     JP.GroupSearchUI:Build(self, groups)
 
-    local guild = UI.Panel(frame, C.panel, C.line)
+    local guild = UI.Panel(frame, C.windowContent, C.line)
     guild:SetPoint("TOPLEFT", 12, pageTop)
     guild:SetPoint("BOTTOMRIGHT", -12, 12)
     guild:Hide()
     JP.GuildBoard:Build(self, guild)
 
-    local applicants = UI.Panel(frame, C.panel, C.line)
+    local applicants = UI.Panel(frame, C.windowContent, C.line)
     applicants:SetPoint("TOPLEFT", 12, pageTop)
     applicants:SetPoint("BOTTOMRIGHT", -12, 12)
     applicants:Hide()
     JP.ApplicantBoard:Build(self, applicants)
 
-    local history = UI.Panel(frame, C.panel, C.line)
+    local history = UI.Panel(frame, C.windowContent, C.line)
     history:SetPoint("TOPLEFT", 12, pageTop)
     history:SetPoint("BOTTOMRIGHT", -12, 12)
     history:Hide()
     JP.RunHistory:Build(self, history)
 
-    local upgrades = UI.Panel(frame, C.panel, C.line)
+    local reviews = UI.Panel(frame, C.windowContent, C.line)
+    reviews:SetPoint("TOPLEFT", 12, pageTop)
+    reviews:SetPoint("BOTTOMRIGHT", -12, 12)
+    reviews:Hide()
+    JP.ReviewBrowser:Build(self, reviews)
+
+    local upgrades = UI.Panel(frame, C.windowContent, C.line)
     upgrades:SetPoint("TOPLEFT", 12, pageTop)
     upgrades:SetPoint("BOTTOMRIGHT", -12, 12)
     upgrades:Hide()
     JP.UpgradeCalculator:Build(self, upgrades)
 
-    local settings = UI.Panel(frame, C.panel, C.line)
+    local settings = UI.Panel(frame, C.windowContent, C.line)
     settings:SetPoint("TOPLEFT", 12, pageTop)
     settings:SetPoint("BOTTOMRIGHT", -12, 12)
     settings:Hide()
@@ -270,12 +287,10 @@ function Welcome:Create()
 
     self.pages = {
         groups = groups, applicants = applicants, history = history, guild = guild,
-        upgrades = upgrades, settings = settings,
+        upgrades = upgrades, settings = settings, reviews = reviews,
     }
     self.currentPage = "groups"
     self.tabs.groups:SetActive(true)
-    BuildGuide(self, frame)
-
     local resize = CreateFrame("Button", nil, frame)
     resize:SetSize(20, 20)
     resize:SetPoint("BOTTOMRIGHT", -3, 3)
@@ -334,6 +349,7 @@ function Welcome:Create()
         end
     end
     self.maximizeButton:SetScript("OnClick", function() SetMaximized(not frame.maximized, false) end)
+    self.setMaximized = SetMaximized
 
     -- OnSizeChanged приходит на каждом кадре перетаскивания угла. Полная
     -- пересборка раскладки и списка групп на каждый кадр давала рывки,
@@ -348,14 +364,15 @@ function Welcome:Create()
             JP.GuildBoard:Layout()
             JP.ApplicantBoard:Layout()
             JP.RunHistory:Layout()
+            self:LayoutTabs()
+            JP.ReviewBrowser:Render()
             SaveWindow(frame)
         end)
     end)
     frame:SetScript("OnShow", function()
+        GameTooltip_Hide()
+        JP.GroupSearchUI:HideBlizzardResultTooltip()
         self:Refresh()
-        if (tonumber(MythicBoostDB.onboardingVersion) or 0) < ONBOARDING_VERSION then
-            self:ShowGuide()
-        end
     end)
     frame:SetScript("OnHide", function()
         if JP.GroupSearchUI.groupTooltip then JP.GroupSearchUI.groupTooltip:Hide() end
@@ -363,9 +380,20 @@ function Welcome:Create()
 
     frame:Hide()
     self.frame = frame
+    self:LayoutTabs()
     if saved.maximized then SetMaximized(true, true) end
     JP.GroupSearchUI:Layout(self)
     tinsert(UISpecialFrames, "MythicBoostWelcomeFrame")
+end
+
+function Welcome:LayoutTabs()
+    if not self.frame or not self.tabOrder then return end
+    local width = math.min(150, (self.frame:GetWidth() - 24 - (#self.tabOrder - 1) * 6) / #self.tabOrder)
+    for index, item in ipairs(self.tabOrder) do
+        local tab = self.tabs[item.key]
+        tab:ClearAllPoints(); tab:SetWidth(width)
+        tab:SetPoint("TOPLEFT", 12 + (index - 1) * (width + 6), -(HEADER_HEIGHT + 8))
+    end
 end
 
 function Welcome:RenderRows()
@@ -382,6 +410,8 @@ end
 
 function Welcome:Refresh()
     if not self.frame or not self.rows then return end
+    -- The header belongs to the window, not to the group-search page.
+    JP.GroupSearchUI:RefreshOwnComposition(self)
     if self.currentPage == "guild" then
         JP.GuildBoard:Refresh()
         self.status:SetText("")
@@ -394,6 +424,11 @@ function Welcome:Refresh()
     end
     if self.currentPage == "history" then
         JP.RunHistory:Refresh()
+        self.status:SetText("")
+        return
+    end
+    if self.currentPage == "reviews" then
+        JP.ReviewBrowser:Refresh()
         self.status:SetText("")
         return
     end
@@ -410,8 +445,6 @@ function Welcome:Refresh()
 
     JP.GroupSearchUI:Layout(self)
     JP.GroupSearchUI:RefreshDungeonCards(self)
-    JP.GroupSearchUI:RefreshOwnComposition(self)
-
     local batch = JP.GroupSearchUI.completedBatch
     JP.GroupSearchUI.completedBatch = nil
     local matches, excluded, message, scanned, rejected
@@ -465,6 +498,16 @@ function Welcome:Refresh()
     end
     self.status:SetText(scanned and scanned > 0 and
         ((L("подходит групп: %d, ниже фильтров: %d")):format(#matches, #excluded)) or "")
+end
+
+function Welcome:Center()
+    if not self.frame then self:Create() end
+    self.frame:StopMovingOrSizing()
+    self.setMaximized(false, false)
+    self.frame:ClearAllPoints()
+    self.frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    SaveWindow(self.frame)
+    self.frame:Show()
 end
 
 function Welcome:Toggle()

@@ -288,10 +288,10 @@ end
 function JP:RequestRefresh(delay)
     local welcome = self.modules.Welcome
     if not welcome or not welcome.frame or not welcome.frame:IsShown() then return end
-    self.refreshRevision = (self.refreshRevision or 0) + 1
-    local revision = self.refreshRevision
+    if self.refreshQueued then return end
+    self.refreshQueued = true
     C_Timer.After(delay or .12, function()
-        if self.refreshRevision ~= revision then return end
+        self.refreshQueued = nil
         if welcome.frame and welcome.frame:IsShown() then welcome:Refresh() end
     end)
 end
@@ -301,10 +301,8 @@ end
 ---------------------------------------------------------------------------
 
 local function InitializeDatabase()
-    -- A complete reference HUD is a good first-run experience, but a terrible
-    -- surprise on an established profile that is merely upgrading from an old
-    -- release. Only a genuinely empty SavedVariables table receives invasive
-    -- visual defaults; every explicit value always wins.
+    -- Installing an addon is not consent to replace an existing interface.
+    -- Native-frame replacements are opt-in; preserve explicit saved choices.
     local freshProfile = type(MythicBoostDB) ~= "table" or next(MythicBoostDB) == nil
     MythicBoostDB = type(MythicBoostDB) == "table" and MythicBoostDB or {}
     local db = MythicBoostDB
@@ -346,15 +344,12 @@ local function InitializeDatabase()
     -- Старый режим захвата штатной кнопки удалён: MythicBoost теперь
     -- открывается только своей кнопкой внутри Blizzard Group Finder.
     db.replaceGroupFinder = false
-    -- The approved bottom-centre HUD is the product default for a new user.
-    -- Missing flags on an established database stay conservative instead of
-    -- suddenly taking ownership of Blizzard frames after an update.
-    if db.minimalUI == nil then db.minimalUI = freshProfile end
+    if db.minimalUI == nil then db.minimalUI = false end
     db.minimalUIOptions = type(db.minimalUIOptions) == "table" and db.minimalUIOptions or {}
     -- Отдельное владение миникартой: старым пользователям сохраняем прежний
     -- вид, но теперь его можно выключить независимо от остального Minimal UI.
-    if db.minimalUIOptions.minimap == nil then db.minimalUIOptions.minimap = freshProfile end
-    if db.minimalUIOptions.hideStanceBar == nil then db.minimalUIOptions.hideStanceBar = freshProfile end
+    if db.minimalUIOptions.minimap == nil then db.minimalUIOptions.minimap = false end
+    if db.minimalUIOptions.hideStanceBar == nil then db.minimalUIOptions.hideStanceBar = false end
     -- Removed layout-takeover settings are scrubbed from old profiles. The
     -- addon no longer owns ChatFrame/DamageMeter positions or action-bar roots.
     db.minimalUIOptions.bottomDock = nil
@@ -364,13 +359,16 @@ local function InitializeDatabase()
     db.bottomDockSafetyRevision = nil
     db.convenience = type(db.convenience) == "table" and db.convenience or {}
     -- Actions that accept dialogs, spend money, alter quests or invite other
-    -- people are explicit opt-ins. Inserting a Keystone is the only automatic
-    -- action enabled initially: it runs after the player opens the pedestal.
+    -- people are explicit opt-ins. Keystone insertion runs only after opening
+    -- the pedestal. The optional courtesy greeting runs once on party join.
     local convenienceDefaults = {
+        autoHi = true,
+        greetingText = "hi",
+        warnDifferentInstance = true,
         autoKeystone = true,
         autoQuests = false,
         guildRepair = true,
-        hideBags = freshProfile,
+        hideBags = false,
         merchantSummary = true,
         repair = false,
         resurrection = false,
@@ -381,8 +379,14 @@ local function InitializeDatabase()
     }
     for key, value in pairs(convenienceDefaults) do Default(db.convenience, key, value) end
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
-    Default(db.unitFrames, "enabled", freshProfile)
-    Default(db.unitFrames, "hideBlizzard", freshProfile)
+    Default(db.unitFrames, "enabled", false)
+    Default(db.unitFrames, "hideBlizzard", false)
+    -- These modules previously defaulted on lazily. Keep that behaviour for
+    -- existing installs, but do not hide native bosses/tracker on first use.
+    db.bossFrames = type(db.bossFrames) == "table" and db.bossFrames or {}
+    db.dungeonTimer = type(db.dungeonTimer) == "table" and db.dungeonTimer or {}
+    Default(db.bossFrames, "enabled", not freshProfile)
+    Default(db.dungeonTimer, "enabled", not freshProfile)
     -- The compact player/target capsule is optional, but once enabled it must
     -- be a complete HUD component rather than a fixed mock-up. These values
     -- are deliberately independent so an existing profile only receives the
@@ -419,9 +423,9 @@ local function InitializeDatabase()
     ClampFrameNumber("resourceGap", 0, 6, 2)
     ClampFrameNumber("resourceOpacity", .30, 1, 1)
     db.castBar = type(db.castBar) == "table" and db.castBar or {}
-    Default(db.castBar, "enabled", freshProfile)
+    Default(db.castBar, "enabled", false)
     db.lootUI = type(db.lootUI) == "table" and db.lootUI or {}
-    Default(db.lootUI, "enabled", freshProfile)
+    Default(db.lootUI, "enabled", false)
     Default(db.lootUI, "atCursor", true)
     Default(db.lootUI, "showRolls", true)
     Default(db.lootUI, "showHistory", true)
@@ -453,8 +457,7 @@ local function InitializeDatabase()
         db.positiveAuraTracker.fontSize = 24
         db.positiveAuraTracker.pulse = true
         db.positiveAuraTracker.pulseSpeed = .8
-        db.positiveAuraTracker.x = 0
-        db.positiveAuraTracker.y = -20
+        -- Visual migrations must not move an already positioned tracker.
         db.positiveAuraTracker.wingLayoutRevision = 1
     end
     Default(db.positiveAuraTracker, "barHeight", 190)
@@ -535,28 +538,15 @@ local function InitializeDatabase()
         end
         db.bagUI.errorLogPruned = 1
     end
-    -- Revision 2 keeps the convenient global switch but no longer overwrites
-    -- the capsule-specific move toggle on every /reload. Existing profiles are
-    -- migrated once from the old single-state model, then each component may
-    -- be locked independently from its own settings page.
-    if db.interfaceUnlockRevision ~= 2 then
-        local unlocked = db.interfaceUnlocked == true or db.unitFrames.unlocked == true
-            or db.castBar.unlocked == true or db.convenience.movableKeystoneFrame == true
-            or db.positiveAuraTracker.unlocked == true
-        db.interfaceUnlocked = unlocked
-        db.unitFrames.unlocked = unlocked
-        db.castBar.unlocked = unlocked
-        db.convenience.movableKeystoneFrame = unlocked
-        db.positiveAuraTracker.unlocked = unlocked
-        db.interfaceUnlockRevision = 2
-    else
-        db.unitFrames.unlocked = db.unitFrames.unlocked == true
-        db.castBar.unlocked = db.castBar.unlocked == true
-        db.convenience.movableKeystoneFrame = db.convenience.movableKeystoneFrame == true
-        db.positiveAuraTracker.unlocked = db.positiveAuraTracker.unlocked == true
-        db.interfaceUnlocked = db.unitFrames.unlocked or db.castBar.unlocked
-            or db.convenience.movableKeystoneFrame or db.positiveAuraTracker.unlocked
-    end
+    -- Editing is temporary, not a saved layout preference. Every login/reload
+    -- starts locked, including profiles with stale individual unlock flags.
+    -- Positions and feature enable flags are deliberately left untouched.
+    local unlocked = false
+    db.interfaceUnlocked = unlocked
+    db.unitFrames.unlocked, db.unitFrames.badgesUnlocked = unlocked, unlocked
+    db.castBar.unlocked, db.positiveAuraTracker.unlocked = unlocked, unlocked
+    db.convenience.movableKeystoneFrame = unlocked
+    db.interfaceUnlockRevision = 4
     JP.db = db
 end
 
@@ -619,22 +609,29 @@ local function DescribeValue(value)
     local ok, result = pcall(type, value)
     record.type = ok and result or "?"
     ok, result = pcall(issecretvalue, value)
-    record.secret = ok and result or "?"
+    if ok then record.secret = result else record.secret = "?" end
+    -- Never stringify, compare or persist a secret payload, even in diagnostics.
+    if not ok or result then record.text = "<secret>"; return record end
     ok, result = pcall(tostring, value)
     record.text = ok and tostring(result):sub(1, 200) or L("<нечитаемо>")
     return record
 end
 
 local function DescribeTable(source, depth)
-    if type(source) ~= "table" then return DescribeValue(source) end
+    if not JP.SafeTable(source) then return DescribeValue(source) end
     local out = {}
     local ok = pcall(function()
+        local count = 0
         for key, value in pairs(source) do
-            local name = tostring(key)
-            if type(value) == "table" and (depth or 1) < 2 then
-                out[name] = DescribeTable(value, (depth or 1) + 1)
-            else
-                out[name] = DescribeValue(value)
+            if count >= 64 then break end
+            local name = JP.SafeString(key) or (JP.UsableNumber(key) and tostring(key))
+            if name then
+                count = count + 1
+                if JP.SafeTable(value) and (depth or 1) < 2 then
+                    out[name] = DescribeTable(value, (depth or 1) + 1)
+                else
+                    out[name] = DescribeValue(value)
+                end
             end
         end
     end)
@@ -653,26 +650,47 @@ local function DumpSearchResults()
         version = JP:GetVersion(),
         captured = date("%Y-%m-%d %H:%M:%S"),
         totalResults = #resultIDs,
+        inCombat = JP.SafeOptionalBoolean(InCombatLockdown()),
+        tooltipHooked = JP.modules.PlayerTooltip and JP.modules.PlayerTooltip.searchHooked == true,
         results = {},
     }
+    if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown then
+        local ok, restricted = pcall(C_ChatInfo.InChatMessagingLockdown)
+        snapshot.chatMessagingLockdown = ok and DescribeValue(restricted) or {type="error"}
+    end
 
     for index = 1, math.min(5, #resultIDs) do
-        local resultID = resultIDs[index]
-        local info = C_LFGList.GetSearchResultInfo(resultID)
+        local resultID = JP.SafeNumber(resultIDs[index])
+        local info = resultID and C_LFGList.GetSearchResultInfo(resultID)
         local entry = { searchResultInfo = DescribeTable(info) }
 
-        local activityID = info and (type(info.activityIDs) == "table" and info.activityIDs[1] or info.activityID)
+        info = JP.SafeTable(info)
+        local ids = info and JP.SafeTable(info.activityIDs)
+        local activityID = info and (ids and ids[1] or info.activityID)
         entry.activityID = DescribeValue(activityID)
+        activityID = JP.SafeNumber(activityID)
         if activityID then
-            entry.activityInfo = DescribeTable(C_LFGList.GetActivityInfoTable(activityID))
+            local ok, activity = pcall(C_LFGList.GetActivityInfoTable, activityID)
+            entry.activityInfo = ok and DescribeTable(activity) or {type="error"}
             if C_LFGList.GetKeystoneForActivity then
                 local ok, level = pcall(C_LFGList.GetKeystoneForActivity, activityID)
                 entry.keystoneForActivity = ok and DescribeValue(level) or { type = "error" }
             end
         end
-        if C_LFGList.GetSearchResultMemberCounts then
+        if resultID and C_LFGList.GetSearchResultMemberCounts then
             local ok, counts = pcall(C_LFGList.GetSearchResultMemberCounts, resultID)
             entry.memberCounts = ok and DescribeTable(counts) or { __error = L("недоступно") }
+        end
+        entry.players = {}
+        if resultID and C_LFGList.GetSearchResultPlayerInfo then
+            for memberIndex = 1, math.min(5, info and JP.SafeNumber(info.numMembers) or 0) do
+                local ok, member = pcall(C_LFGList.GetSearchResultPlayerInfo, resultID, memberIndex)
+                entry.players[memberIndex] = ok and DescribeTable(member) or {type="error"}
+            end
+        end
+        if resultID and JP.GroupSearchUI and JP.GroupSearchUI.IsMythicPlusSearchResult then
+            local ok, mythic = pcall(JP.GroupSearchUI.IsMythicPlusSearchResult, JP.GroupSearchUI, resultID, info)
+            entry.mythicPlusDetected = ok and DescribeValue(mythic) or {type="error"}
         end
         snapshot.results[index] = entry
     end
@@ -710,6 +728,10 @@ local function ShowHelp()
     JP:Print(L("|cff28b8f5/mb replace|r — открывать своё окно вместо штатного поиска групп"))
     JP:Print(L("|cff28b8f5/mb frames|r [reset] — свои фреймы игрока и цели, reset — сбросить позиции"))
     JP:Print(L("|cff28b8f5/mb testroll|r — показать безопасный тестовый бросок добычи"))
+    JP:Print(L("|cff28b8f5/mb center|r — вернуть главное окно в центр экрана"))
+    JP:Print(L("|cff28b8f5/mb report|r — открыть последний итог ключа"))
+    JP:Print(L("|cff28b8f5/mb talentlab|r — анализ талантов и сборок"))
+    JP:Print(L("|cff28b8f5/mb network|r — память о группе"))
 end
 
 SLASH_MYTHICBOOST1 = "/mythicboost"
@@ -719,6 +741,16 @@ SlashCmdList.MYTHICBOOST = function(input)
     command = command:lower()
     if command == "" or command == "open" or command == "toggle" then
         ToggleWindow()
+    elseif command == "center" then
+        JP.modules.Welcome:Center()
+    elseif command == "report" then
+        if not JP.AvoidableDamage or not JP.AvoidableDamage:OpenKeyReport() then JP:Print(L("Итога ключа пока нет")) end
+    elseif command == "feeddebug" then
+        if JP.AvoidableDamage then JP.AvoidableDamage:Diagnose() end
+    elseif command == "talentlab" then
+        if JP.TalentLab and JP.TalentLab.Show then JP.TalentLab:Show() end
+    elseif command == "network" then
+        if JP.PlayerNetwork and JP.PlayerNetwork.ShowRoster then JP.PlayerNetwork:ShowRoster() end
     elseif command == "reload" then
         if argument == "" then ReloadUI() else JP:ReloadModule(argument) end
     elseif command == "modules" or command == "list" then

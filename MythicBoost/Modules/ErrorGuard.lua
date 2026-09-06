@@ -76,11 +76,27 @@ end
 -- сообщения — он уже содержит файл и строку, поэтому повторы схлопываются в
 -- одну запись со счётчиком. Без этого журнал за минуту вырастает до десятков
 -- тысяч строк и вешает сохранение переменных при выходе.
-local function Signature(message)
-    return tostring(message):sub(1, 300)
+local function IsRestricted(value)
+    return type(issecretvalue) == "function" and issecretvalue(value)
 end
 
-local function Store(message, stack)
+local function SafeText(value, fallback, limit)
+    if IsRestricted(value) then return fallback end
+    if type(value) ~= "string" then
+        local ok, converted = pcall(tostring, value)
+        if not ok or IsRestricted(converted) or type(converted) ~= "string" then return fallback end
+        value = converted
+    end
+    return value:sub(1, limit)
+end
+
+local function Signature(message)
+    return message:sub(1, 300)
+end
+
+local function Store(message, stackProvider)
+    -- Restricted error values must never be indexed, formatted or persisted.
+    message = SafeText(message, "[WoW restricted error message]", MAX_MESSAGE)
     local log = ErrorGuard:GetLog()
     local key = Signature(message)
     local now = time()
@@ -92,10 +108,13 @@ local function Store(message, stack)
             return
         end
     end
+    -- Capture once per unique error. A failing OnUpdate can report hundreds
+    -- of times per second; repeated stack walks add avoidable CPU/GC pressure.
+    local stack = SafeText(stackProvider(), "[WoW restricted stack]", MAX_STACK)
     table.insert(log, 1, {
         key = key,
-        message = tostring(message):sub(1, MAX_MESSAGE),
-        stack = type(stack) == "string" and stack:sub(1, MAX_STACK) or "",
+        message = message,
+        stack = stack,
         count = 1,
         first = now,
         last = now,
@@ -105,21 +124,15 @@ end
 
 local previousHandler = geterrorhandler and geterrorhandler() or nil
 
--- Обработчик обязан быть непробиваемым. Ошибка внутри обработчика ошибок
--- уходит в него же и уводит клиент в бесконечную рекурсию, поэтому всё тело
--- завёрнуто в pcall, а обращений к тому, чего может не быть, здесь нет.
--- Стек снимаем ПЕРВЫМ делом, до входа в защищённую обёртку. Раньше вызов
--- сидел внутри pcall внутри замыкания, и debugstack отсчитывал уровни от них,
--- а не от места ошибки: первые четыре строки каждого трейса занимали кадры
--- самого ErrorGuard, настоящий стек уезжал вниз и обрезался лимитом в 4000
--- символов. Чинить это одной лишь арифметикой уровней ненадёжно — она разная
--- в зависимости от того, как игра вызвала обработчик, — поэтому подстраховка
--- фильтром по имени файла.
+-- Stack capture and filtering both belong inside Handler's protected call.
+-- pcall(debugstack) alone does not make a returned secret string readable.
 local function CaptureStack()
     local ok, stack = pcall(debugstack, 1, 20, 20)
-    if not ok or type(stack) ~= "string" then return "" end
+    if not ok then return "" end
+    if IsRestricted(stack) then return "[WoW restricted stack]" end
+    if type(stack) ~= "string" then return "" end
     local kept = {}
-    for line in stack:gmatch("[^\n]+") do
+    for line in stack:sub(1, MAX_STACK * 2):gmatch("[^\n]+") do
         if not line:find("ErrorGuard.lua", 1, true) then kept[#kept + 1] = line end
     end
     -- После вычистки наверху остаются осиротевшие обёртки pcall от самого
@@ -131,23 +144,56 @@ local function CaptureStack()
     return table.concat(kept, "\n")
 end
 
+local handling = false
 local function Handler(message)
-    local stack = CaptureStack()
+    if handling then return false end
+    handling = true
+    local forwarded = false
     local ok = pcall(function()
         if not ErrorGuard:IsEnabled() then
-            if previousHandler then previousHandler(message) end
+            if previousHandler then forwarded = true; previousHandler(message) end
             return
         end
-        Store(message, stack)
+        Store(message, CaptureStack)
         ErrorGuard.dirty = true
         QueueDirtyRefresh()
     end)
-    -- Если даже защищённый разбор упал — молча глотаем. Показать ошибку из
-    -- обработчика ошибок нечем, а падать нельзя.
+    -- Keep the original error visible if storing it fails. A broken logger
+    -- must not replace the underlying error or recurse through other handlers.
+    if not ok and not forwarded and previousHandler then pcall(previousHandler, message) end
+    handling = false
     return ok
 end
 
 if type(seterrorhandler) == "function" then seterrorhandler(Handler) end
+
+-- Protected-action notifications are separate from Lua errors. Observe them
+-- without replacing Blizzard's handler or hiding its warning dialog.
+function ErrorGuard:CaptureProtectedAction(event, addon, action)
+    if handling or IsRestricted(addon) or addon ~= "MythicBoost" then return end
+    if event ~= "ADDON_ACTION_BLOCKED" and event ~= "ADDON_ACTION_FORBIDDEN" then return end
+    handling = true
+    pcall(function()
+        local name = SafeText(action, "[WoW restricted action]", 240)
+        local version = type(JP.GetVersion) == "function" and JP:GetVersion() or "?"
+        version = SafeText(version, "?", 32)
+        Store(("[%s] MythicBoost %s: %s"):format(event, version, name), CaptureStack)
+        self.dirty = true
+        QueueDirtyRefresh()
+    end)
+    handling = false
+end
+
+function ErrorGuard:WatchProtectedActions()
+    if self.actionEvents then return end
+    local frame = CreateFrame("Frame")
+    frame:RegisterEvent("ADDON_ACTION_BLOCKED")
+    frame:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+    frame:SetScript("OnEvent", function(_, event, addon, action)
+        self:CaptureProtectedAction(event, addon, action)
+    end)
+    self.actionEvents = frame
+end
 
 -- Штатное окно ошибок Blizzard всё равно может всплыть: его показывают и по
 -- другим путям, не только через обработчик. Держим закрытым, пока функция
@@ -442,6 +488,7 @@ function ErrorGuard:SetEnabled(value)
 end
 
 function ErrorGuard:Create()
+    self:WatchProtectedActions()
     if self:IsEnabled() then self:SuppressBlizzardFrame() end
     -- Окно перерисовываем не на каждую ошибку, а раз в секунду: при буре из
     -- OnUpdate перерисовка на каждое срабатывание была бы дороже самой ошибки.
@@ -491,4 +538,5 @@ end
 function ErrorGuard:Destroy() self:Disable() end
 
 JP.ErrorGuard = ErrorGuard
+ErrorGuard:WatchProtectedActions()
 JP:RegisterModule("ErrorGuard", ErrorGuard)

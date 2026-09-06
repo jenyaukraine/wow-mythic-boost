@@ -67,6 +67,7 @@ local function IsKeystone(itemID)
 end
 
 function Convenience:SlotKeystone()
+    if InCombatLockdown() then return false end
     if not Enabled("autoKeystone") or IsShiftKeyDown() then return false end
     if not C_Container or not C_ChallengeMode or type(C_ChallengeMode.SlotKeystone) ~= "function" then return false end
     for bag = 0, (NUM_BAG_SLOTS or 4) do
@@ -87,6 +88,7 @@ function Convenience:SlotKeystone()
 end
 
 function Convenience:SetupKeystoneFrame()
+    if InCombatLockdown() then return end
     local frame = _G.ChallengesKeystoneFrame
     if not frame then return end
     if not self.keystoneShowHooked then
@@ -102,7 +104,9 @@ function Convenience:SetupKeystoneFrame()
         frame:HookScript("OnDragStart", function(owner)
             if Enabled("movableKeystoneFrame") and not InCombatLockdown() then owner:StartMoving() end
         end)
-        frame:HookScript("OnDragStop", function(owner) owner:StopMovingOrSizing() end)
+        frame:HookScript("OnDragStop", function(owner)
+            if not InCombatLockdown() then owner:StopMovingOrSizing() end
+        end)
     end
     if Enabled("movableKeystoneFrame") then
         frame:SetMovable(true)
@@ -179,21 +183,78 @@ function Convenience:AutomateQuest(event)
 end
 
 function Convenience:AcceptSummon()
-    if not Enabled("summon") or InCombatLockdown() then return end
-    if ConfirmSummon then pcall(ConfirmSummon) end
-    if StaticPopup_Hide then pcall(StaticPopup_Hide, "CONFIRM_SUMMON") end
+    if not Enabled("summon") or InCombatLockdown() or IsShiftKeyDown() then return end
+    if UnitAffectingCombat and JP.SafeOptionalBoolean(UnitAffectingCombat("player")) ~= false then return end
+    if PlayerCanTeleport and JP.SafeOptionalBoolean(PlayerCanTeleport()) ~= true then return end
+    local api = C_SummonInfo
+    if api and api.GetSummonConfirmTimeLeft then
+        local left = JP.SafeNumber(api.GetSummonConfirmTimeLeft())
+        if not left or left <= 0 then return end
+    end
+    local accept = api and api.ConfirmSummon or ConfirmSummon
+    if type(accept) == "function" then pcall(accept) end
+    -- Only Blizzard closes its dialog after acceptance. A successful pcall
+    -- does not prove that the teleport happened; keep manual fallback visible.
 end
 
-function Convenience:AcceptResurrection()
-    if not Enabled("resurrection") then return end
-    if Enabled("resNoCombat") and InCombatLockdown() then return end
+local function ResurrectionSource(name)
+    name = JP.SafeString(name)
+    if not name or name == "" or not UnitIsPlayer then return nil end
+    -- The event supplies a name, not necessarily a party unit token. Resolve
+    -- cross-realm party names; a missing/ambiguous source stays manual.
+    if JP.SafeOptionalBoolean(UnitIsPlayer(name)) == true then return name end
+    local found
+    local raid = JP.SafeOptionalBoolean(IsInRaid()) == true
+    local count = raid and math.min(40, JP.SafeNumber(GetNumGroupMembers()) or 0) or 4
+    for i = 0, count do
+        local unit = i == 0 and "player" or ((raid and "raid" or "party") .. i)
+        if JP.SafeOptionalBoolean(UnitIsPlayer(unit)) == true then
+            local unitName, realm = (UnitFullName or UnitName)(unit)
+            unitName, realm = JP.SafeString(unitName), JP.SafeString(realm)
+            local full = unitName and realm and realm ~= "" and (unitName .. "-" .. realm:gsub("%s", ""))
+            if name == unitName or name == full then
+                if found then return nil end
+                found = unit
+            end
+        end
+    end
+    return found -- NPC pylons/braziers are deliberately not auto-accepted
+end
+
+function Convenience:AcceptResurrection(resurrecter)
+    if not Enabled("resurrection") or (IsShiftKeyDown and IsShiftKeyDown()) then return end
+    local source = ResurrectionSource(resurrecter)
+    if not source then return end
+    -- Enabled by default, including profiles where this field is missing.
+    -- A corpse can lose its own combat flag while its party is still fighting.
+    if Settings().resNoCombat ~= false then
+        if InCombatLockdown() or not UnitAffectingCombat then return end
+        if JP.SafeOptionalBoolean(UnitAffectingCombat("player")) ~= false
+            or JP.SafeOptionalBoolean(UnitAffectingCombat(source)) ~= false then return end
+        if IsEncounterInProgress and JP.SafeOptionalBoolean(IsEncounterInProgress()) ~= false then return end
+        local inInstance, kind = IsInInstance()
+        inInstance, kind = JP.SafeOptionalBoolean(inInstance), JP.SafeString(kind)
+        if inInstance == nil or (inInstance and not kind) then return end
+        if inInstance and (kind == "party" or kind == "raid") then
+            local raid = JP.SafeOptionalBoolean(IsInRaid()) == true
+            local count = raid and math.min(40, JP.SafeNumber(GetNumGroupMembers()) or 0) or 4
+            for i = 1, count do
+                local unit = (raid and "raid" or "party") .. i
+                if JP.SafeOptionalBoolean(UnitExists(unit)) ~= false
+                    and JP.SafeOptionalBoolean(UnitAffectingCombat(unit)) ~= false then return end
+            end
+        end
+    end
     if AcceptResurrect then pcall(AcceptResurrect) end
-    if StaticPopup_Hide then pcall(StaticPopup_Hide, "RESURRECT") end
+    -- No delayed auto-accept and no popup suppression: a combat res must stay
+    -- available for the player's manual click at a safe moment.
 end
 
 function Convenience:InviteFromWhisper(message, sender)
-    if not Enabled("whisperInvite") or type(message) ~= "string" or type(sender) ~= "string" then return end
-    local keyword = tostring(Settings().inviteKeyword or "inv"):lower()
+    if not Enabled("whisperInvite") or InCombatLockdown() then return end
+    message, sender = JP.SafeString(message), JP.SafeString(sender)
+    if not message or not sender then return end
+    local keyword = (JP.SafeString(Settings().inviteKeyword) or "inv"):lower()
     local clean = message:lower():match("^%s*(.-)%s*$")
     if clean ~= "inv" and clean ~= "123" and clean ~= "+" and clean ~= keyword then return end
     if IsInGroup() and not UnitIsGroupLeader("player") and not UnitIsGroupAssistant("player") then return end
@@ -221,7 +282,7 @@ function Convenience:Create()
         elseif event == "CONFIRM_SUMMON" then
             self:AcceptSummon()
         elseif event == "RESURRECT_REQUEST" then
-            self:AcceptResurrection()
+            self:AcceptResurrection(...)
         elseif event == "CHAT_MSG_WHISPER" then
             self:InviteFromWhisper(...)
         else

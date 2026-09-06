@@ -42,6 +42,57 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "Executable smoke tests failed. Release was not created."
 }
+& python (Join-Path $PSScriptRoot "TestInterruptAssist.py")
+if ($LASTEXITCODE -ne 0) { throw "Interrupt workflow tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestSettingsScroll.py")
+if ($LASTEXITCODE -ne 0) { throw "Settings scroll tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestErrorGuard.py")
+if ($LASTEXITCODE -ne 0) { throw "Error handler tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestAuraDisplay.py")
+if ($LASTEXITCODE -ne 0) { throw "Aura display tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestDungeonHUD.py")
+if ($LASTEXITCODE -ne 0) { throw "Dungeon HUD tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestMinimapQueue.py")
+if ($LASTEXITCODE -ne 0) { throw "Minimap queue tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestWorkflowFixes.py")
+if ($LASTEXITCODE -ne 0) { throw "Workflow regression tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestSocialWorkflows.py")
+if ($LASTEXITCODE -ne 0) { throw "Review/sync workflow tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestHudPolish.py")
+if ($LASTEXITCODE -ne 0) { throw "HUD regression tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestReviewBrowser.py")
+if ($LASTEXITCODE -ne 0) { throw "Review browser/applicant card tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestInteractionFixes.py")
+if ($LASTEXITCODE -ne 0) { throw "Interaction regression tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestGreetingText.py")
+if ($LASTEXITCODE -ne 0) { throw "Custom greeting settings tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestInstanceAlert.py")
+if ($LASTEXITCODE -ne 0) { throw "Dungeon instance notification tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestPostCombatFeed.py")
+if ($LASTEXITCODE -ne 0) { throw "Post-combat feed lifecycle tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestTempleHealerEffects.py")
+if ($LASTEXITCODE -ne 0) { throw "Temple healer aura/effect tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestPatch73.py")
+if ($LASTEXITCODE -ne 0) { throw "Tooltip/guild/run-status regression tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestAvoidableDamage.py")
+if ($LASTEXITCODE -ne 0) { throw "Avoidable damage monitor tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestPolish75.py")
+if ($LASTEXITCODE -ne 0) { throw "Settings/profile/aura safety tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestPatch77.py")
+if ($LASTEXITCODE -ne 0) { throw "Combat reports/loot regression tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestAuctionMarket.py")
+if ($LASTEXITCODE -ne 0) { throw "Auction isolation/history tests failed. Release was not created." }
+& python (Join-Path $PSScriptRoot "TestHudPatch80.py")
+if ($LASTEXITCODE -ne 0) { throw "HUD positions/tooltips/auction layering tests failed. Release was not created." }
+
+foreach ($testName in @("TestRunStats.py", "TestPlayerNetwork.py", "TestPlayerMemoryUI.py",
+    "TestPlayerDataIntegration.py", "TestUpgradeReasons.py", "TestTalentLab.py",
+    "TestTalentLabUI.py", "TestTalentSources.py", "TestInformation.py", "TestListingSpam.py",
+    "TestChatSpamCondenser.py", "TestReviewsUI.py", "TestSharedReviews.py", "TestAuctionPerformance.py",
+    "TestTimerTheme.py", "TestTalentTreeStats.py")) {
+    & python (Join-Path $PSScriptRoot $testName)
+    if ($LASTEXITCODE -ne 0) { throw "$testName failed. Release was not created." }
+}
 
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repositoryRoot "dist"
@@ -90,6 +141,7 @@ try {
         "README.txt",
         "LICENSE-XPERL.txt",
         "NOTICE-XPERL.txt",
+        "licenses\ItruliaQoL.txt",
         "Media\MythicBoostIcon.tga",
         "Media\LootGlass.tga",
         "Media\LootGlow.tga",

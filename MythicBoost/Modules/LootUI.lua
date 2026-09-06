@@ -11,12 +11,11 @@ local ROW_HEIGHT = 36
 local FRAME_WIDTH = 300
 local MAIN_FOOTER_HEIGHT = 20
 local MAX_ROLL_ROWS = 4
-local ROLL_HEADER_HEIGHT = 20
-local ROLL_ROW_HEIGHT = 50
-local ROLL_FRAME_WIDTH = 420
+local ROLL_HEADER_HEIGHT = 24
+local ROLL_ROW_HEIGHT = 64
+local ROLL_FRAME_WIDTH = 360
 local MAX_HISTORY_ROWS = 6
 local HISTORY_ROW_HEIGHT = 34
-local HISTORY_FOOTER_HEIGHT = 22
 local HISTORY_LIFETIME = 22
 local TEST_ROLL_ID = -2147483647
 local LOOT_GLASS_TEXTURE = "Interface\\AddOns\\MythicBoost\\Media\\LootGlass.tga"
@@ -474,24 +473,18 @@ local ROLL_CHOICE_COLORS = {
 
 local function BuildRollChoice(row, label, rollType)
     local button = CreateFrame("Button", nil, row, "BackdropTemplate")
-    button:SetSize(24, 24)
+    button:SetSize(28, 28)
     button:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
     local choiceColor = ROLL_CHOICE_COLORS[rollType] or ROLL_CHOICE_COLORS[0]
-    button:SetBackdropColor(choiceColor[1] * .08, choiceColor[2] * .08, choiceColor[3] * .08, .98)
-    button:SetBackdropBorderColor(choiceColor[1], choiceColor[2], choiceColor[3], .82)
-    button.glass = button:CreateTexture(nil, "BACKGROUND", nil, 2)
-    button.glass:SetPoint("TOPLEFT", 1, -1); button.glass:SetPoint("BOTTOMRIGHT", -1, 1)
-    button.glass:SetColorTexture(1, 1, 1, 1)
-    button.glass:SetGradient("VERTICAL",
-        CreateColor(choiceColor[1] * .18, choiceColor[2] * .18, choiceColor[3] * .18, .14),
-        CreateColor(choiceColor[1], choiceColor[2], choiceColor[3], .34))
+    button:SetBackdropColor(.035, .050, .064, .98)
+    button:SetBackdropBorderColor(.20, .27, .32, .85)
     button.icon = button:CreateTexture(nil, "ARTWORK")
-    button.icon:SetPoint("TOPLEFT", 2, -2)
-    button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    button.icon:SetPoint("TOPLEFT", 4, -4)
+    button.icon:SetPoint("BOTTOMRIGHT", -4, 4)
     button.icon:SetTexture(ROLL_CHOICE_TEXTURES[rollType])
     button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
     button.highlight:SetAllPoints(button.icon)
@@ -506,7 +499,7 @@ local function BuildRollChoice(row, label, rollType)
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", function(owner)
-        owner:SetBackdropBorderColor(choiceColor[1], choiceColor[2], choiceColor[3], .82)
+        owner:SetBackdropBorderColor(.20, .27, .32, .85)
         GameTooltip_Hide()
     end)
     button:SetScript("OnClick", function(owner)
@@ -538,7 +531,7 @@ end
 
 function LootUI:BuildRollRow(index)
     local row = CreateFrame("Button", nil, self.rollFrame, "BackdropTemplate")
-    row:SetHeight(46)
+    row:SetHeight(ROLL_ROW_HEIGHT-4)
     row:SetPoint("TOPLEFT", 5, -(ROLL_HEADER_HEIGHT + 3) - (index - 1) * ROLL_ROW_HEIGHT)
     row:SetPoint("TOPRIGHT", -5, -(ROLL_HEADER_HEIGHT + 3) - (index - 1) * ROLL_ROW_HEIGHT)
     row:SetBackdrop({
@@ -546,28 +539,20 @@ function LootUI:BuildRollRow(index)
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
-    row:SetBackdropColor(.004, .007, .011, .98)
-    row.qualityWash = row:CreateTexture(nil, "BACKGROUND", nil, 1)
-    row.qualityWash:SetPoint("TOPLEFT", 1, -1); row.qualityWash:SetPoint("BOTTOMRIGHT", -1, 1)
-    row.qualityWash:SetColorTexture(1, 1, 1, 1)
-    row.glassTop = row:CreateTexture(nil, "ARTWORK", nil, 1)
-    row.glassTop:SetPoint("TOPLEFT", 1, -1); row.glassTop:SetPoint("TOPRIGHT", -1, -1)
-    row.glassTop:SetHeight(20)
-    row.glassTop:SetColorTexture(1, 1, 1, 1)
-    row.glassTop:SetGradient("VERTICAL",
-        CreateColor(.55, .70, .84, 0), CreateColor(.88, .95, 1, .16))
+    row:SetBackdropColor(.024, .034, .045, .98)
+    row:SetBackdropBorderColor(.14, .19, .23, .8)
     row.qualityEdge = row:CreateTexture(nil, "OVERLAY", nil, 1)
-    row.qualityEdge:SetPoint("TOPLEFT", 1, -1); row.qualityEdge:SetPoint("BOTTOMLEFT", 1, 3)
-    row.qualityEdge:SetWidth(3)
+    row.qualityEdge:SetPoint("TOPLEFT", 1, -1); row.qualityEdge:SetPoint("BOTTOMLEFT", 1, 1)
+    row.qualityEdge:SetWidth(2)
     row.progress = CreateFrame("StatusBar", nil, row)
-    row.progress:SetPoint("BOTTOMLEFT", 1, 1)
-    row.progress:SetPoint("BOTTOMRIGHT", -1, 1)
-    row.progress:SetHeight(3)
+    row.progress:SetPoint("BOTTOMLEFT", 8, 2)
+    row.progress:SetPoint("BOTTOMRIGHT", -8, 2)
+    row.progress:SetHeight(2)
     row.progress:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     row.progress:SetStatusBarColor(C.accent[1], C.accent[2], C.accent[3], .90)
     row.progress:SetFrameLevel(row:GetFrameLevel())
     row.iconFrame = CreateFrame("Frame", nil, row, "BackdropTemplate")
-    row.iconFrame:SetPoint("TOPLEFT", 5, -4); row.iconFrame:SetSize(39, 39)
+    row.iconFrame:SetPoint("LEFT", 8, 1); row.iconFrame:SetSize(40, 40)
     row.iconFrame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
@@ -578,19 +563,16 @@ function LootUI:BuildRollRow(index)
     row.icon:SetPoint("TOPLEFT", 2, -2); row.icon:SetPoint("BOTTOMRIGHT", -2, 2)
     row.icon:SetTexCoord(.07, .93, .07, .93)
     row.name = UI.Text(row, "GameFontNormal", "", C.text)
-    row.name:SetPoint("TOPLEFT", row.iconFrame, "TOPRIGHT", 8, 0)
-    row.name:SetPoint("RIGHT", -54, 0)
+    row.name:SetPoint("TOPLEFT", 56, -6)
+    row.name:SetPoint("TOPRIGHT", -55, -6)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
-    row.timerPanel = CreateFrame("Frame", nil, row, "BackdropTemplate")
-    row.timerPanel:SetPoint("TOPRIGHT", -5, -4); row.timerPanel:SetSize(43, 20)
-    row.timerPanel:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-    row.timerPanel:SetBackdropColor(.025, .035, .050, .90)
-    row.timer = UI.Text(row.timerPanel, "GameFontNormal", "", C.text)
-    row.timer:SetPoint("CENTER")
-    row.timer:SetJustifyH("CENTER")
+    row.timer = UI.Text(row, "GameFontNormalSmall", "", C.text)
+    row.timer:SetPoint("TOPRIGHT", -8, -7)
+    row.timer:SetWidth(42); row.timer:SetJustifyH("RIGHT")
     row.result = UI.Text(row, "GameFontNormalSmall", "", C.accent)
-    row.result:SetPoint("BOTTOMRIGHT", -6, 5)
+    row.result:SetPoint("BOTTOMRIGHT", -8, 14)
+    row.result:SetWidth(84); row.result:SetJustifyH("RIGHT"); row.result:SetWordWrap(false)
     row.result:Hide()
     row.choices = {}
     BuildRollChoice(row, L("НУЖНО"), 1)
@@ -631,15 +613,10 @@ function LootUI:RefreshRolls()
             row.name:SetText((data.count or 1) > 1 and (data.name .. "  ×" .. data.count) or data.name)
             row.progress:SetMinMaxValues(0, math.max(.1, data.duration or 1))
             local r, g, b = QualityColor(data.quality)
-            row:SetBackdropBorderColor(r, g, b, .96)
-            row:SetBackdropColor(r * .025, g * .025, b * .025, .98)
-            row.qualityWash:SetGradient("HORIZONTAL",
-                CreateColor(r, g, b, .22), CreateColor(r, g, b, .015))
-            row.qualityEdge:SetColorTexture(r, g, b, .98)
+            row.qualityEdge:SetColorTexture(r, g, b, .85)
             row.iconFrame:SetBackdropBorderColor(r, g, b, 1)
-            row.timerPanel:SetBackdropBorderColor(r, g, b, .72)
-            row.progress:SetStatusBarColor(r, g, b, .96)
-            row.name:SetTextColor(r, g, b, 1)
+            row.progress:SetStatusBarColor(r, g, b, .7)
+            row.name:SetTextColor(.91, .95, .98, 1)
             -- Права на бросок приходят от API и могут быть защищёнными, а
             -- сравнивать такое значение нельзя. Снимаем защиту сразу здесь,
             -- чтобы ниже сравнение шло с обычным булевым.
@@ -655,12 +632,12 @@ function LootUI:RefreshRolls()
                 if availability[choiceIndex] == true then visibleChoices[#visibleChoices + 1] = choice end
                 if data.selected == choice.rollType then row.result:SetText(choice.choiceLabel) end
             end
-            local choiceWidth, choiceGap = 24, 1
+            local choiceWidth, choiceGap = 28, 5
             for choiceIndex, choice in ipairs(visibleChoices) do
                 choice:SetSize(choiceWidth, choiceWidth)
                 choice:ClearAllPoints()
-                choice:SetPoint("BOTTOMLEFT", row.iconFrame, "BOTTOMRIGHT",
-                    8 + (choiceIndex - 1) * (choiceWidth + choiceGap), 0)
+                choice:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT",
+                    56 + (choiceIndex - 1) * (choiceWidth + choiceGap), 7)
             end
             row.result:SetShown(data.selected ~= nil)
             row:Show()
@@ -672,6 +649,7 @@ function LootUI:RefreshRolls()
     local shown = math.min(#active, MAX_ROLL_ROWS)
     self.rollFrame:SetHeight(ROLL_HEADER_HEIGHT + 6 + shown * ROLL_ROW_HEIGHT)
     self.rollFrame:SetShown(shown > 0)
+    self:UpdateRollTimers(.08, true)
 end
 
 function LootUI:ShowTestRoll()
@@ -682,12 +660,12 @@ function LootUI:ShowTestRoll()
     end
     self:Create()
     self.rolls = self.rolls or {}
-    local duration = 300
+    local duration = 60
     self.rolls[TEST_ROLL_ID] = {
         rollID = TEST_ROLL_ID,
         test = true,
-        icon = 134400,
-        name = L("Тестовый предмет — перетащи заголовок"),
+        icon = 133041,
+        name = L("Тестовый предмет"),
         count = 1,
         quality = 4,
         canNeed = true,
@@ -760,7 +738,7 @@ function LootUI:RemoveRoll(rollID)
     self:RefreshRolls()
 end
 
-function LootUI:UpdateRollTimers(elapsed)
+function LootUI:UpdateRollTimers(elapsed, displayOnly)
     self.rollElapsed = (self.rollElapsed or 0) + elapsed
     if self.rollElapsed < .08 then return end
     self.rollElapsed = 0
@@ -770,15 +748,14 @@ function LootUI:UpdateRollTimers(elapsed)
             local data = self.rolls[row.rollID]
             local remaining = math.max(0, (data.deadline or now) - now)
             row.progress:SetValue(remaining)
-            row.timer:SetFormattedText(remaining < 10 and "%.1f" or "%d", remaining)
+            if remaining >= 60 then
+                row.timer:SetFormattedText("%d:%02d", math.floor(remaining/60), math.floor(remaining%60))
+            else row.timer:SetFormattedText(remaining < 10 and "%.1f" or "%d", remaining) end
             local ratio = remaining / math.max(.1, data.duration or 1)
-            local glassWave = .68 + .18 * math.sin(now * 2.4 + (row.rollID or 0) % 7)
-            row.glassTop:SetAlpha(glassWave)
-            row.qualityWash:SetAlpha(.82 + .12 * math.sin(now * 1.7))
             if ratio > .45 then row.timer:SetTextColor(.90, .96, 1, 1)
             elseif ratio > .18 then row.timer:SetTextColor(1, .72, .18, 1)
             else row.timer:SetTextColor(1, .24, .18, 1) end
-            if remaining <= 0 then expired[#expired + 1] = row.rollID end
+            if remaining <= 0 and not displayOnly then expired[#expired + 1] = row.rollID end
         end
     end
     for _, rollID in ipairs(expired) do self:RemoveRoll(rollID) end
@@ -937,7 +914,7 @@ function LootUI:RefreshHistory()
     end
     local shown = math.min(#display, MAX_HISTORY_ROWS)
     self.historyFrame:SetWidth(maximumWidth)
-    self.historyFrame:SetHeight(HISTORY_FOOTER_HEIGHT + 4 + shown * HISTORY_ROW_HEIGHT)
+    self.historyFrame:SetHeight(4 + shown * HISTORY_ROW_HEIGHT)
     self.historyFrame:SetShown(shown > 0)
 end
 
@@ -963,15 +940,10 @@ function LootUI:BuildAuxiliaryFrames()
     rollFrame:SetFrameStrata("DIALOG")
     rollFrame:SetClampedToScreen(true)
     rollFrame:SetMovable(true)
-    UI.Backdrop(rollFrame, C.surface, C.surfaceEdge)
-    BuildAuxiliaryHeader(rollFrame, L("БРОСКИ ГРУППЫ"), "rollPosition", ROLL_HEADER_HEIGHT)
-    UI.Backdrop(rollFrame.header, C.raised, C.surfaceEdge)
-    rollFrame.headerGlass = rollFrame.header:CreateTexture(nil, "ARTWORK", nil, 1)
-    rollFrame.headerGlass:SetPoint("TOPLEFT", 1, -1); rollFrame.headerGlass:SetPoint("BOTTOMRIGHT", -1, 1)
-    rollFrame.headerGlass:SetColorTexture(1, 1, 1, 1)
-    rollFrame.headerGlass:SetGradient("HORIZONTAL",
-        CreateColor(C.accent[1], C.accent[2], C.accent[3], .20),
-        CreateColor(C.amber[1], C.amber[2], C.amber[3], .06))
+    UI.Backdrop(rollFrame, {.012,.019,.027,.96}, {.16,.22,.27,.85})
+    BuildAuxiliaryHeader(rollFrame, L("Групповая добыча"), "rollPosition", ROLL_HEADER_HEIGHT)
+    rollFrame.title:SetTextColor(.67, .77, .84, 1)
+    rollFrame.line:SetColorTexture(.16, .25, .31, .7)
     rollFrame.close = UI.CloseButton(rollFrame)
     rollFrame.close:SetSize(18, 18)
     rollFrame.close:SetPoint("TOPRIGHT", -1, -1)
@@ -991,46 +963,8 @@ function LootUI:BuildAuxiliaryFrames()
     historyFrame:SetFrameStrata("HIGH")
     historyFrame:SetClampedToScreen(true)
     historyFrame:SetMovable(true)
-    -- Монитор — не большое окно, а стопка отдельных коротких строк. Нижняя
-    -- плашка остаётся на месте, новые записи растут вверх как в старых UI.
-    historyFrame.header = CreateFrame("Button", nil, historyFrame, "BackdropTemplate")
-    historyFrame.header:SetPoint("BOTTOMLEFT", 0, 0)
-    historyFrame.header:SetPoint("BOTTOMRIGHT", 0, 0)
-    historyFrame.header:SetHeight(HISTORY_FOOTER_HEIGHT)
-    historyFrame.header:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    historyFrame.header:SetBackdropColor(.018, .014, .009, .96)
-    historyFrame.header:SetBackdropBorderColor(.34, .25, .08, .92)
-    historyFrame.header:RegisterForDrag("LeftButton")
-    historyFrame.header:SetScript("OnDragStart", function()
-        if MythicBoostDB.interfaceUnlocked or historyFrame.testMoveUnlocked then historyFrame:StartMoving() end
-    end)
-    historyFrame.header:SetScript("OnDragStop", function()
-        historyFrame:StopMovingOrSizing()
-        SaveAuxiliaryPosition(historyFrame, "historyPosition")
-    end)
-    historyFrame.header.glass = historyFrame.header:CreateTexture(nil, "BACKGROUND")
-    historyFrame.header.glass:SetAllPoints()
-    historyFrame.header.glass:SetTexture(LOOT_GLASS_TEXTURE)
-    historyFrame.header.glass:SetVertexColor(.42, .34, .18, .54)
-    historyFrame.title = UI.Text(historyFrame.header, "GameFontNormalSmall", L("МОНИТОР ДОБЫЧИ"), { 1, .78, .10, 1 })
-    historyFrame.title:SetPoint("CENTER", 0, 0)
-    historyFrame.close = CreateFrame("Button", nil, historyFrame.header, "BackdropTemplate")
-    historyFrame.close:SetSize(18, 18)
-    historyFrame.close:SetPoint("RIGHT", -2, 0)
-    historyFrame.close:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    historyFrame.close:SetBackdropColor(.28, .015, .015, 1)
-    historyFrame.close:SetBackdropBorderColor(.72, .48, .02, 1)
-    historyFrame.close.glyph = UI.Text(historyFrame.close, "GameFontNormal", "×", { 1, .82, 0, 1 })
-    historyFrame.close.glyph:SetAllPoints()
-    historyFrame.close:SetScript("OnClick", function() historyFrame:Hide() end)
+    -- Only the notification rows are visible. Drag a row in edit mode;
+    -- there is no empty footer/handle underneath the stack.
     -- Нижняя полоса, над левой (чатовой) частью дока. Раньше окно вставало
     -- в левый верх экрана — прямо в игровую зону, которую HUD обязан
     -- оставлять чистой: весь интерфейс живёт снизу и справа.
@@ -1040,7 +974,23 @@ function LootUI:BuildAuxiliaryFrames()
         local row = CreateFrame("Button", nil, historyFrame, "BackdropTemplate")
         row:SetHeight(32)
         row:SetWidth(260)
-        row:SetPoint("BOTTOMLEFT", 0, HISTORY_FOOTER_HEIGHT + 2 + (index - 1) * HISTORY_ROW_HEIGHT)
+        row:SetPoint("BOTTOMLEFT", 0, 2 + (index - 1) * HISTORY_ROW_HEIGHT)
+        row:RegisterForDrag("LeftButton")
+        row:SetScript("OnDragStart", function(owner)
+            if MythicBoostDB.interfaceUnlocked or historyFrame.testMoveUnlocked then
+                owner.historyDragging = true; historyFrame:StartMoving()
+            end
+        end)
+        row:SetScript("OnDragStop", function(owner)
+            if not owner.historyDragging then return end
+            owner.historyDragging = nil; historyFrame:StopMovingOrSizing()
+            SaveAuxiliaryPosition(historyFrame, "historyPosition")
+        end)
+        row:SetScript("OnHide", function(owner)
+            if owner.historyDragging then
+                owner.historyDragging = nil; historyFrame:StopMovingOrSizing()
+            end
+        end)
         UI.Backdrop(row, { .008, .012, .020, .88 }, { .06, .22, .28, .86 })
         row.glass = row:CreateTexture(nil, "BACKGROUND", nil, 1)
         row.glass:SetPoint("TOPLEFT", 1, -1)

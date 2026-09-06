@@ -9,7 +9,9 @@ local MAX_RUNS = JP.Limits.HISTORY_RUNS
 local MAX_ROWS = 14
 local ROW_HEIGHT = 32
 local BASE_EVENTS = { "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED", "CHALLENGE_MODE_RESET" }
-local TRACKING_EVENTS = { "COMBAT_LOG_EVENT_UNFILTERED", "ENCOUNTER_END" }
+-- Retail does not permit addon subscriptions to the raw combat log.
+-- pcall cannot make a restricted registration safe: it still flags the addon.
+local TRACKING_EVENTS = { "ENCOUNTER_END" }
 
 local function PrunePlayers(players)
     local ordered = {}
@@ -43,6 +45,7 @@ local function FullUnitName(unit)
     local name, realm = UnitFullName(unit)
     name, realm = SafeText(name), SafeText(realm)
     if not name then return end
+    if JP.Reviews then return JP.Reviews.FullName(name,realm) end
     return realm and realm ~= "" and (name .. "-" .. realm) or name
 end
 
@@ -56,7 +59,7 @@ local function FormatDuration(seconds)
     return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
 end
 
-local PLAY_INVITE_MESSAGE = "Hi! I'd like to invite you to play some Mythic+ keys! (c) Sent from the MythicBoost addon"
+local PLAY_INVITE_MESSAGE = "[MythicBoost] Hi! I'd like to invite you to play some Mythic+ keys!"
 
 local function InviteToPlay(name)
     if type(name) ~= "string" or name == "" or issecretvalue(name) then return end
@@ -76,7 +79,7 @@ local function CurrentRoster()
     end
     for _, unit in ipairs(units) do
         local name = FullUnitName(unit)
-        local guid = UnitGUID(unit)
+        local guid = SafeText(UnitGUID(unit))
         if name and guid then
             local _, classFile = UnitClass(unit)
             local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit) or "NONE"
@@ -84,7 +87,7 @@ local function CurrentRoster()
                 and JP.GroupSearchUI:GetPartyMemberProfile(unit)
             local record = {
                 name = name, guid = guid, classFile = SafeText(classFile), role = role,
-                rating = profile and SafeNumber(profile.score) or 0, deaths = 0, interrupts = 0,
+                rating = profile and SafeNumber(profile.score) or 0,
                 isPlayer = UnitIsUnit and UnitIsUnit(unit, "player") or unit == "player",
             }
             members[#members + 1] = record
@@ -107,26 +110,17 @@ function RunHistory:StartRun(resumed)
         startedAt = startedAt, startedEpoch = time() - math.max(0, math.floor(now - startedAt)),
         members = members, byGUID = byGUID, encounters = {}, trackingPartial = resumed == true,
     }
+    if JP.RunStats then JP.RunStats:Start(self.current) end
     if self.events then
         for _, event in ipairs(TRACKING_EVENTS) do pcall(self.events.RegisterEvent, self.events, event) end
     end
 end
 
-function RunHistory:DiscardRun()
+function RunHistory:DiscardRun(finishing)
+    if not finishing and JP.RunStats then JP.RunStats:Stop() end
     self.current = nil
     if self.events then
         for _, event in ipairs(TRACKING_EVENTS) do pcall(self.events.UnregisterEvent, self.events, event) end
-    end
-end
-
-function RunHistory:OnCombatLog()
-    local run = self.current
-    if not run or type(CombatLogGetCurrentEventInfo) ~= "function" then return end
-    local _, event, _, sourceGUID, _, _, _, destGUID = CombatLogGetCurrentEventInfo()
-    if event == "SPELL_INTERRUPT" and run.byGUID[sourceGUID] then
-        run.byGUID[sourceGUID].interrupts = run.byGUID[sourceGUID].interrupts + 1
-    elseif event == "UNIT_DIED" and run.byGUID[destGUID] then
-        run.byGUID[destGUID].deaths = run.byGUID[destGUID].deaths + 1
     end
 end
 
@@ -159,7 +153,7 @@ end
 function RunHistory:FinishRun()
     local run = self.current
     if not run then return end
-    self:DiscardRun()
+    self:DiscardRun(true)
     local completion = CompletionInfo(run)
     local mapID = SafeNumber(completion.mapID) or run.mapID
     local level = SafeNumber(completion.level) or run.level or 0
@@ -202,12 +196,10 @@ function RunHistory:FinishRun()
         end
     end
 
-    local interrupts = 0
-    for _, member in ipairs(run.members) do interrupts = interrupts + (member.interrupts or 0) end
     local result = {
         mapID = mapID, mapName = MapName(mapID), level = level, duration = duration,
         onTime = onTime == true, upgrades = completion.upgrades, deaths = deaths,
-        deathTime = deathTime, interrupts = interrupts, completedAt = time(),
+        deathTime = deathTime, combatStatsAvailable = false, completedAt = time(),
         encounters = run.encounters, members = {}, practiceRun = completion.practiceRun,
         trackingPartial = run.trackingPartial == true,
     }
@@ -221,7 +213,6 @@ function RunHistory:FinishRun()
             local saved = settings.players[key] or {
                 name = member.name, classFile = member.classFile, role = member.role,
                 runs = 0, timed = 0, totalLevels = 0, bestLevel = 0,
-                interrupts = 0, deaths = 0,
             }
             saved.name, saved.classFile, saved.role = member.name, member.classFile, member.role
             -- Рейтинг в таблице означает последнее увиденное значение, а не
@@ -233,8 +224,9 @@ function RunHistory:FinishRun()
             saved.timed = (saved.timed or 0) + (result.onTime and 1 or 0)
             saved.totalLevels = (saved.totalLevels or 0) + level
             saved.bestLevel = math.max(saved.bestLevel or 0, level)
-            saved.interrupts = (saved.interrupts or 0) + (member.interrupts or 0)
-            saved.deaths = (saved.deaths or 0) + (member.deaths or 0)
+            -- Preserve historical counters, but never invent zeroes for a run
+            -- whose per-player combat statistics cannot be collected.
+            saved.combatStatsAvailable = false
             saved.lastMap, saved.lastLevel = result.mapName, level
             saved.lastAt, saved.lastTimed = result.completedAt, result.onTime
             settings.players[key] = saved
@@ -244,7 +236,9 @@ function RunHistory:FinishRun()
     while #settings.runs > MAX_RUNS do table.remove(settings.runs) end
     PrunePlayers(settings.players)
     self.lastRun = result
+    if JP.RunStats then JP.RunStats:Finish(run,result) end
     self:Refresh()
+    if JP.Reviews then JP.Reviews:OfferRun(result) end
 end
 
 local function CreateHistoryRow(parent, index)
@@ -270,6 +264,9 @@ local function CreateHistoryRow(parent, index)
         if record then InviteToPlay(record.name) end
     end)
     row:EnableMouse(true)
+    row:SetScript("OnMouseUp",function(self,button)
+        if button=="LeftButton" and self.record and JP.PlayerNetwork then JP.PlayerNetwork:ShowMemory(self.record.name) end
+    end)
     row:SetScript("OnEnter", function(self)
         self:SetBackdropColor(UI.Unpack(C.rowHover))
         if self.record then
@@ -278,8 +275,14 @@ local function CreateHistoryRow(parent, index)
             local bestLevel = tonumber(self.record.bestLevel) or 0
             UI.Tooltip(self, self.record.name,
                 (L("Вместе: %d ключей, в таймер %d, лучший +%d")):format(runs, timed, bestLevel),
-                (L("Прерывания: %d, смерти: %d")):format(
-                    tonumber(self.record.interrupts) or 0, tonumber(self.record.deaths) or 0))
+                self.record.combatStatsAvailable == false
+                    and L("Статистика боя участников недоступна")
+                    or (L("Прерывания: %d, смерти: %d")):format(
+                        tonumber(self.record.interrupts) or 0, tonumber(self.record.deaths) or 0))
+            if JP.PlayerNetwork then
+                JP.PlayerNetwork:AddTooltip(GameTooltip,self.record.name)
+                GameTooltip:Show()
+            end
         end
     end)
     row:SetScript("OnLeave", function(self) self:SetBackdropColor(UI.Unpack(self.baseColor or C.row)); GameTooltip_Hide() end)
@@ -338,6 +341,17 @@ function RunHistory:Build(_, page)
 
     local heading = UI.Text(page, "GameFontNormalSmall", L("ИСТОРИЯ НАПАРНИКОВ - СОРТИРОВКА ПО RIO"), C.accent)
     heading:SetPoint("TOPLEFT", 16, -164)
+    local reviewButton=UI.Button(page,L("Оценить последний ключ"),190,24)
+    reviewButton:SetPoint("TOPRIGHT",-16,-156)
+    reviewButton:SetScript("OnClick",function()
+        local last=Settings().runs[1]
+        if JP.Reviews and last then JP.Reviews:ShowRun(last) end
+    end)
+    if JP.PlayerNetwork then
+        local network=UI.Button(page,L("Моя группа"),130,24)
+        network:SetPoint("RIGHT",reviewButton,"LEFT",-8,0)
+        network:SetScript("OnClick",function() JP.PlayerNetwork:ShowRoster() end)
+    end
     local headers = {
         { L("ИГРОК"), 22, 250, "LEFT" }, { "RIO", 280, 90 }, { L("ВМЕСТЕ"), 380, 90 },
         { L("В ТАЙМЕР"), 480, 90 }, { L("ПОСЛЕДНИЙ КЛЮЧ"), 580, 220, "LEFT" }, { L("КОГДА"), -118, 130, "RIGHT", true },
@@ -430,6 +444,11 @@ function RunHistory:Refresh()
     if last then
         local status = last.practiceRun and L("ТРЕНИРОВОЧНЫЙ")
             or (last.onTime and L("В ТАЙМЕР") or L("НЕ В ТАЙМЕР"))
+        local upgrades = SafeNumber(last.upgrades)
+        if not last.practiceRun and last.onTime and upgrades
+            and upgrades >= 1 and upgrades <= 3 and upgrades == math.floor(upgrades) then
+            status = status .. "  +" .. upgrades
+        end
         self.reportTitle:SetText(("%s  •  +%d"):format(
             last.mapName or L("Неизвестное подземелье"), tonumber(last.level) or 0))
         local statusColor = last.practiceRun and C.amber or (last.onTime and C.green or C.red)
@@ -441,8 +460,10 @@ function RunHistory:Refresh()
         self.reportTime.note:SetText("")
         self.reportDeaths.value:SetText(tostring(tonumber(last.deaths) or 0))
         self.reportDeaths.note:SetText("+" .. FormatDuration(last.deathTime))
-        self.reportInterrupts.value:SetText(tostring(tonumber(last.interrupts) or 0))
-        self.reportInterrupts.note:SetText(last.trackingPartial and L("после /reload") or "")
+        local interrupts = tonumber(last.interrupts)
+        self.reportInterrupts.value:SetText(interrupts and tostring(interrupts) or "—")
+        self.reportInterrupts.note:SetText(not interrupts and L("Нет данных")
+            or (last.trackingPartial and L("после /reload") or ""))
         self.reportTime:Show(); self.reportDeaths:Show(); self.reportInterrupts:Show(); self.reportInsight:Show()
         local duration, deathTime = tonumber(last.duration) or 0, tonumber(last.deathTime) or 0
         local deathShare = duration > 0 and math.min(100, math.floor(deathTime / duration * 100 + .5)) or 0
@@ -487,7 +508,6 @@ function RunHistory:Create()
         if event == "CHALLENGE_MODE_START" then self:StartRun()
         elseif event == "CHALLENGE_MODE_COMPLETED" then self:FinishRun()
         elseif event == "CHALLENGE_MODE_RESET" then self:DiscardRun()
-        elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then self:OnCombatLog()
         elseif event == "ENCOUNTER_END" then self:OnEncounterEnd(...) end
     end)
 end
@@ -500,6 +520,7 @@ function RunHistory:Enable()
     if active and active.active then self:StartRun(true) end
 end
 function RunHistory:Disable()
+    if JP.RunStats then JP.RunStats:Stop() end
     if self.events then self.events:UnregisterAllEvents() end
     self.current = nil
 end

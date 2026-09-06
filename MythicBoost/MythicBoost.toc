@@ -5,9 +5,10 @@
 ## Notes-enGB: Mythic+ group finder, player analysis and progression dashboard for Midnight
 ## Notes-deDE: Mythic+-Gruppensuche, Spieleranalyse und Saisonfortschritt für Midnight
 ## Author: Jenya
-## Version: 2.4.51
+## Version: 2.4.89
 ## SavedVariables: MythicBoostDB
-## OptionalDeps: RaiderIO, RaiderIO_DB_EU_M
+## SavedVariablesPerCharacter: MythicBoostMarketDB
+## OptionalDeps: RaiderIO, RaiderIO_DB_EU_M, Blizzard_AuraContainer
 ## Category: Dungeons & Raids
 ## Category-deDE: Dungeons & Schlachtzüge
 ## Category-esES: Mazmorras y bandas
@@ -42,14 +43,46 @@ Modules/RealmData.lua
 Modules/GroupSearchUI.lua
 Modules/GuildBoard.lua
 Modules/ApplicantBoard.lua
+Modules/ApplicantCards.lua
+Data/TalentSources.lua
+Modules/TalentLab.lua
+Modules/TalentLabUI.lua
+Modules/TalentTreeStats.lua
+Modules/RunStats.lua
 Modules/RunHistory.lua
+Modules/Reviews.lua
+Modules/PlayerNetwork.lua
+Modules/PlayerMemoryUI.lua
+Modules/AddonPresence.lua
+Modules/ReviewsUI.lua
+Modules/ReviewBrowser.lua
+Modules/AuraDisplay.lua
 Modules/UnitFrames.lua
 Modules/SmartClick.lua
+Modules/AuraFilters.lua
 Modules/PositiveAuraTracker.lua
 Modules/CastBar.lua
 Modules/LootUI.lua
+Modules/DungeonTimer.lua
+Modules/BossFrames.lua
+Modules/TempleHealerEffects.lua
+Modules/TempleHealer.lua
+Modules/ControlAssist.lua
+Modules/HealerMana.lua
+Modules/AvoidableDamage.lua
+Modules/AvoidableDamageUI.lua
+Modules/AuctionMarket.lua
+Modules/AuctionMarketUI.lua
 Modules/MinimalUI.lua
 Modules/Convenience.lua
+Modules/ChatSpamCondenser.lua
+Modules/PartyGreeting.lua
+Modules/InstanceAlert.lua
+Modules/ListingDefaults.lua
+Modules/InterruptAssist.lua
+Modules/InterruptAssistUI.lua
+Modules/LayoutPresets.lua
+Modules/Information.lua
 Modules/SettingsHub.lua
 Modules/UpgradeCalculator.lua
 Modules/Welcome.lua

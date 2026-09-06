@@ -102,8 +102,9 @@ def test_safe_defaults():
     assert db.convenience.autoKeystone is True
     for key in ("autoQuests", "summon", "resurrection", "sellJunk", "repair", "whisperInvite"):
         assert db.convenience[key] is False
-    assert db.minimalUI is True and db.minimalUIOptions.hideStanceBar is True
-    assert db.unitFrames.enabled is True
+    assert db.minimalUI is False and db.minimalUIOptions.hideStanceBar is False
+    assert db.unitFrames.enabled is False and db.unitFrames.hideBlizzard is False
+    assert db.bossFrames.enabled is False and db.dungeonTimer.enabled is False
     assert (db.unitFrames.scale, db.unitFrames.opacity) == (1.5, 1)
     assert db.unitFrames.showHealthText is True and db.unitFrames.showPowerText is True
     assert db.unitFrames.animatedPortrait is True and db.unitFrames.showBadges is True
@@ -111,8 +112,8 @@ def test_safe_defaults():
     assert db.unitFrames.alwaysShowTarget is True and db.unitFrames.aurasAbove is True
     assert db.unitFrames.showResourcePips is True and db.unitFrames.showEmptyResources is False
     assert (db.unitFrames.resourceHeight, db.unitFrames.resourceGap, db.unitFrames.resourceOpacity) == (10, 2, 1)
-    assert db.castBar.enabled is True
-    assert db.lootUI.enabled is True
+    assert db.castBar.enabled is False
+    assert db.lootUI.enabled is False
     assert db.smartClick.buff is False and db.smartClick.res is False
     assert db.rcLoot.enabled is False and db.errorGuard.enabled is False
     assert db.errorGuard.stabilityPrunedRevision == 4
@@ -141,14 +142,27 @@ def test_safe_defaults():
     assert db.unitFrames.scale == .85 and db.unitFrames.showResourcePips is False
     assert db.smartClick.buff is True and db.rcLoot.enabled is True and db.errorGuard.enabled is True
 
-    # The dedicated capsule move toggle survives reload independently from the
-    # global "move all interface elements" action introduced in older builds.
-    lua.execute("""MythicBoostDB={interfaceUnlockRevision=2,interfaceUnlocked=false,
-        convenience={movableKeystoneFrame=false},unitFrames={unlocked=true},castBar={unlocked=false}};
-        coreEvents(nil,'ADDON_LOADED','MythicBoost')""")
-    db = lua.globals().MythicBoostDB
-    assert db.unitFrames.unlocked is True and db.castBar.unlocked is False
-    assert db.interfaceUnlocked is True
+    # Editing is session-only: both legacy and current saved unlock flags
+    # must be cleared at login/reload without moving or disabling any panel.
+    for revision in (0, 2, 3, 4):
+        lua.execute("""MythicBoostDB={interfaceUnlocked=true,
+            convenience={movableKeystoneFrame=true},
+            unitFrames={enabled=true,unlocked=true,badgesUnlocked=true,
+                player={point='CENTER',x=123,y=-87},target={point='BOTTOM',x=241,y=19}},
+            castBar={enabled=true,unlocked=true,position={point='BOTTOM',x=-32,y=77}},
+            positiveAuraTracker={enabled=true,unlocked=true,x=51,y=-63}}""")
+        lua.globals().MythicBoostDB.interfaceUnlockRevision = revision
+        lua.execute("coreEvents(nil,'ADDON_LOADED','MythicBoost')")
+        db = lua.globals().MythicBoostDB
+        assert db.interfaceUnlocked is False and db.interfaceUnlockRevision == 4
+        assert db.unitFrames.unlocked is False and db.unitFrames.badgesUnlocked is False
+        assert db.castBar.unlocked is False and db.positiveAuraTracker.unlocked is False
+        assert db.convenience.movableKeystoneFrame is False
+        assert db.unitFrames.enabled and db.castBar.enabled and db.positiveAuraTracker.enabled
+        assert (db.unitFrames.player.x, db.unitFrames.player.y) == (123, -87)
+        assert (db.unitFrames.target.x, db.unitFrames.target.y) == (241, 19)
+        assert (db.castBar.position.x, db.castBar.position.y) == (-32, 77)
+        assert (db.positiveAuraTracker.x, db.positiveAuraTracker.y) == (51, -63)
 
 
 def test_raid_repair_total_resets_after_leaving_instance():
@@ -345,6 +359,12 @@ def test_rejected_search_results():
         assert(exactMatches[1].keyLevel==10 and exactMatches[1].keyApprox==false)
         assert(#exactExcluded==1 and exactExcluded[1].searchResultID==107)
         assert(exactExcluded[1].rejectionReason=='ключ вне диапазона')
+        infos[109]={numMembers=0}
+        C_LFGList.GetSearchResults=function() return 1,{109} end
+        local _,_,_,_,unreadable=JP.AutoMatch:Scan({dungeons={[777]=true},roleFit=false},{})
+        assert(unreadable[1].dataUnavailable and not unreadable[1].actionable)
+        assert(unreadable[1].rejectionReason=='данные группы временно недоступны аддону')
+        assert(unreadable[1].rejectionReason~='подземелье выключено')
     """)
 
 
@@ -411,12 +431,8 @@ def test_launch_decision():
         assert(#duo==2 and duo[2]==duo[1]+1)
         local leader,friend=entries[duo[1]],entries[duo[2]]
         assert(leader.memberIdx==1 and friend.memberIdx==2)
-        assert(string.find(leader.packageInline,'[1/2]',1,true))
-        assert(string.find(friend.packageInline,'[2/2]',1,true))
-        assert(string.find(leader.packageInline,'Friend-Realm',1,true))
-        assert(string.find(friend.packageInline,'Leader-Realm',1,true))
-        assert(string.find(leader.packageTooltip,'Leader-Realm',1,true))
-        assert(string.find(leader.packageTooltip,'Friend-Realm',1,true))
+        assert(#leader.packageRoster==2 and leader.packageRoster==friend.packageRoster)
+        assert(leader.name=='Leader-Realm' and friend.name=='Friend-Realm')
         assert(entries[duo[1]-1]==nil or entries[duo[1]-1].applicantID~=77)
         assert(entries[duo[2]+1]==nil or entries[duo[2]+1].applicantID~=77)
 
@@ -460,9 +476,15 @@ def test_run_history():
         function UnitClass(u) return 'Class',u=='party1' and 'PRIEST' or 'MAGE' end
         function UnitGroupRolesAssigned(u) return u=='party1' and 'HEALER' or 'DAMAGER' end
         function UnitIsUnit(a,b) return a==b end
+        forbiddenAttempts=0
         function CreateFrame()
             local f={registered={}}
-            function f:RegisterEvent(e) self.registered[e]=true end
+            function f:RegisterEvent(e)
+                if e=='COMBAT_LOG_EVENT_UNFILTERED' or e=='COMBAT_LOG_EVENT' then
+                    forbiddenAttempts=forbiddenAttempts+1; error('ADDON_ACTION_FORBIDDEN')
+                end
+                self.registered[e]=true
+            end
             function f:UnregisterEvent(e) self.registered[e]=nil end
             function f:UnregisterAllEvents() self.registered={} end
             function f:SetScript(k,v) self[k]=v end
@@ -493,14 +515,18 @@ def test_run_history():
     assert len(db.runs) == 30
     assert sum(1 for _ in db.players.items()) == 200
     assert (module.current.level, module.current.startedAt) == (12, 400)
-    assert module.events.registered["COMBAT_LOG_EVENT_UNFILTERED"] is True
-    module.current.byGUID["G"].interrupts = 3
+    assert module.events.registered["ENCOUNTER_END"] is True
+    assert module.events.registered["COMBAT_LOG_EVENT_UNFILTERED"] is None
+    assert lua.globals().forbiddenAttempts == 0
     module.FinishRun(module)
     assert len(db.runs) == 30 and abs(db.runs[1].duration - 123.456) < 0.001
-    assert (db.runs[1].level, db.runs[1].interrupts) == (12, 3)
+    assert (db.runs[1].level, db.runs[1].interrupts) == (12, None)
+    assert db.runs[1].combatStatsAvailable is False
+    assert (db.runs[1].deaths, db.runs[1].deathTime) == (1, 5)
     assert db.players["good-other"].runs == 1 and db.players["left-other"] is None
     assert module.current is None
     assert module.events.registered["COMBAT_LOG_EVENT_UNFILTERED"] is None
+    assert module.events.registered["ENCOUNTER_END"] is None
 
 
 def test_anonymous_screenshot_demo():
@@ -523,9 +549,12 @@ def test_anonymous_screenshot_demo():
 def test_owned_key_visual_priority():
     source = (ROOT / "MythicBoost/Modules/ApplicantBoard.lua").read_text(encoding="utf-8")
     comparison = "tonumber(column.key) == tonumber(ownMapID)"
-    assert source.count(comparison) >= 3  # header, current party, and every candidate row
-    assert 'tile.value:SetFont(tile.valueFont, isOwnedKey and 20 or 16, "THICKOUTLINE")' in source
-    assert "tile.ownedGlow:Show()" in source and "tile.ownedGlow:Hide()" in source
+    cards = (ROOT / "MythicBoost/Modules/ApplicantCards.lua").read_text(encoding="utf-8")
+    assert source.count(comparison) >= 2  # header and current party
+    assert cards.count(comparison) >= 2  # application header and each member
+    assert 'row.experience:SetText(' in cards
+    assert 'owned and C.amber or C.hudEdge' in cards
+    assert 'cell.ownedKey, cell.ownedKeyLevel' in cards
     assert 'L("ТВОЙ КЛЮЧ")' in source
     assert "ownedMark" not in source
     assert "◆" not in source
@@ -570,10 +599,10 @@ def test_header_and_listing_actions_stay_compact():
     search = (ROOT / "MythicBoost/Modules/GroupSearchUI.lua").read_text(encoding="utf-8")
     assert "function GroupSearchUI:OpenListingAction()" in search
     listing_action = search.split("function GroupSearchUI:OpenListingAction()", 1)[1].split(
-        "end", 1
+        "local function ValidTexture", 1
     )[0]
-    assert "OpenOwnKeystoneListingForm()" in listing_action
-    assert "FrameSwitch.OpenBlizzard" not in listing_action
+    assert "OpenOwnKeystoneListingForm" not in search
+    assert "FrameSwitch.OpenBlizzard" in listing_action
     assert 'welcome.createOwnKey:SetText(active and L("Открыть объявление") or L("Создать объявление"))' in search
     assert "level ~= nil and leader" in search
 
@@ -625,7 +654,7 @@ def test_basicminimap_owns_the_minimap():
     assert "self:StyleMinimap(minimapEnabled)" in source
     assert 'L("Оформлять миникарту MythicBoost")' in settings
     assert 'Enable("minimalUIMinimap", MythicBoostDB.minimalUI == true)' in settings
-    assert "db.minimalUIOptions.minimap = freshProfile" in core
+    assert "db.minimalUIOptions.minimap = false" in core
 
 
 def test_run_history_can_invite_by_whisper():
@@ -635,8 +664,8 @@ def test_run_history_can_invite_by_whisper():
     assert "Hi! I'd like to invite you to play some Mythic+ keys!" in source
     assert 'UI.Button(row, L("Позвать")' in source
     settings = (ROOT / "MythicBoost/Modules/SettingsHub.lua").read_text(encoding="utf-8")
-    assert 'Heading(interfacePage, L("РАСПОЛОЖЕНИЕ"), 28, -372, 764)' in settings
-    assert 'interfaceMove:SetPoint("TOPLEFT", 28, -406)' in settings
+    assert 'self.moveButton = move' in settings
+    assert 'toolbar:SetHeight(36)' in settings
 
 
 def test_last_run_report_uses_compact_metric_cards():
@@ -693,22 +722,64 @@ def test_buff_button_is_prepared_before_combat():
     refresh = source.split("function SmartClick:RefreshBuffButton", 1)[1].split(
         "function SmartClick:Create", 1
     )[0]
-    assert refresh.index("button = button or self:BuildBuffButton()") < refresh.index("local missing, blocked = self:MissingBuff()")
-    assert "button:SetAlpha(1)" in refresh and "button:SetAlpha(0)" in refresh
+    assert refresh.index("button = button or self:BuildBuffButton()") < refresh.index("local missing = self:MissingBuff()")
+    assert "SetAlpha" not in refresh and "button:Show()" in refresh and "button:Hide()" in refresh
     assert 'button.label:SetText("")' in refresh
     assert "if not missing then button:Hide(); return end" not in refresh
-    assert "if not button and inCombat then return end" in refresh
+    assert refresh.index("if InCombatLockdown() then") < refresh.index("self:GetSettings()")
     assert '"UNIT_SPELLCAST_SUCCEEDED"' in source
-    assert 'event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player"' in source
+    assert 'event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" and not InCombatLockdown()' in source
     assert "BUFF[class] == spellID" in source
     build = source.split("function SmartClick:BuildBuffButton", 1)[1].split(
         "function SmartClick:RefreshBuffButton", 1
     )[0]
-    assert build.index("button:SetAlpha(0)") < build.index("button:Hide()")
-    assert "if owner:GetAlpha() <= .01 then return end" in build
+    assert 'RegisterStateDriver(button, "combat", "[combat] 1; 0")' in build
+    assert 'button:SetAttribute("_onstate-combat"' in build and 'self:Hide()' in build
+    assert "SetAlpha(0)" not in build and "GetAlpha()" not in build
     enable = source.split("function SmartClick:Enable()", 1)[1].split("function SmartClick:Disable", 1)[0]
     assert "self:RefreshBuffButton()" in enable
     assert 'L("Заклинание групповое — один каст закрывает всех в радиусе.")' not in source
+
+
+def test_native_aura_internals_are_not_modified():
+    source = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    assert "DockNativePlayerAuras" not in source
+    assert "UpdateGridLayout" not in source
+    assert "ignoreDisabledAurasForSize" not in source
+    assert "AuraContainer" not in source
+
+
+def test_target_name_never_reuses_previous_unit():
+    source = (ROOT / "MythicBoost/Modules/UnitFrames.lua").read_text(encoding="utf-8")
+    reader = source.split("local function ReadUnitName", 1)[1].split("local function ReadUnitCast", 1)[0]
+    update = source.split("local function UpdateIdentity(display)", 1)[1].split("    local level =", 1)[0]
+    lua = LuaRuntime()
+    lua.execute('''
+        restricted=setmetatable({}, {
+            __tostring=function() error('restricted name formatted') end,
+            __concat=function() error('restricted name concatenated') end,
+            __eq=function() error('restricted name compared') end})
+        currentName='Viraa'
+        function issecretvalue(value) return rawequal(value,restricted) end
+        function UnitName() return currentName end
+        function GetUnitName() return nil end
+        function UnitNameUnmodified() return nil end
+        display={unit='target', name={SetText=function(self,value) self.value=value end}}
+    ''')
+    lua.execute('local function ReadUnitName' + reader
+                + '\nfunction refreshName(display)' + update + '\nend')
+    lua.execute('''
+        refreshName(display); assert(display.name.value=='Viraa')
+        currentName=restricted; refreshName(display)
+        assert(rawequal(display.name.value,restricted), 'restricted name must reach renderer unchanged')
+        currentName=nil; refreshName(display); assert(display.name.value=='', 'missing name must clear old unit')
+        currentName='Enemy'; refreshName(display); assert(display.name.value=='Enemy')
+        function UnitName() error('API temporarily unavailable') end
+        function GetUnitName() return 'Fallback enemy' end
+        refreshName(display); assert(display.name.value=='Fallback enemy')
+        function GetUnitName() return '' end
+        refreshName(display); assert(display.name.value=='')
+    ''')
 
 
 def test_target_identity_and_portrait_have_fallbacks():
@@ -726,10 +797,11 @@ def test_target_identity_and_portrait_have_fallbacks():
     )
     assert "self.model:Show()" in portrait
     assert "self:SetAlpha(1)" in portrait
-    assert 'self.ring:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3]' in portrait
+    assert 'self.ring:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3]' in portrait
+    assert 'UI.Portrait(holder, SIZE.portraitW - SIZE.ring * 2, SIZE.ring, C.hudEdge)' in frames
     assert "self.face:SetDesaturated(false)" in portrait
     assert "local function ReadUnitName" in frames
-    assert "UnitNameUnmodified" in frames and "display.cachedName" in frames
+    assert "UnitNameUnmodified" in frames and "display.cachedName" not in frames
     refresh = frames.split("function UnitFrames:RefreshDisplay", 1)[1].split(
         "function UnitFrames:RefreshAll", 1
     )[0]
@@ -738,7 +810,7 @@ def test_target_identity_and_portrait_have_fallbacks():
     assert 'if not InCombatLockdown() then display.holder:Show() end' in refresh
     assert "display.holder:Hide()" not in refresh
     assert "function UnitFrames:QueuePortraitRefresh" in frames
-    assert "display.portraitRefreshToken ~= token" in frames
+    assert "if display.portraitRefreshPending then return end" in frames
     assert "self:QueuePortraitRefresh(display)" in frames
     assert 'display.name = UI.Text(namePanel, "GameFontNormalSmall", "", C.amber)' in frames
     assert 'display.name:SetFont(nameFont, 11, nameFlags or "OUTLINE")' in frames
@@ -817,7 +889,8 @@ def test_native_gold_trim_is_applied_without_repainting_damage_meter():
     minimal = (ROOT / "MythicBoost/Modules/MinimalUI.lua").read_text(encoding="utf-8")
     assert "frame.__mbGoldTrimTop" in ui and "frame.__mbGoldTrimBottom" in ui
     assert "top:SetColorTexture(.98, .76, .22, .86)" in ui
-    assert "sheen:SetColorTexture(.98, .76, .22, .82)" in frames
+    assert "sheen:SetColorTexture(UI.Unpack(C.hudAccent))" in frames
+    assert "frame.__mbModernSheen:SetShown(topAccent == true)" in frames
     assert "local ACTION_EDGE_IDLE = { .48, .34, .09 }" in minimal
     assert "anchor.railTop" in minimal and "anchor.railBottom" in minimal
     assert "CreateColor(.98, .76, .22, .22)" in minimal
@@ -885,9 +958,9 @@ def test_native_addon_compartment_and_bright_action_icons():
     assert "state.icon:SetVertexColor(1, 1, 1, 1)" in source
     assert "Minimap:SetSize(265, 265)" in source
     assert 'label:SetFont(self.minimapZoneLayout.labelFont[1], 13, "OUTLINE")' in source
-    assert "local rowWidth, gap = mapWidth, 0" in source
+    assert "local rowWidth, gap, padding = mapWidth, 1, 3" in source
     assert "Add(_G.AddonCompartmentFrame)" not in source
-    assert 'anchor:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 0, -4)' in source
+    assert 'anchor:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 0, -6)' in source
     assert 'button:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -8, 8)' in source
     assert "button:SetScale(1.1)" in source
     assert 'buttonName == "HelpMicroButton"' in source
@@ -946,8 +1019,8 @@ def test_loot_roll_preview_is_local_and_draggable():
     assert "local ok = row.testRoll == true" in loot
     assert "MythicBoostDB.interfaceUnlocked or frame.testMoveUnlocked" in loot
     assert "SaveAuxiliaryPosition(frame, positionKey)" in loot
-    assert "local ROLL_FRAME_WIDTH = 420" in loot
-    assert 'BuildAuxiliaryHeader(rollFrame, L("БРОСКИ ГРУППЫ")' in loot
+    assert "local ROLL_FRAME_WIDTH = 360" in loot
+    assert 'BuildAuxiliaryHeader(rollFrame, L("Групповая добыча")' in loot
     assert "UI-GroupLoot-Dice-Up" in loot
     assert "UI-GroupLoot-Coin-Up" in loot
     assert "UI-GroupLoot-DE-Up" in loot
@@ -958,8 +1031,11 @@ def test_loot_roll_preview_is_local_and_draggable():
     assert "local function IsOwnLootMessage(message)" in loot
     assert "displayMessage = itemLink" in loot
     assert "function LootUI:SetUnlocked(unlocked)" in loot
-    assert 'historyFrame.title = UI.Text(historyFrame.header, "GameFontNormalSmall", L("МОНИТОР ДОБЫЧИ")' in loot
-    assert 'row:SetPoint("BOTTOMLEFT", 0, HISTORY_FOOTER_HEIGHT + 2' in loot
+    assert 'historyFrame.title' not in loot
+    assert 'historyFrame.close' not in loot
+    assert 'row:SetPoint("BOTTOMLEFT", 0, 2 + (index - 1) * HISTORY_ROW_HEIGHT)' in loot
+    assert 'historyFrame.header' not in loot and 'HISTORY_FOOTER_HEIGHT' not in loot
+    assert 'owner.historyDragging' in loot
     assert "if JP.LootUI then JP.LootUI:SetUnlocked(unlocked) end" in settings
     assert "if row.rollID == TEST_ROLL_ID then LootUI:RemoveRoll(TEST_ROLL_ID) end" in loot
     assert "rollFrame.close = UI.CloseButton(rollFrame)" in loot
@@ -967,12 +1043,12 @@ def test_loot_roll_preview_is_local_and_draggable():
     assert 'Heading(lootPage, L("ГРУППОВАЯ ДОБЫЧА"), 28, -322, 764)' in settings
     assert 'command == "testroll"' in core
     assert "local ROLL_CHOICE_COLORS" in loot
-    assert 'button.glass:SetGradient("VERTICAL"' in loot
-    assert 'row.qualityWash:SetGradient("HORIZONTAL"' in loot
+    assert 'button.glass' not in loot
+    assert 'row.qualityWash' not in loot
     assert 'row.iconFrame:SetBackdropBorderColor(r, g, b, 1)' in loot
-    assert 'row.timerPanel:SetBackdropBorderColor(r, g, b, .72)' in loot
-    assert 'local glassWave = .68 + .18 * math.sin' in loot
-    assert 'UI.Backdrop(rollFrame.header, C.raised, C.surfaceEdge)' in loot
+    assert 'row.timerPanel' not in loot
+    assert 'local glassWave' not in loot
+    assert 'displayOnly' in loot and 'remaining <= 0 and not displayOnly' in loot
 
 
 def test_unit_frame_badges_target_placeholder_and_aura_order():
@@ -1034,12 +1110,14 @@ def test_cast_events_are_correlated_and_capsule_uses_glass_progress():
 
 def test_castbar_time_cap_is_integrated_without_a_visual_hole():
     cast = (ROOT / "MythicBoost/Modules/CastBar.lua").read_text(encoding="utf-8")
-    assert "local TIME_PANEL_WIDTH = 52" in cast
-    assert 'frame.timePanel:SetBackdropBorderColor(.38, .43, .49, .96)' in cast
-    assert 'frame.timePanel.divider:SetColorTexture(.95, .58, .14, .78)' in cast
-    assert 'frame.bar:SetPoint("BOTTOMRIGHT", frame.timePanel, "BOTTOMLEFT", 0, 0)' in cast
-    assert 'frame.name:SetPoint("RIGHT", frame.bar, "RIGHT", -6, 0)' in cast
-    assert 'frame.bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -3, 3)' not in cast
+    assert "local TIME_TEXT_WIDTH = 82" in cast
+    assert "timePanel" not in cast and "frame.latencyText" in cast
+    assert 'local BAR_WIDTH = 400' in cast and 'frame:SetSize(BAR_WIDTH, 32)' in cast
+    assert 'frame.time:SetFormattedText("%.1f / %.1f", current, duration)' in cast
+    assert 'frame.name:SetPoint("RIGHT", frame.labels, "RIGHT", -TIME_TEXT_WIDTH - 12, 0)' in cast
+    assert 'frame.bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -4, 4)' in cast
+    assert 'edgeFile = SOFT_EDGE' in cast and 'edgeSize = 12' in cast
+    assert 'frame.barBorder' not in cast
 
 
 def test_unit_frames_magnetize_to_blizzard_action_bars():
@@ -1060,7 +1138,9 @@ def test_blizzard_edit_mode_keeps_native_frame_ownership():
     assert 'holder:SetClampedToScreen(true)' in frames
     assert 'self:MagnetizeToActionBars(display)' in frames
     assert 'function UnitFrames:SetNativeAurasHidden(hidden)' in frames
-    assert 'self:SetNativeAurasHidden(replacesBlizzard and settings.showPlayerAuras ~= false)' in frames
+    assert 'self:SetNativeAurasHidden(replacesBlizzard' in frames
+    assert 'display.engineAuras = not options.preview' in frames
+    assert 'if showAuras and options.preview then' in frames
     native_aura_hide = frames.split("function UnitFrames:SetNativeAurasHidden", 1)[1].split("\nend", 1)[0]
     assert ":ClearAllPoints(" not in native_aura_hide
     assert ":SetPoint(" not in native_aura_hide
@@ -1118,7 +1198,7 @@ def test_restricted_auras_use_targeted_friendly_lookup():
     assert 'InCombatLockdown() then return nil, true end' in ui
     assert 'InCombatLockdown() then return false end' in frames
     assert 'local data, blocked = SafeUnitAura(unit, spellID)' in smart
-    assert 'UI.SafeUnitAura("player", spellID)' in tracker
+    assert 'UI.SafeUnitAura(rules and rules.unit or "player", spellID)' in tracker
     assert "showIcon = true" in tracker
     assert 'Default(db.positiveAuraTracker, "showIcon", true)' in core
     assert "db.positiveAuraTracker.identityRevision ~= 1" in core
@@ -1247,6 +1327,8 @@ if __name__ == "__main__":
     test_warcraft_logs_character_urls()
     test_buff_button_is_prepared_before_combat()
     test_target_identity_and_portrait_have_fallbacks()
+    test_target_name_never_reuses_previous_unit()
+    test_native_aura_internals_are_not_modified()
     test_rotation_suggestion_stays_square()
     test_active_cooldown_icons_are_compacted_without_empty_slots()
     test_chat_skin_is_fully_removed()

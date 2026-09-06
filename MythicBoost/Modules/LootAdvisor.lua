@@ -2,13 +2,9 @@ local _, JP = ...
 local L = JP.L
 local LootAdvisor = { cache = {} }
 
-local PREVIEW_KEY_LEVEL = 10
+local DEFAULT_PREVIEW_KEY_LEVEL = 10
 local MYTHIC_PLUS_DIFFICULTY_ID = 8
--- Encounter Journal возвращает для preview Mythic+ ссылку на базовый шаблон
--- предмета. В Midnight её GetDetailedItemLevelInfo может быть равен 63, хотя
--- награда за окончание +10 имеет 311-й уровень. Поэтому ссылку используем для
--- имени, иконки и слота, а сравниваем с реальным уровнем end-of-run награды.
-local PREVIEW_DROP_ITEM_LEVEL = 311
+local EQUIPMENT_SLOTS = {1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17}
 local SLOT_IDS = {
     [0] = {1}, [1] = {2}, [2] = {3}, [3] = {15}, [4] = {5},
     [5] = {9}, [6] = {10}, [7] = {6}, [8] = {7}, [9] = {8},
@@ -16,6 +12,18 @@ local SLOT_IDS = {
 }
 
 local UsableNumber = JP.UI.UsableNumber
+
+local function PreviewKeyLevel(value)
+    value = tonumber(value)
+    return UsableNumber(value) and value >= 2 and math.floor(value) or DEFAULT_PREVIEW_KEY_LEVEL
+end
+
+local function RewardItemLevel(keyLevel)
+    if not C_MythicPlus or not C_MythicPlus.GetRewardLevelForDifficultyLevel then return nil end
+    -- The FIRST return is the weekly vault, not the dungeon chest.
+    local _, level = C_MythicPlus.GetRewardLevelForDifficultyLevel(keyLevel)
+    return UsableNumber(level) and level > 0 and level or nil
+end
 
 local function ItemLevel(link)
     if not link then return 0 end
@@ -37,27 +45,87 @@ local function EquippedItemLevel(slotID)
     return ItemLevel(GetInventoryItemLink("player", slotID))
 end
 
-local function EquippedLevel(filterType)
+local function EquippedLevel(filterType, equipment)
     local slots = SLOT_IDS[filterType]
     if not slots then return end
     local lowest
     for _, slotID in ipairs(slots) do
-        local level = EquippedItemLevel(slotID)
+        local level = equipment.levels[slotID]
+        if level == nil then return nil end
         if level > 0 and (not lowest or level < lowest) then lowest = level end
     end
-    if filterType == 11 and not lowest then lowest = EquippedItemLevel(16) end
+    if filterType == 11 and not lowest then return equipment.levels[16] end
     return lowest or 0
 end
 
-local function EquipmentSignature()
+local function EquipmentSnapshot()
     local parts = {tostring(GetSpecialization and GetSpecialization() or 0)}
-    local pending = false
-    for slotID = 1, 17 do
-        local level = EquippedItemLevel(slotID)
-        if GetInventoryItemID("player", slotID) and level <= 0 then pending = true end
-        parts[#parts + 1] = tostring(level)
+    local equipment = {levels={}, ids={}, loaded=0, total=0, pending=false}
+    for _, slotID in ipairs(EQUIPMENT_SLOTS) do
+        local itemID = GetInventoryItemID("player", slotID)
+        local level = itemID and EquippedItemLevel(slotID) or 0
+        equipment.ids[slotID] = itemID
+        if itemID then
+            equipment.total = equipment.total + 1
+            if level > 0 then
+                equipment.loaded = equipment.loaded + 1
+            else
+                equipment.pending = true
+                level = nil -- An unread equipped item is not an empty slot.
+            end
+        end
+        equipment.levels[slotID] = level
+        parts[#parts + 1] = tostring(itemID or 0) .. "@" .. tostring(level)
     end
-    return table.concat(parts, ":"), pending
+    equipment.signature = table.concat(parts, ":")
+    return equipment
+end
+
+local function OwnedItemLevels(equipment)
+    local owned, pending = {}, false
+    local function Remember(itemID, level)
+        if not itemID then return end
+        if level and level > 0 then
+            owned[itemID] = math.max(owned[itemID] or 0, level)
+        else
+            -- Never hide a possible upgrade on an incomplete item response.
+            pending = true
+            owned[itemID] = owned[itemID] or 0 -- Ownership is known even without ilvl.
+            if C_Item and C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+        end
+    end
+    for _, slotID in ipairs(EQUIPMENT_SLOTS) do
+        Remember(equipment.ids[slotID], equipment.levels[slotID])
+    end
+    -- One inventory snapshot per analysis, not one bag scan per journal item.
+    if C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemID then
+        for bag = 0, NUM_BAG_SLOTS or 4 do
+            for slot = 1, C_Container.GetContainerNumSlots(bag) do
+                local itemID = C_Container.GetContainerItemID(bag, slot)
+                local equipLoc
+                if itemID and C_Item and C_Item.GetItemInfoInstant then
+                    local _, _, _, location = C_Item.GetItemInfoInstant(itemID)
+                    equipLoc = location
+                end
+                -- Skip consumables/reagents before requesting item-level data.
+                if equipLoc and equipLoc ~= "" then
+                    local level = 0
+                    if ItemLocation and ItemLocation.CreateFromBagAndSlot and C_Item and C_Item.GetCurrentItemLevel then
+                        local location = ItemLocation:CreateFromBagAndSlot(bag, slot)
+                        if location:IsValid() then
+                            local value = C_Item.GetCurrentItemLevel(location)
+                            if UsableNumber(value) then level = value end
+                        end
+                    end
+                    if level <= 0 and C_Container.GetContainerItemLink then
+                        level = ItemLevel(C_Container.GetContainerItemLink(bag, slot))
+                    end
+                    Remember(itemID, level)
+                end
+            end
+        end
+    end
+    return owned, pending
 end
 
 local function InstanceMapID(dungeon)
@@ -67,7 +135,7 @@ local function InstanceMapID(dungeon)
 end
 
 local function ConfigureJournal()
-    if EncounterJournal_LoadUI then EncounterJournal_LoadUI() end
+    if not C_EncounterJournal and EncounterJournal_LoadUI then EncounterJournal_LoadUI() end
     if not C_EncounterJournal or not C_EncounterJournal.GetInstanceForGameMap then return false end
     local oldClassID, oldSpecID
     if EJ_GetLootFilter then oldClassID, oldSpecID = EJ_GetLootFilter() end
@@ -78,15 +146,6 @@ local function ConfigureJournal()
         slotFilter = C_EncounterJournal.GetSlotFilter and C_EncounterJournal.GetSlotFilter(),
         instanceID = EncounterJournal and EncounterJournal.instanceID,
     }
-    local _, _, classID = UnitClass("player")
-    local specIndex = GetSpecialization and GetSpecialization()
-    local specID = specIndex and GetSpecializationInfo(specIndex)
-    if EJ_SetLootFilter and classID and specID then EJ_SetLootFilter(classID, specID) end
-    -- 23 — обычная эпохальная сложность. Для масштабированной ссылки
-    -- предмета из ключа Encounter Journal должен быть в режиме Mythic+ (8).
-    if EJ_SetDifficulty then EJ_SetDifficulty(MYTHIC_PLUS_DIFFICULTY_ID) end
-    if C_EncounterJournal.ResetSlotFilter then C_EncounterJournal.ResetSlotFilter() end
-    if C_EncounterJournal.SetPreviewMythicPlusLevel then C_EncounterJournal.SetPreviewMythicPlusLevel(PREVIEW_KEY_LEVEL) end
     return state
 end
 
@@ -100,11 +159,20 @@ local function RestoreJournal(state)
     end
 end
 
-local function AnalyzeDungeon(dungeon, specID)
+local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel)
     local instanceMapID = InstanceMapID(dungeon)
     local journalID = instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID)
     if not journalID or not EJ_SelectInstance or not EJ_GetNumLoot then return {percent=0,total=0,upgrades={},pending=false} end
     EJ_SelectInstance(journalID)
+    -- Selecting an instance can reset an unsupported previous difficulty.
+    -- Apply ALL preview settings after the selection, for every dungeon.
+    if EJ_SetDifficulty then EJ_SetDifficulty(MYTHIC_PLUS_DIFFICULTY_ID) end
+    if C_EncounterJournal.SetPreviewMythicPlusLevel then C_EncounterJournal.SetPreviewMythicPlusLevel(keyLevel) end
+    local _, _, classID = UnitClass("player")
+    local specIndex = GetSpecialization and GetSpecialization()
+    local lootSpecID = specIndex and GetSpecializationInfo(specIndex)
+    if EJ_SetLootFilter and classID and lootSpecID then EJ_SetLootFilter(classID, lootSpecID) end
+    if C_EncounterJournal.ResetSlotFilter then C_EncounterJournal.ResetSlotFilter() end
     local total, upgrades, pending, totalGain = 0, {}, false, 0
     local usefulCount, upgradeCount, bisCount, topCount = 0, 0, 0, 0
     local upgradeSlots = {}
@@ -120,28 +188,33 @@ local function AnalyzeDungeon(dungeon, specID)
         -- Через "and" без "or nil" сюда попадал false, когда filterType пуст,
         -- и сравнение dropLevel > equipped роняло разбор добычи.
         local equipped
-        if filterType ~= nil then equipped = EquippedLevel(filterType) end
+        if filterType ~= nil then equipped = EquippedLevel(filterType, equipment) end
         -- В знаменатель попадает только добыча, доступная текущему классу/спеку.
         -- Encounter Journal помечает неподходящие оружие и предметы этими ошибками.
-        if item and not item.handError and not item.weaponTypeError and type(equipped) == "number" then
+        if item and not item.handError and not item.weaponTypeError and filterType ~= nil and SLOT_IDS[filterType] then
             total = total + 1
             local baseItemLevel = ItemLevel(item.link)
+            local scaledLink = dropLevel and baseItemLevel == dropLevel and item.link or nil
+            -- A cached base/Heroic link may never become a scaled M+ link.
+            -- The reward level still gives valid recommendations. Do not
+            -- keep the entire panel loading for an unavailable tooltip.
             if baseItemLevel <= 0 then
                 pending = true
                 if item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
                     C_Item.RequestLoadItemDataByID(item.itemID)
                 end
             end
-            local dropLevel = PREVIEW_DROP_ITEM_LEVEL
             local recommendation = JP.BiSData and JP.BiSData.GetItem
                 and JP.BiSData:GetItem(specID, item.itemID)
-            local isUpgrade = dropLevel > equipped
-            -- BIS/TOP остаётся полезной целью даже при том же ilvl: именно
-            -- ради этого советчик больше не является только сравнением уровня.
-            if isUpgrade or recommendation then
+            local isUpgrade = dropLevel and equipped ~= nil and dropLevel > equipped
+            -- A different BIS can help at equal ilvl, but another copy of an
+            -- already owned item at this level (or better) is not a goal.
+            local ownedLevel = owned[item.itemID]
+            local alreadyOwned = ownedLevel ~= nil and (not dropLevel or ownedLevel >= dropLevel)
+            if not alreadyOwned and (isUpgrade or recommendation) then
                 local itemName = item.name
                 if not itemName and item.itemID and C_Item and C_Item.GetItemNameByID then itemName = C_Item.GetItemNameByID(item.itemID) end
-                local gain = math.max(0, dropLevel - equipped)
+                local gain = dropLevel and equipped ~= nil and (dropLevel - equipped) or nil
                 usefulCount = usefulCount + 1
                 if isUpgrade then
                     upgradeCount = upgradeCount + 1
@@ -152,8 +225,9 @@ local function AnalyzeDungeon(dungeon, specID)
                 upgradeSlots[filterType] = true
                 upgrades[#upgrades + 1] = {
                     itemID=item.itemID, name=itemName or L("Предмет"),
-                    icon=item.icon, link=item.link, slot=item.slot or L("Слот"), equipped=equipped,
-                    level=dropLevel, gain=gain, isUpgrade=isUpgrade,
+                    icon=item.icon, link=scaledLink, tooltipLink=item.link,
+                    slot=item.slot or L("Слот"), equipped=equipped,
+                    level=dropLevel, keyLevel=keyLevel, gain=gain, isUpgrade=isUpgrade,
                     recommendation=recommendation,
                 }
             end
@@ -176,17 +250,38 @@ local function AnalyzeDungeon(dungeon, specID)
         bisCount=bisCount, topCount=topCount, slotCount=slotCount, upgrades=upgrades,
         averageGain=upgradeCount>0 and math.floor(totalGain/upgradeCount+.5) or 0,
         pending=pending,
-        keyLevel=PREVIEW_KEY_LEVEL,
-        dropLevel=PREVIEW_DROP_ITEM_LEVEL,
+        keyLevel=keyLevel,
+        dropLevel=dropLevel,
+        rewardUnknown=not dropLevel,
+        equipmentLoaded=equipment.loaded, equipmentTotal=equipment.total,
+        equipmentPending=equipment.pending,
     }
 end
 
-function LootAdvisor:Analyze(dungeons)
-    local signature, equipmentPending = EquipmentSignature()
+function LootAdvisor:Analyze(dungeons, requestedKeyLevel)
+    local keyLevel = PreviewKeyLevel(requestedKeyLevel)
+    local dropLevel = RewardItemLevel(keyLevel)
+    -- The startup request can precede the reward service being ready. Retry
+    -- only while advice is requested, at most once per 30 sec (no polling timer).
+    if not dropLevel and GetTime and C_MythicPlus and C_MythicPlus.RequestRewards then
+        local now = GetTime()
+        if not self.rewardRequestAt or now-self.rewardRequestAt >= 30 then
+            self.rewardRequestAt = now
+            C_MythicPlus.RequestRewards()
+            if C_MythicPlus.RequestMapInfo then C_MythicPlus.RequestMapInfo() end
+        end
+    end
+    local equipment = EquipmentSnapshot()
+    local signature = equipment.signature
+    local dungeonIDs = {}
+    for _, dungeon in ipairs(dungeons or {}) do
+        dungeonIDs[#dungeonIDs + 1] = tostring(dungeon.mapID) .. "@" .. tostring(InstanceMapID(dungeon))
+    end
+    signature = signature .. ":" .. keyLevel .. ":" .. tostring(dropLevel) .. ":" .. table.concat(dungeonIDs, ",")
     -- Не закрепляем навсегда первый неполный ответ Encounter Journal. При
     -- открытии окна ссылки/уровни добычи часто ещё грузятся; такой кэш и давал
     -- ложное "Улучшений по ilvl не найдено" до следующего /reload.
-    if not equipmentPending and not self.cache.pending
+    if not equipment.pending and not self.cache.pending
         and self.cache.signature == signature and self.cache.results then
         return self.cache.results
     end
@@ -194,30 +289,43 @@ function LootAdvisor:Analyze(dungeons)
     local journalState = ConfigureJournal()
     if not journalState then return results end
     local specID = JP.BiSData and JP.BiSData.GetCurrentSpecID and JP.BiSData:GetCurrentSpecID()
-    local pending = false
-    for _, dungeon in ipairs(dungeons or {}) do
-        results[dungeon.mapID] = AnalyzeDungeon(dungeon, specID)
-        pending = results[dungeon.mapID].pending or pending
-    end
+    local owned, pending = OwnedItemLevels(equipment)
+    local ok, err = pcall(function()
+        for _, dungeon in ipairs(dungeons or {}) do
+            results[dungeon.mapID] = AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel)
+            pending = results[dungeon.mapID].pending or pending
+        end
+    end)
+    -- Restore filters even when an asynchronous journal response is malformed.
     RestoreJournal(journalState)
-    self.cache = {signature=signature,results=results,pending=pending or equipmentPending}
+    if not ok then error(err, 0) end
+    self.cache = {signature=signature,results=results,pending=pending or equipment.pending or not dropLevel}
     return results
 end
 
 function LootAdvisor:Invalidate()
     wipe(self.cache)
     local welcome = JP.modules.Welcome
-    if welcome and welcome.frame and welcome.frame:IsShown() then C_Timer.After(.15, function() welcome:Refresh() end) end
+    if welcome and welcome.frame and welcome.frame:IsShown() and not self.uiRefreshQueued then
+        self.uiRefreshQueued = true
+        C_Timer.After(.15, function()
+            self.uiRefreshQueued = nil
+            if welcome.frame:IsShown() then welcome:Refresh() end
+        end)
+    end
 end
 
 function LootAdvisor:Create()
     if self.events then return end
+    if C_MythicPlus and C_MythicPlus.RequestRewards then C_MythicPlus.RequestRewards() end
     self.events = CreateFrame("Frame")
     self.events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    self.events:RegisterEvent("BAG_UPDATE_DELAYED")
     self.events:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     self.events:RegisterEvent("EJ_LOOT_DATA_RECIEVED")
     self.events:RegisterEvent("GET_ITEM_INFO_RECEIVED")
     self.events:RegisterEvent("PLAYER_ENTERING_WORLD")
+    self.events:RegisterEvent("CHALLENGE_MODE_MAPS_UPDATE")
     self.events:SetScript("OnEvent", function(_, event, unit)
         if event == "EJ_LOOT_DATA_RECIEVED" or event == "GET_ITEM_INFO_RECEIVED" then
             -- Данные о предметах приходят пачками, и каждый ответ обнулял кэш,
@@ -233,6 +341,7 @@ function LootAdvisor:Create()
                 self:Invalidate()
             end)
         elseif event ~= "PLAYER_SPECIALIZATION_CHANGED" or unit == "player" then
+            if event == "PLAYER_ENTERING_WORLD" then self.rewardRequestAt = nil end
             self.pendingRetries = 0
             self:Invalidate()
         end

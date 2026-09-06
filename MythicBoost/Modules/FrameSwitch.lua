@@ -26,17 +26,27 @@ end
 local function OpenBlizzard()
     if InCombatLockdown() then
         JP:Print(L("В бою переключать окна нельзя."))
-        return
+        return false
+    end
+    if not PVEFrame or type(ShowUIPanel) ~= "function" then
+        JP:Print(L("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз."))
+        return false
     end
     local welcome = Welcome()
     if welcome and welcome.frame then welcome.frame:Hide() end
-    if type(PVEFrame_ToggleFrame) == "function" then
-        pcall(PVEFrame_ToggleFrame, "GroupFinderFrame")
-    elseif PVEFrame and type(ShowUIPanel) == "function" then
-        pcall(ShowUIPanel, PVEFrame)
+    -- Do not run GroupFinder's internal panel/selection helpers or toggle an
+    -- already open window closed. The player selects the native tab/action.
+    if not PVEFrame:IsShown() then
+        local ok = pcall(ShowUIPanel, PVEFrame)
+        if not ok then
+            if welcome and welcome.frame then welcome.frame:Show() end
+            JP:Print(L("Окно заявки Blizzard сейчас недоступно. Открой поиск подземелий и попробуй ещё раз."))
+            return false
+        end
     end
+    return true
 end
-FrameSwitch.OpenBlizzard = function() OpenBlizzard() end
+FrameSwitch.OpenBlizzard = function() return OpenBlizzard() end
 
 function FrameSwitch:IsReplacing()
     return false
@@ -75,9 +85,60 @@ local function EnsureButton(module)
     module.button = button
 end
 
+-- Both footer buttons start at the same XML anchor. Blizzard moves Delist
+-- only near the end of UpdateInfo, which may return before activity data is
+-- available. Restore that same native layout without reading listing fields,
+-- changing button visibility, or replacing any protected click handler.
+function FrameSwitch:LayoutApplicantFooter()
+    if self.layoutDisabled or InCombatLockdown() then return end
+    local viewer = self.applicantViewer
+    if not viewer or not UI.SafeBoolean(viewer:IsVisible()) then return end
+    local browse, remove = viewer.BrowseGroupsButton, viewer.RemoveEntryButton
+    if not browse or not remove then return end
+    if not UI.SafeBoolean(browse:IsShown()) or not UI.SafeBoolean(remove:IsShown()) then return end
+    if remove:GetNumPoints() == 1 then
+        local point, relative, relativePoint, x, y = remove:GetPoint(1)
+        if issecretvalue(point) or issecretvalue(relative) or issecretvalue(relativePoint)
+            or issecretvalue(x) or issecretvalue(y) then return end
+        if point == "LEFT" and relative == browse and relativePoint == "RIGHT" and x == 15 and y == 0 then return end
+    end
+    remove:ClearAllPoints()
+    remove:SetPoint("LEFT", browse, "RIGHT", 15, 0)
+end
+
+function FrameSwitch:QueueApplicantLayout()
+    if self.layoutDisabled or self.layoutQueued or InCombatLockdown() then return end
+    self.layoutQueued = true
+    C_Timer.After(0, function()
+        self.layoutQueued = false
+        self:LayoutApplicantFooter()
+    end)
+end
+
+function FrameSwitch:InstallApplicantLayout()
+    if self.applicantViewer then return true end
+    local viewer = _G.LFGListFrame and LFGListFrame.ApplicationViewer
+    if not viewer or not viewer.BrowseGroupsButton or not viewer.RemoveEntryButton then return false end
+    self.applicantViewer = viewer
+    local queue = function() self:QueueApplicantLayout() end
+    viewer:HookScript("OnShow", queue)
+    viewer.BrowseGroupsButton:HookScript("OnShow", queue)
+    viewer.RemoveEntryButton:HookScript("OnShow", queue)
+    -- An independent event path still runs when the native info refresh
+    -- returns early. Burst events share one callback; there is no polling.
+    self.layoutEvents = CreateFrame("Frame")
+    for _, event in ipairs({ "LFG_LIST_ACTIVE_ENTRY_UPDATE", "GROUP_ROSTER_UPDATE", "PLAYER_REGEN_ENABLED" }) do
+        self.layoutEvents:RegisterEvent(event)
+    end
+    self.layoutEvents:SetScript("OnEvent", queue)
+    queue()
+    return true
+end
+
 function FrameSwitch:Install()
     EnsureButton(self)
-    local installed = self.button ~= nil
+    local footerInstalled = self:InstallApplicantLayout()
+    local installed = self.button ~= nil and footerInstalled
     if installed and self.loader then
         self.loader:UnregisterAllEvents()
         self.loader:SetScript("OnEvent", nil)
@@ -99,8 +160,19 @@ function FrameSwitch:Create()
     end)
 end
 
-function FrameSwitch:Enable() end
-function FrameSwitch:Disable() end
+function FrameSwitch:Enable()
+    self.layoutDisabled = nil
+    if self.layoutEvents then
+        for _, event in ipairs({ "LFG_LIST_ACTIVE_ENTRY_UPDATE", "GROUP_ROSTER_UPDATE", "PLAYER_REGEN_ENABLED" }) do
+            self.layoutEvents:RegisterEvent(event)
+        end
+    end
+    self:QueueApplicantLayout()
+end
+function FrameSwitch:Disable()
+    self.layoutDisabled = true
+    if self.layoutEvents then self.layoutEvents:UnregisterAllEvents() end
+end
 function FrameSwitch:Destroy() end
 
 JP.FrameSwitch = FrameSwitch

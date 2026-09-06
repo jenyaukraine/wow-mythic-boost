@@ -14,6 +14,8 @@ JP.Limits = {
     PROFILE_CACHE_ENTRIES = 500,
     HISTORY_TEAMMATES = 200,
     HISTORY_RUNS = 30,
+    REVIEW_RECORDS = 1000,
+    REVIEW_TEXT_BYTES = 240,
     ACTIVE_APPLICATIONS = 5,
 }
 
@@ -114,12 +116,13 @@ function API.GetActiveChallenge()
     local api = C_ChallengeMode
     if not api then return nil end
     local _, mapID = Call(api, "GetActiveChallengeMapID")
-    local _, level = Call(api, "GetActiveKeystoneInfo")
+    local _, level, affixes = Call(api, "GetActiveKeystoneInfo")
     local _, startedAt = Call(api, "GetStartTime")
     local _, active = Call(api, "IsChallengeModeActive")
     return {
         mapID = JP.SafeNumber(mapID),
         level = JP.SafeNumber(level),
+        affixes = JP.SafeTable(affixes),
         startedAt = JP.SafeNumber(startedAt),
         active = JP.SafeOptionalBoolean(active),
     }

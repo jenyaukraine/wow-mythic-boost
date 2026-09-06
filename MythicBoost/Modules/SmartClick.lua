@@ -312,8 +312,9 @@ end
 ---------------------------------------------------------------------------
 -- Кнопка баффа по центру экрана
 --
--- Появляется, только когда бафф кому-то в группе действительно нужен, и
--- гаснет, когда все закрыты. Это СВОЯ кнопка, а не юнит-фрейм, поэтому
+-- Вне боя появляется, когда бафф кому-то действительно нужен. В бою
+-- доступна постоянно: secure-видимость не меняется по чтению аур. Это своя
+-- кнопка, а не юнит-фрейм, поэтому
 -- клик-каст DandersFrames её не трогает — все прошлые попытки разбивались
 -- именно об это.
 --
@@ -323,6 +324,31 @@ end
 ---------------------------------------------------------------------------
 
 local BUFF_BUTTON_SIZE = 64
+
+-- A reminder is actionable only for a living, connected, reachable member.
+-- C_Spell's range query is public; UnitInRange can return secret booleans.
+-- Unknown range must never become a positive result (or enter Lua arithmetic).
+local function CanReceiveBuff(unit, buffID)
+    if not IsTrue(UnitExists(unit)) or not IsTrue(UnitIsConnected(unit)) then return false end
+    local dead = UnitIsDeadOrGhost(unit)
+    if issecretvalue(dead) or dead then return false end
+    if unit == "player" then return true end
+    if IsTrue(UnitIsUnit(unit, "player")) then return false end -- raid alias, already counted
+    if type(UnitPhaseReason) ~= "function" or type(UnitIsVisible) ~= "function" then return false end
+    local phaseOK, phase = pcall(UnitPhaseReason, unit)
+    if not phaseOK or issecretvalue(phase) or phase ~= nil then return false end
+    local visibleOK, visible = pcall(UnitIsVisible, unit)
+    if not visibleOK or not IsTrue(visible) then return false end
+    if C_Spell and C_Spell.IsSpellInRange then
+        local ok, inRange = pcall(C_Spell.IsSpellInRange, buffID, unit)
+        if ok and not issecretvalue(inRange) and type(inRange) == "boolean" then return inRange end
+    end
+    if UnitInRange then
+        local inRange, checked = UnitInRange(unit)
+        return IsTrue(checked) and IsTrue(inRange)
+    end
+    return false
+end
 
 -- Кому бафф не достался. Считаем и себя: соло-игрок тоже должен видеть кнопку.
 function SmartClick:MissingBuff()
@@ -340,7 +366,7 @@ function SmartClick:MissingBuff()
 
     local missing = {}
     for _, unit in ipairs(units) do
-        if UnitExists(unit) and not UnitIsDeadOrGhost(unit) and UnitIsConnected(unit) then
+        if CanReceiveBuff(unit, buffID) then
             local found = false
             if SafeUnitAura then
                 for spellID in pairs(wanted) do
@@ -359,17 +385,7 @@ function SmartClick:MissingBuff()
                     if not issecretvalue(spellID) and wanted[spellID] then found = true; break end
                 end
             end
-            -- Вне радиуса бафф не наложить, и в список такие не идут: иначе
-            -- кнопка горела бы вечно из-за отставшего на другом конце данжа.
-            --
-            -- UnitInRange под taint возвращает защищённый boolean. В условии
-            -- такое значение работает, а сравнивать его нельзя — на этом
-            -- падало. Неизвестность считаем «в радиусе»: лучше лишнее имя в
-            -- подсказке, чем молча потерянный игрок.
-            local inRange = UnitInRange(unit)
-            local outOfRange = false
-            if not issecretvalue(inRange) then outOfRange = inRange == false end
-            if not found and not outOfRange then
+            if not found then
                 local name = UnitName(unit)
                 missing[#missing + 1] = (not issecretvalue(name) and name) or unit
             end
@@ -391,7 +407,7 @@ function SmartClick:BuildBuffButton()
     -- UI.Backdrop ниже падает. Раньше это не всплывало, потому что MissingBuff
     -- обрывалась ошибкой раньше и до создания кнопки дело не доходило.
     local button = CreateFrame("Button", "MythicBoostBuffButton", UIParent,
-        "SecureActionButtonTemplate, BackdropTemplate")
+        "SecureActionButtonTemplate, SecureHandlerStateTemplate, BackdropTemplate")
     button:SetSize(BUFF_BUTTON_SIZE, BUFF_BUTTON_SIZE)
     -- Прямо под строкой системных сообщений: там же, где игра пишет «Вне зоны
     -- действия». Привязываемся к самому UIErrorsFrame, а не к координатам —
@@ -408,8 +424,18 @@ function SmartClick:BuildBuffButton()
     -- по нажатию клавиши», и при ней кнопка, зарегистрированная только на
     -- отпускание, молчит: наведение работает, тултип есть, а каста нет.
     button:RegisterForClicks("AnyUp", "AnyDown")
+    button:SetAttribute("useOnKeyDown", false)
     button:SetAttribute("type", "macro")
     button:SetAttribute("macrotext", BuffMacro(name))
+    button:SetAttribute("mb-enabled", self:GetSettings().buff == true)
+    button:SetAttribute("_onstate-combat", [[
+        if self:GetAttribute("mb-enabled") and (newstate == "1" or self:GetAttribute("mb-visible")) then
+            self:Show()
+        else
+            self:Hide()
+        end
+    ]])
+    RegisterStateDriver(button, "combat", "[combat] 1; 0")
     button.spellName = name
 
     UI.Backdrop(button, C.surface, C.edge)
@@ -426,47 +452,51 @@ function SmartClick:BuildBuffButton()
     button.label:SetPoint("TOP", button, "BOTTOM", 0, -4)
 
     button:SetScript("OnEnter", function(owner)
-        -- Secure-фрейм технически остаётся показанным ради работы в бою, но
-        -- при alpha=0 не должен перехватывать наведение пустым тултипом.
-        if owner:GetAlpha() <= .01 then return end
-        UI.Tooltip(owner, name, L("Бафф нужен: ") .. (owner.missingText or "—"))
+        UI.Tooltip(owner, name, InCombatLockdown() and L("Бафф группы")
+            or (L("Бафф нужен: ") .. (owner.missingText or "—")))
     end)
     button:SetScript("OnLeave", GameTooltip_Hide)
 
     -- Безопасное начальное состояние. Если чтение аур сразу после входа или
     -- /reload закрыто, RefreshBuffButton выйдет без результата и кнопка не
     -- вспыхнет с текстом «Бафф нужен: —».
-    button:SetAlpha(0)
+    button:SetAlpha(1)
     button:Hide()
     self.buffButton = button
     return button
 end
 
 function SmartClick:RefreshBuffButton()
-    local settings = self:GetSettings()
-    if not settings or not settings.buff then
-        if self.buffButton and not InCombatLockdown() then self.buffButton:Hide() end
+    -- The secure driver keeps an enabled button available throughout combat.
+    -- Only ordinary display text changes here; never use aura state to hide a
+    -- secure button, zero its alpha, or swap its spell during a fight.
+    if InCombatLockdown() then
+        if self.buffButton then self.buffButton.label:SetText(L("Бафф группы")) end
         return
     end
-    -- Secure-кнопку нельзя Show() после начала боя. Держим сам фрейм заранее
-    -- показанным, а визуальную видимость меняем через alpha — это разрешено в
-    -- бою и не трогает защищённое действие. Поэтому пустая кнопка не висит на
-    -- экране, но мгновенно проявляется, если бафф пропал уже во время боя.
-    local inCombat = InCombatLockdown()
+    local settings = self:GetSettings()
+    if not settings or not settings.buff then
+        if self.buffButton then
+            self.buffButton:SetAttribute("mb-enabled", false)
+            self.buffButton:SetAttribute("mb-visible", false)
+            self.buffButton:Hide()
+        end
+        return
+    end
     local button = self.buffButton
-    if not button and inCombat then return end
     button = button or self:BuildBuffButton()
     if not button then return end
-    if not inCombat then button:Show() end
-    local missing, blocked = self:MissingBuff()
-    if blocked then return end
+    button:SetAttribute("mb-enabled", true)
+    local missing = self:MissingBuff()
+    -- A blocked aura read is not evidence of a missing buff. Clear any stale
+    -- reminder instead of keeping a count from the previous group/location.
 
     -- Макрос собирается один раз при создании кнопки, а заклинание у персонажа
     -- может смениться вместе со специализацией. Переписываем вне боя, иначе
     -- кнопка останется с прошлым кастом.
     local _, class = UnitClass("player")
     local current = class and BUFF[class] and SpellName(BUFF[class])
-    if not inCombat and current and current ~= button.spellName then
+    if current and current ~= button.spellName then
         button:SetAttribute("macrotext", BuffMacro(current))
         button.spellName = current
     end
@@ -474,11 +504,13 @@ function SmartClick:RefreshBuffButton()
     if missing then
         button.missingText = table.concat(missing, ", ")
         button.label:SetText(#missing > 1 and (L("без баффа: ") .. #missing) or button.missingText)
-        button:SetAlpha(1)
+        button:SetAttribute("mb-visible", true)
+        button:Show()
     else
         button.missingText = "—"
         button.label:SetText("")
-        button:SetAlpha(0)
+        button:SetAttribute("mb-visible", false)
+        button:Hide()
     end
 end
 
@@ -492,10 +524,15 @@ function SmartClick:Create()
     -- Пропустить одно событие не страшно; потерять модуль — страшно.
     for _, event in ipairs({
         "PLAYER_ENTERING_WORLD",
+        "PLAYER_REGEN_DISABLED",
         "PLAYER_REGEN_ENABLED",
         "PLAYER_SPECIALIZATION_CHANGED",
         "SPELLS_CHANGED",
         "GROUP_ROSTER_UPDATE",
+        "UNIT_IN_RANGE_UPDATE",
+        "UNIT_PHASE",
+        "UNIT_CONNECTION",
+        "UNIT_FLAGS",
         "UNIT_AURA",
         "UNIT_SPELLCAST_SUCCEEDED",
     }) do
@@ -504,24 +541,30 @@ function SmartClick:Create()
     -- Один отложенный проход на пачку событий: смена специализации приходит
     -- вместе с переучиванием заклинаний, и собирать макрос десять раз подряд
     -- незачем.
-    local queued = false
+    local queued, applyQueued = false, false
     self.events:SetScript("OnEvent", function(_, event, unit, _, spellID)
-        -- В бою Blizzard может закрыть чтение части групповых аур. Успешный
-        -- групповой каст при этом известен точно: сразу гасим подсказку, а
-        -- следующая доступная проверка снова покажет её только при пропаже.
-        if event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" then
+        if event:sub(1, 5) == "UNIT_" then
+            if issecretvalue(unit) or type(unit) ~= "string" then return end
+            if unit ~= "player" and not unit:match("^party%d+$") and not unit:match("^raid%d+$") then return end
+        end
+        if event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" and not InCombatLockdown() then
             local _, class = UnitClass("player")
-            if class and BUFF[class] == spellID and SmartClick.buffButton then
+            if not issecretvalue(spellID) and class and BUFF[class] == spellID and SmartClick.buffButton then
                 SmartClick.buffButton.missingText = "—"
                 SmartClick.buffButton.label:SetText("")
-                SmartClick.buffButton:SetAlpha(0)
+                SmartClick.buffButton:SetAttribute("mb-visible", false)
+                SmartClick.buffButton:Hide()
             end
+        end
+        if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED"
+            or event == "PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" then
+            applyQueued = true
         end
         if queued then return end
         queued = true
         C_Timer.After(.3, function()
             queued = false
-            SmartClick:Apply()
+            if applyQueued then applyQueued = false; SmartClick:Apply() end
             SmartClick:RefreshBuffButton()
         end)
     end)

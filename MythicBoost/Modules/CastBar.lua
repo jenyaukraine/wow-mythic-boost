@@ -5,14 +5,15 @@ local C = JP.UI.colors
 
 local CastBar = {}
 local XPERL_BAR = "Interface\\TargetingFrame\\UI-StatusBar"
-local CAPSULE_EDGE = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_ThinEdge"
+local SOFT_EDGE = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_ThinEdge"
 local SPARK = "Interface\\CastingBar\\UI-CastingBar-Spark"
 
 local CAST_COLOR = { 1.00, .49, 0 }
 local CHANNEL_COLOR = { .32, .30, 1 }
 local COMPLETE_COLOR = { .12, .86, .15 }
 local FAILED_COLOR = { 1, .09, 0 }
-local TIME_PANEL_WIDTH = 52
+local BAR_WIDTH = 400
+local TIME_TEXT_WIDTH = 82
 local SETTINGS_DEFAULTS = { enabled = true, unlocked = false }
 
 local function MatteBarColor(bar, color)
@@ -62,55 +63,33 @@ local function UnitMatches(unit)
     return unit == "player" or unit == "vehicle"
 end
 
-local function UpdateTimeDisplay(frame, remaining)
-    local urgent = remaining <= 1.5
-    if frame.timeUrgent ~= urgent then
-        frame.timeUrgent = urgent
-        if frame.timeFont then frame.time:SetFont(frame.timeFont, urgent and 15 or 14, "OUTLINE") end
-    end
-    -- Continuous, readable urgency: neutral above three seconds, then a
-    -- smooth white -> amber -> red transition with no distracting flashing.
-    local r, g, b
-    if remaining >= 3 then
-        r, g, b = .96, .98, 1
-    elseif remaining >= 1.5 then
-        local t = (3 - remaining) / 1.5
-        r = .96 + (.04 * t)
-        g = .98 + (.72 - .98) * t
-        b = 1 + (.12 - 1) * t
-    else
-        local t = math.max(0, math.min(1, (1.5 - remaining) / 1.5))
-        r = 1
-        g = .72 + (.18 - .72) * t
-        b = .12 + (.06 - .12) * t
-    end
-    frame.time:SetTextColor(r, g, b, 1)
-    frame.time:SetAlpha(1)
-    frame.time:SetFormattedText("%.1f", remaining)
+local function UpdateTimeDisplay(frame, elapsed, duration, channeling)
+    local current = channeling and math.max(0, duration - elapsed) or elapsed
+    -- Both values share the bar; no separate time box or changing font size.
+    frame.time:SetFormattedText("%.1f / %.1f", current, duration)
 end
 
 local function ApplyBackdrop(frame)
     frame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = CAPSULE_EDGE,
-        tile = true,
-        tileSize = 16,
-        edgeSize = 8,
-        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+        edgeFile = SOFT_EDGE,
+        tile = false,
+        edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
     })
     -- Общие токены UI.colors вместо собственного тёмного:
     -- эта панель стоит на экране рядом с остальными.
     frame:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], .97)
-    frame:SetBackdropBorderColor(.34, .39, .45, 1)
+    frame:SetBackdropBorderColor(.22, .24, .25, .92)
     if not frame.__mbCapsuleGradient then
         local gradient = frame:CreateTexture(nil, "ARTWORK", nil, -5)
         gradient:SetColorTexture(1, 1, 1, 1)
         gradient:SetBlendMode("ADD")
-        gradient:SetPoint("TOPLEFT", 2, -2)
-        gradient:SetPoint("BOTTOMRIGHT", -2, 2)
+        gradient:SetPoint("TOPLEFT", 4, -4)
+        gradient:SetPoint("BOTTOMRIGHT", -4, 4)
         gradient:SetGradient("VERTICAL",
             CreateColor(0, 0, 0, 0),
-            CreateColor(.42, .52, .62, .24))
+            CreateColor(.36, .39, .43, .16))
         frame.__mbCapsuleGradient = gradient
     end
 end
@@ -143,15 +122,19 @@ end
 function CastBar:UpdateLatency(duration)
     local frame = self.frame
     local _, _, homeMS, worldMS = GetNetStats()
-    local networkMS = PlainNumber(worldMS) and worldMS
-        or (PlainNumber(homeMS) and homeMS or 0)
+    local networkMS = PlainNumber(worldMS) and math.max(0, worldMS)
+        or (PlainNumber(homeMS) and math.max(0, homeMS) or nil)
     if not self.castLatency then
-        local measured = self.sentAt and math.max(0, GetTime() - self.sentAt) or 0
-        self.castLatency = math.max(networkMS / 1000, measured)
+        self.latencyKnown = networkMS ~= nil or self.sentDelay ~= nil
+        self.castLatency = math.max((networkMS or 0) / 1000, self.sentDelay or 0)
+    end
+    self.sentDelay = nil
+    if self.latencyKnown then
+        frame.latencyText:SetFormattedText("%d ms", math.floor(self.castLatency * 1000 + .5))
+    else
+        frame.latencyText:SetText("— ms")
     end
     local latency = math.min(duration, self.castLatency or 0)
-    local latencyMS = math.max(0, math.floor(latency * 1000 + .5))
-    frame.latencyText:Hide()
     if latency <= 0 or duration <= 0 then frame.latency:Hide(); return end
     local fraction = math.min(1, latency / duration)
     frame.latency:ClearAllPoints()
@@ -167,9 +150,7 @@ function CastBar:UpdateLatency(duration)
 end
 
 function CastBar:Start(channel, empower, castGUID, eventSpellID)
-    -- Quartz может создать свой Player bar позже MythicBoost. Проверяем
-    -- конкурирующие полосы перед каждым новым кастом, чтобы дубликат не успел
-    -- появиться даже при необычном порядке загрузки аддонов.
+    -- Only the Blizzard player bar is replaced; other addons stay untouched.
     self:ParkBlizzard()
     local name, displayName, icon, startMS, endMS, _, readSpellID = ReadCast(channel or empower)
     if not name or not PlainNumber(startMS) or not PlainNumber(endMS) or endMS <= startMS then return end
@@ -197,7 +178,10 @@ function CastBar:Start(channel, empower, castGUID, eventSpellID)
         sentMatches = self.sentSpellID == self.castSpellID
     end
     local target = sentMatches and self.targetName or nil
-    self.sentGUID, self.sentSpellID, self.targetName = nil, nil, nil
+    -- A SENT event can belong to a cancelled or previous cast. Never turn its
+    -- stale timestamp into a full-bar latency zone on the next spell.
+    self.sentDelay = sentMatches and PlainNumber(self.sentAt) and math.max(0, GetTime() - self.sentAt) or nil
+    self.sentGUID, self.sentSpellID, self.targetName, self.sentAt = nil, nil, nil, nil
     if type(target) == "string" and not issecretvalue(target) and target ~= "" and target ~= UnitName("player") then
         frame.name:SetFormattedText("%s  |cff8fa1b5> %s|r", displayName or name, target)
     else
@@ -210,8 +194,8 @@ function CastBar:Start(channel, empower, castGUID, eventSpellID)
     frame.spark:Show()
     frame.sweep:Show()
     frame.flash:SetAlpha(0)
-    frame.timeUrgent = nil
     frame.time:SetAlpha(1)
+    UpdateTimeDisplay(frame, 0, duration, self.channeling)
     if frame.sparkPulse and not frame.sparkPulse:IsPlaying() then frame.sparkPulse:Play() end
     self:UpdateLatency(duration)
     frame:Show()
@@ -225,17 +209,18 @@ end
 
 function CastBar:Finish(success)
     if not self.frame or not self.active then return end
+    local channeling = self.channeling
     self.active, self.casting, self.channeling, self.empowering = nil, nil, nil, nil
     self.castGUID, self.castSpellID = nil, nil
     MatteBarColor(self.frame.bar, success and COMPLETE_COLOR or FAILED_COLOR)
     local _, maximum = self.frame.bar:GetMinMaxValues()
     self.frame.bar:SetValue(maximum)
+    if success then UpdateTimeDisplay(self.frame, maximum, maximum, channeling) end
     self.frame.spark:Hide()
     self.frame.sweep:Hide()
     if self.frame.sparkPulse then self.frame.sparkPulse:Stop() end
     self.frame.time:SetAlpha(1)
     self.frame.latency:Hide()
-    self.frame.latencyText:Hide()
     local now = GetTime()
     self.fadeDuration = success and .72 or .90
     self.fadeUntil = now + self.fadeDuration
@@ -270,7 +255,7 @@ function CastBar:OnUpdate()
         local remaining = math.max(0, self.endTime - now)
         local value = self.channeling and remaining or elapsed
         frame.bar:SetValue(value)
-        UpdateTimeDisplay(frame, remaining)
+        UpdateTimeDisplay(frame, elapsed, duration, self.channeling)
         frame.spark:ClearAllPoints()
         frame.spark:SetPoint("CENTER", frame.bar, "LEFT", frame.bar:GetWidth() * (value / duration), 0)
         frame.sweep:ClearAllPoints()
@@ -325,14 +310,13 @@ function CastBar:SetUnlocked(unlocked)
         frame:SetAlpha(1)
         frame.icon:SetTexture("Interface\\Icons\\Spell_Holy_MagicalSentry")
         frame.name:SetText(L("Перетащи кастбар"))
-        frame.time:SetText("1.5")
-        frame.time:SetTextColor(1, .72, .12, 1)
+        frame.time:SetText("1.1 / 1.5")
+        frame.latencyText:SetText("78 ms")
         frame.bar:SetMinMaxValues(0, 1); frame.bar:SetValue(.72)
         MatteBarColor(frame.bar, CAST_COLOR)
         frame.spark:Hide(); frame.sweep:Hide(); frame.flash:SetAlpha(0)
         if frame.sparkPulse then frame.sparkPulse:Stop() end
         frame.latency:Hide()
-        frame.latencyText:Hide()
         frame:Show()
     elseif not self.active then frame:Hide() end
 end
@@ -382,7 +366,7 @@ end
 function CastBar:Create()
     if self.frame then return end
     local frame = CreateFrame("Frame", "MythicBoostCastBar", UIParent, "BackdropTemplate")
-    frame:SetSize(380, 32)
+    frame:SetSize(BAR_WIDTH, 32)
     frame:SetFrameStrata("MEDIUM")
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
@@ -390,46 +374,14 @@ function CastBar:Create()
     ApplyBackdrop(frame)
 
     frame.icon = frame:CreateTexture(nil, "ARTWORK")
-    frame.icon:SetPoint("TOPLEFT", 3, -3)
-    frame.icon:SetPoint("BOTTOMLEFT", 3, 3)
-    frame.icon:SetWidth(26)
+    frame.icon:SetPoint("TOPLEFT", 4, -4)
+    frame.icon:SetPoint("BOTTOMLEFT", 4, 4)
+    frame.icon:SetWidth(24)
     frame.icon:SetTexCoord(.07, .93, .07, .93)
 
-    frame.timePanel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    frame.timePanel:SetPoint("TOPRIGHT", -3, -3)
-    frame.timePanel:SetPoint("BOTTOMRIGHT", -3, 3)
-    frame.timePanel:SetWidth(TIME_PANEL_WIDTH)
-    frame.timePanel:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    frame.timePanel:SetBackdropColor(C.raised[1], C.raised[2], C.raised[3], .98)
-    frame.timePanel:SetBackdropBorderColor(.38, .43, .49, .96)
-    frame.timePanel:SetFrameLevel(frame:GetFrameLevel() + 6)
-    frame.timePanel.scrim = frame.timePanel:CreateTexture(nil, "BACKGROUND", nil, 0)
-    frame.timePanel.scrim:SetAllPoints()
-    frame.timePanel.scrim:SetColorTexture(1, 1, 1, 1)
-    frame.timePanel.scrim:SetGradient("HORIZONTAL",
-        CreateColor(.12, .15, .19, .08),
-        CreateColor(.02, .025, .035, .32))
-    frame.timePanel.danger = frame.timePanel:CreateTexture(nil, "BACKGROUND", nil, 1)
-    frame.timePanel.danger:SetPoint("BOTTOMLEFT", 0, 0)
-    frame.timePanel.danger:SetPoint("BOTTOMRIGHT", 0, 0)
-    frame.timePanel.danger:SetHeight(10)
-    frame.timePanel.danger:SetColorTexture(1, 1, 1, 1)
-    frame.timePanel.danger:SetGradient("VERTICAL",
-        CreateColor(.30, .015, .010, .72),
-        CreateColor(.08, .005, .004, .08))
-    frame.timePanel.divider = frame.timePanel:CreateTexture(nil, "OVERLAY")
-    frame.timePanel.divider:SetPoint("TOPLEFT", 0, 0)
-    frame.timePanel.divider:SetPoint("BOTTOMLEFT", 0, 0)
-    frame.timePanel.divider:SetWidth(1)
-    frame.timePanel.divider:SetColorTexture(.95, .58, .14, .78)
-
     frame.bar = CreateFrame("StatusBar", nil, frame)
-    frame.bar:SetPoint("TOPLEFT", 32, -3)
-    frame.bar:SetPoint("BOTTOMRIGHT", frame.timePanel, "BOTTOMLEFT", 0, 0)
+    frame.bar:SetPoint("TOPLEFT", 30, -4)
+    frame.bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -4, 4)
     frame.bar:SetStatusBarTexture(XPERL_BAR)
     frame.bar:SetClipsChildren(true)
     frame.bar.background = frame.bar:CreateTexture(nil, "BACKGROUND")
@@ -444,19 +396,12 @@ function CastBar:Create()
     frame.bar.gloss = frame.bar:CreateTexture(nil, "OVERLAY", nil, -7)
     frame.bar.gloss:SetPoint("TOPLEFT", 0, 0)
     frame.bar.gloss:SetPoint("TOPRIGHT", 0, 0)
-    frame.bar.gloss:SetHeight(10)
+    frame.bar.gloss:SetHeight(6)
     frame.bar.gloss:SetColorTexture(1, 1, 1, 1)
     frame.bar.gloss:SetBlendMode("ADD")
     frame.bar.gloss:SetGradient("VERTICAL",
         CreateColor(1, 1, 1, 0),
-        CreateColor(.86, .94, 1, .25))
-
-    frame.barBorder = CreateFrame("Frame", nil, frame.bar, "BackdropTemplate")
-    frame.barBorder:SetAllPoints()
-    frame.barBorder:SetFrameLevel(frame.bar:GetFrameLevel() + 3)
-    frame.barBorder:EnableMouse(false)
-    frame.barBorder:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-    frame.barBorder:SetBackdropBorderColor(.28, .34, .40, .90)
+            CreateColor(.86, .90, .92, .16))
 
     frame.latency = frame.bar:CreateTexture(nil, "OVERLAY", nil, 1)
     frame.latency:SetColorTexture(1, .05, .02, .48)
@@ -464,7 +409,7 @@ function CastBar:Create()
     frame.spark = frame.bar:CreateTexture(nil, "OVERLAY", nil, 2)
     frame.spark:SetTexture(SPARK)
     frame.spark:SetBlendMode("ADD")
-    frame.spark:SetSize(16, 38)
+    frame.spark:SetSize(12, 26)
     frame.spark:SetVertexColor(1, .94, .70, .90)
     frame.spark:SetAlpha(.80)
     frame.sparkPulse = frame.spark:CreateAnimationGroup()
@@ -491,28 +436,39 @@ function CastBar:Create()
     frame.flash:SetBlendMode("ADD")
     frame.flash:SetAlpha(0)
 
-    frame.name = UI.Text(frame.bar, "GameFontHighlight", "")
+    -- A dedicated text layer stays above the fill, latency tint and border.
+    -- It has no background: the progress texture continues under both labels.
+    frame.labels = CreateFrame("Frame", nil, frame.bar)
+    frame.labels:SetAllPoints()
+    frame.labels:SetFrameLevel(frame.bar:GetFrameLevel() + 4)
+    frame.labels:EnableMouse(false)
+    frame.name = UI.Text(frame.labels, "GameFontHighlight", "")
     frame.name:SetPoint("LEFT", 5, 0)
-    frame.name:SetPoint("RIGHT", frame.bar, "RIGHT", -6, 0)
+    frame.name:SetPoint("RIGHT", frame.labels, "RIGHT", -TIME_TEXT_WIDTH - 12, 0)
     frame.name:SetJustifyH("LEFT")
     frame.name:SetWordWrap(false)
     local nameFont = frame.name:GetFont()
-    if nameFont then frame.name:SetFont(nameFont, 12, "OUTLINE") end
-    frame.time = UI.Text(frame.timePanel, "GameFontHighlightSmall", "")
-    frame.time:SetPoint("CENTER", 0, 0)
-    frame.time:SetWidth(TIME_PANEL_WIDTH - 8)
-    frame.time:SetJustifyH("CENTER")
+    if nameFont then frame.name:SetFont(nameFont, 13, "") end
+    frame.name:SetShadowColor(0, 0, 0, .85)
+    frame.name:SetShadowOffset(1, -1)
+    frame.time = UI.Text(frame.labels, "GameFontHighlightSmall", "", C.text)
+    frame.time:SetPoint("TOPRIGHT", -5, -1)
+    frame.time:SetWidth(TIME_TEXT_WIDTH)
+    frame.time:SetHeight(14)
+    frame.time:SetJustifyH("RIGHT")
+    frame.time:SetWordWrap(false)
     local timeFont = frame.time:GetFont()
-    frame.timeFont = timeFont
-    if timeFont then frame.time:SetFont(timeFont, 14, "OUTLINE") end
-    frame.latencyText = UI.Text(frame.timePanel, "GameFontNormalSmall", "")
-    frame.latencyText:SetPoint("BOTTOMRIGHT", -5, 3)
-    frame.latencyText:SetWidth(TIME_PANEL_WIDTH - 10)
+    if timeFont then frame.time:SetFont(timeFont, 13, "") end
+    frame.time:SetShadowColor(0, 0, 0, .85)
+    frame.time:SetShadowOffset(1, -1)
+    frame.latencyText = UI.Text(frame.labels, "GameFontHighlightSmall", "", C.muted)
+    frame.latencyText:SetPoint("BOTTOMRIGHT", -5, 0)
+    frame.latencyText:SetSize(TIME_TEXT_WIDTH, 8)
     frame.latencyText:SetJustifyH("RIGHT")
-    local latencyFont = frame.latencyText:GetFont()
-    if latencyFont then frame.latencyText:SetFont(latencyFont, 9, "OUTLINE") end
-    frame.latencyText:SetTextColor(1, .28, .20, 1)
-    frame.latencyText:Hide()
+    frame.latencyText:SetWordWrap(false)
+    if timeFont then frame.latencyText:SetFont(timeFont, 8, "") end
+    frame.latencyText:SetShadowColor(0, 0, 0, .8)
+    frame.latencyText:SetShadowOffset(1, -1)
 
     frame:SetScript("OnUpdate", function() CastBar:OnUpdate() end)
     frame:SetScript("OnDragStart", function(self) if Settings().unlocked then self:StartMoving() end end)

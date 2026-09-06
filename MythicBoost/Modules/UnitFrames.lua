@@ -4,12 +4,12 @@ local UI, C = JP.UI, JP.UI.colors
 local UnitFrames = { displays = {}, parked = {}, pending = {} }
 
 local SIZE = {
-    panelWidth = 168, panelHeight = 58, portraitW = 58, portraitH = 58, ring = 1,
-    gap = -1, headerH = 22, statsH = 36, healthH = 15, powerH = 15,
+    panelWidth = 190, panelHeight = 76, portraitW = 76, portraitH = 76, ring = 1,
+    gap = -1, headerH = 26, statsH = 48, healthH = 20, powerH = 20,
     aura = 22, auraGap = 2, maxDebuffs = 8, maxBuffs = 8, maxPlayerBuffs = 16,
 }
-SIZE.width = 225
-SIZE.height = 58
+SIZE.width = 265
+SIZE.height = 76
 
 local DEFAULT_POSITION = {
     player = { "BOTTOM", -269, 2 },
@@ -19,9 +19,8 @@ local DEFAULT_BADGE_POSITION = {
     player = { class = { 64.89, 45.62 }, level = { 11.90, 11.85 } },
     target = { class = { 160.11, 45.62 }, level = { 213.10, 11.85 } },
 }
--- BuffFrame and DebuffFrame are independent Edit Mode systems. They are not
--- children of the player capsule and must remain owned by Blizzard even when
--- our replacement unit frames are enabled.
+-- Native aura internals must stay untouched: writing their layout fields
+-- taints Blizzard's later combat updates, even when configured outside combat.
 local BLIZZARD_FRAMES = { "PlayerFrame", "TargetFrame" }
 local NATIVE_AURA_FRAMES = { "BuffFrame", "DebuffFrame" }
 local XPERL_BACK = "Interface\\AddOns\\MythicBoost\\Media\\XPerl_FrameBack"
@@ -34,7 +33,7 @@ local XPERL_BAR = "Interface\\Buttons\\WHITE8X8"
 -- A single quiet shell replaces the three heavy Blizzard/X-Perl boxes. The
 -- one-pixel edge keeps the silhouette crisp; the restrained gradient gives it
 -- depth without the plastic shine that made the previous build look bulky.
-local function ModernBackdrop(frame, alpha)
+local function ModernBackdrop(frame, alpha, topAccent)
     frame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
@@ -43,8 +42,14 @@ local function ModernBackdrop(frame, alpha)
     -- Цвета берём из общих токенов UI.colors, а не объявляем свои: рядом на
     -- экране живут панели MinimalUI, окно добычи и тултип, и пять чуть разных
     -- тёмных серых читаются как пять разных аддонов.
-    frame:SetBackdropColor(C.surface[1], C.surface[2], C.surface[3], alpha or C.surface[4])
-    frame:SetBackdropBorderColor(UI.Unpack(C.surfaceEdge))
+    -- The old surface token was almost black at full opacity. A slightly
+    -- lifted panel keeps the portrait and health bars readable over game art.
+    frame:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], alpha or C.panel[4])
+    frame:SetBackdropBorderColor(UI.Unpack(C.hudEdge))
+    -- UI.Panel/Portrait may already have generic gold trim. Do not stack it
+    -- with this shell's own highlight or restore it on target changes.
+    if frame.__mbGoldTrimTop then frame.__mbGoldTrimTop:Hide() end
+    if frame.__mbGoldTrimBottom then frame.__mbGoldTrimBottom:Hide() end
     if not frame.__mbModernDepth then
         -- Объём делается НЕЙТРАЛЬНО. Раньше тут лежали оранжево-бирюзовые
         -- градиенты, один поверх в режиме ADD: это давало пластиковый блеск и
@@ -70,16 +75,17 @@ local function ModernBackdrop(frame, alpha)
         sheen:SetPoint("TOPLEFT", 1, -1)
         sheen:SetPoint("TOPRIGHT", -1, -1)
         sheen:SetHeight(1)
-        sheen:SetColorTexture(.98, .76, .22, .82)
+        sheen:SetColorTexture(UI.Unpack(C.hudAccent))
         frame.__mbModernSheen = sheen
 
         local hollow = frame:CreateTexture(nil, "BORDER", nil, 1)
         hollow:SetPoint("BOTTOMLEFT", 1, 1)
         hollow:SetPoint("BOTTOMRIGHT", -1, 1)
         hollow:SetHeight(1)
-        hollow:SetColorTexture(.20, .11, .025, .88)
+        hollow:SetColorTexture(UI.Unpack(C.hudShadow))
         frame.__mbModernHollow = hollow
     end
+    frame.__mbModernSheen:SetShown(topAccent == true)
 end
 
 local function XPerlAuraBackdrop(frame)
@@ -248,13 +254,19 @@ local function Settings()
         showHealthText = true, classColoredHealth = false, showPowerText = true,
         animatedPortrait = true, showBadges = true, badgesUnlocked = false, badgeShape = 1,
         alwaysShowTarget = true,
-        showPlayerAuras = true, showTargetAuras = true,
+        showPlayerAuras = true, showTargetAuras = true, playerAurasBeside = false,
         aurasAbove = true,
         showResourcePips = true, showEmptyResources = false,
         resourceHeight = 10, resourceGap = 2, resourceOpacity = 1,
     }
     for key, value in pairs(defaults) do
         if settings[key] == nil then settings[key] = value end
+    end
+    -- The earlier forced side layout had no user-facing control. Remove that
+    -- implicit default once, including values saved by the running old client.
+    if settings.auraLayoutRevision ~= 1 then
+        settings.playerAurasBeside = false
+        settings.auraLayoutRevision = 1
     end
     local function Clamp(key, minimum, maximum)
         local value = settings[key]
@@ -263,6 +275,8 @@ local function Settings()
         settings[key] = value
     end
     Clamp("scale", .75, 2.00)
+    if not UI.UsableNumber(settings.auraScale) then settings.auraScale = settings.scale end
+    settings.auraScale = math.max(.5, math.min(2, settings.auraScale))
     Clamp("badgeShape", 1, 4)
     Clamp("opacity", .55, 1)
     Clamp("resourceHeight", 6, 16)
@@ -292,10 +306,10 @@ local function Settings()
 end
 
 local APPEARANCE_KEYS = {
-    "scale", "opacity", "showHealthText", "classColoredHealth", "showPowerText", "animatedPortrait", "showBadges",
+    "scale", "auraScale", "opacity", "showHealthText", "classColoredHealth", "showPowerText", "animatedPortrait", "showBadges",
     "badgesUnlocked", "badgeShape",
     "alwaysShowTarget",
-    "showPlayerAuras", "showTargetAuras", "showResourcePips", "showEmptyResources",
+    "showPlayerAuras", "showTargetAuras", "playerAurasBeside", "showResourcePips", "showEmptyResources",
     "aurasAbove", "resourceHeight", "resourceGap", "resourceOpacity",
 }
 
@@ -536,7 +550,7 @@ local function BuildResourcePips(display)
     display.resourceRow = row
 end
 
-local function UpdateResourcePips(display)
+local function UpdateResourcePipsState(display)
     local row = display and display.resourceRow
     if not row then return end
     local settings = ActiveSettings()
@@ -606,18 +620,24 @@ local function UpdateResourcePips(display)
     row:SetShown(anyVisible)
 end
 
-local function ReadUnitName(unit, fallback)
-    -- У encounter-юнитов один API иногда возвращает secret value, хотя
-    -- другой всё ещё отдаёт обычную строку. Не оставляем пустую шапку цели.
+local function UpdateResourcePips(display)
+    UpdateResourcePipsState(display)
+    if display and display.engineAuras then JP.AuraDisplay:Position(display, ActiveSettings()) end
+end
+
+local function ReadUnitName(unit)
+    -- Names can be restricted in combat but FontString:SetText accepts them.
+    -- Pass them through without comparison, formatting or caching another unit.
     for _, getter in ipairs({ UnitName, GetUnitName, UnitNameUnmodified }) do
         if type(getter) == "function" then
             local ok, name = pcall(getter, unit)
-            if ok and type(name) == "string" and not issecretvalue(name) and name ~= "" then
-                return name
+            if ok then
+                if issecretvalue(name) then return name end
+                if type(name) == "string" and name ~= "" then return name end
             end
         end
     end
-    return fallback or ""
+    return ""
 end
 
 local function ReadUnitCast(unit)
@@ -745,10 +765,17 @@ function UnitFrames:UpdateCast(display, event)
     display.castBar:Show()
 end
 
+local function UpdateInterruptMarker(display)
+    if not display.interruptMarker then return end
+    local settings = JP.InterruptAssist and JP.InterruptAssist.Settings and JP.InterruptAssist.Settings()
+    local marker = settings and settings.marker or 0
+    display.interruptMarker.icon:SetTexture(marker > 0
+        and ("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. marker) or nil)
+    display.interruptMarker:SetShown(marker > 0)
+end
+
 local function UpdateIdentity(display)
-    local name = ReadUnitName(display.unit, display.cachedName)
-    if name ~= "" then display.cachedName = name end
-    display.name:SetText(name)
+    display.name:SetText(ReadUnitName(display.unit))
     local level = UnitLevel(display.unit)
     display.level:SetText(UI.UsableNumber(level) and tostring(level) or "")
     local _, class = UnitClass(display.unit)
@@ -768,6 +795,7 @@ local function UpdateIdentity(display)
         display.group:SetText(groupText)
     end
     display.portrait:SetUnit(display.unit)
+    UpdateInterruptMarker(display)
 end
 
 local function UpdateState(display)
@@ -786,7 +814,7 @@ local function UpdateState(display)
     display.portrait:SetStateAlpha(alpha)
     if display.highlight then display.highlight:SetShown(display.hovered and true or false) end
     for _, frame in ipairs(display.xperlPanels or {}) do
-        frame:SetBackdropBorderColor(.25, .29, .34, .96)
+        frame:SetBackdropBorderColor(UI.Unpack(C.hudEdge))
     end
 end
 
@@ -835,46 +863,6 @@ local function SortAuras(a, b)
     return (a.auraInstanceID or 0) < (b.auraInstanceID or 0)
 end
 
-local function AuraTooltip(icon)
-    if not icon.display or not icon.auraInstanceID then return end
-    -- Anchoring to the individual icon made the tooltip walk across the
-    -- resource pips and unit frame as the aura order changed. The outside
-    -- edge of the complete unit frame is stable and leaves the HUD readable.
-    GameTooltip:SetOwner(icon.display.holder,
-        icon.display.mirror and "ANCHOR_LEFT" or "ANCHOR_RIGHT", 8, 0)
-    local setter = icon.harmful and GameTooltip.SetUnitDebuffByAuraInstanceID or GameTooltip.SetUnitBuffByAuraInstanceID
-    local shown = type(setter) == "function" and pcall(setter, GameTooltip, icon.display.unit, icon.auraInstanceID)
-    if not shown and icon.spellId and type(GameTooltip.SetSpellByID) == "function" then
-        shown = pcall(GameTooltip.SetSpellByID, GameTooltip, icon.spellId)
-    end
-    if shown then
-        if icon.display.unit == "player" and not icon.harmful then
-            GameTooltip:AddLine(L("Правый клик — снять эффект"), C.muted[1], C.muted[2], C.muted[3])
-        end
-        GameTooltip:Show()
-    else GameTooltip:Hide() end
-end
-
-local SafeAura = UI.SafeAura
-
-local function CancelPlayerBuff(icon, mouseButton)
-    if mouseButton ~= "RightButton" or not icon.display or icon.display.unit ~= "player"
-        or icon.harmful or not icon.auraInstanceID or type(CancelUnitBuff) ~= "function" then return end
-    -- CancelUnitBuff still accepts an aura index, while the modern aura API
-    -- gives our stable button an instance ID. Resolve the current index at the
-    -- moment of the hardware click so sorting/removal cannot cancel a neighbor.
-    for index = 1, 40 do
-        local data, blocked = SafeAura("player", index, "HELPFUL")
-        if blocked or not data then break end
-        local instanceID = data.auraInstanceID
-        if not issecretvalue(instanceID) and instanceID == icon.auraInstanceID then
-            pcall(CancelUnitBuff, "player", index)
-            GameTooltip:Hide()
-            return
-        end
-    end
-end
-
 local function AuraTicker(row, elapsed)
     row.elapsed = (row.elapsed or 0) + elapsed
     if row.elapsed < .1 then return end
@@ -909,9 +897,7 @@ local function BuildAuraRow(display, count, anchor, y, columns)
         -- аур: ближайший/первый эффект находится у правого края портрета.
         icon:SetPoint(display.mirror and "TOPRIGHT" or "TOPLEFT",
             display.mirror and -offset or offset, -line * (SIZE.aura + SIZE.auraGap))
-        icon:SetScript("OnEnter", AuraTooltip)
-        icon:SetScript("OnLeave", GameTooltip_Hide)
-        icon:SetScript("OnClick", CancelPlayerBuff)
+        icon:EnableMouse(false) -- Demo artwork; real auras use secure AuraDisplay.
         icon:Hide()
         row.icons[index] = icon
     end
@@ -920,55 +906,7 @@ local function BuildAuraRow(display, count, anchor, y, columns)
     return row
 end
 
-local function ReadAuras(display)
-    -- Indexed aura enumeration is restricted in combat on Retail 12.1.
-    -- Preserve the last safe snapshot instead of wiping it and making a
-    -- forbidden API call. PLAYER_REGEN_ENABLED rebuilds it immediately.
-    if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
-    wipe(display.cache)
-    if not C_UnitAuras or IsBoolean(UnitExists(display.unit), false) then return end
-    for _, filter in ipairs({ "HARMFUL", "HELPFUL" }) do
-        for index = 1, 40 do
-            local data, blocked = SafeAura(display.unit, index, filter)
-            -- Ауры закрыты целиком: ряд останется с тем, что уже прочитано,
-            -- вместо сорока подряд падающих вызовов на каждое UNIT_AURA.
-            if blocked then return end
-            if not data then break end
-            local instanceID = data.auraInstanceID
-            if instanceID and not issecretvalue(instanceID) then display.cache[instanceID] = data end
-        end
-    end
-end
-
-local function ApplyAuraUpdate(display, updateInfo)
-    -- updateInfo and aura-instance lookups are protected in restricted combat.
-    -- Never inspect them from addon code; keep the pre-combat snapshot.
-    if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
-    if not updateInfo then ReadAuras(display); return true end
-    -- isFullUpdate в Midnight приходит ЗАЩИЩЁННЫМ булевым, и прямая проверка
-    -- `if updateInfo.isFullUpdate` на нём падает. Читать поле можно, нельзя
-    -- только использовать его как условие, поэтому сначала снимаем метку.
-    --
-    -- IsBoolean здесь не годится: он вернул бы false и для защищённого
-    -- значения, то есть увёл бы в инкрементальный разбор ровно тогда, когда
-    -- мы не знаем, что произошло. При нечитаемом значении пересобираем ауры
-    -- целиком — лишний пересбор дешевле потерянной ауры.
-    local full = updateInfo.isFullUpdate
-    local readable = type(full) == "boolean" and not issecretvalue(full)
-    if not readable or full == true then ReadAuras(display); return true end
-    local changed = false
-    for _, data in ipairs(updateInfo.addedAuras or {}) do
-        if data.auraInstanceID then display.cache[data.auraInstanceID] = data; changed = true end
-    end
-    for _, id in ipairs(updateInfo.updatedAuraInstanceIDs or {}) do
-        display.cache[id] = C_UnitAuras.GetAuraDataByAuraInstanceID(display.unit, id); changed = true
-    end
-    for _, id in ipairs(updateInfo.removedAuraInstanceIDs or {}) do
-        display.cache[id] = nil; changed = true
-    end
-    return changed
-end
-
+-- Preview data only. Live aura updates never enter these Lua renderers.
 local function FillIcon(icon, data, display)
     -- В Midnight часть значений приходит защищёнными, и icon у ауры — одно из
     -- них. SetTexture на таком значении не падает, а молча ставит пустоту:
@@ -1028,6 +966,7 @@ local function RefreshAuras(display)
     local settings = ActiveSettings()
     local enabled = display.unit == "player" and settings.showPlayerAuras ~= false
         or display.unit == "target" and settings.showTargetAuras ~= false
+    if display.engineAuras then return end
     if not enabled then
         LayoutRow(display.debuffRow, {})
         LayoutRow(display.buffRow, {})
@@ -1143,6 +1082,8 @@ end
 function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     options = options or {}
     local display = { unit = unit, mirror = mirror, cache = {}, ownBuffsOnly = ownBuffsOnly }
+    -- The native player aura renderer remains live under combat restrictions.
+    display.engineAuras = not options.preview
     local holder = CreateFrame("Frame", nil, options.parent or self.container)
     holder:SetSize(SIZE.width, SIZE.height)
     holder:SetMovable(true)
@@ -1158,15 +1099,39 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
 
     -- The animated 3D head remains the visual anchor, but is now flush with a
     -- compact body instead of sitting between several unrelated bevels.
-    display.portrait = UI.Portrait(holder, SIZE.portraitW - SIZE.ring * 2, SIZE.ring)
+    display.portrait = UI.Portrait(holder, SIZE.portraitW - SIZE.ring * 2, SIZE.ring, C.hudEdge)
     display.portrait.ring:SetSize(SIZE.portraitW, SIZE.portraitH)
     display.portrait.ring:SetPoint(mirror and "TOPRIGHT" or "TOPLEFT", holder,
         mirror and "TOPRIGHT" or "TOPLEFT", 0, 0)
 
-    ModernBackdrop(display.portrait.ring, .98)
+    ModernBackdrop(display.portrait.ring, .98, true)
 
-    local namePanel = UI.Panel(holder)
-    ModernBackdrop(namePanel, .95)
+    if unit == "player" then
+        local marker = CreateFrame("Button", nil, display.portrait.ring, "BackdropTemplate")
+        marker:SetSize(19, 19)
+        marker:SetPoint("TOPLEFT", display.portrait.ring, "TOPLEFT", 4, -4)
+        marker:SetFrameLevel(display.portrait.model:GetFrameLevel() + 2)
+        marker:RegisterForClicks("LeftButtonUp")
+        marker:SetScript("OnClick", function()
+            if JP.InterruptAssist then JP.InterruptAssist:CycleMarker() end
+        end)
+        marker:SetScript("OnEnter", function(button)
+            GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+            GameTooltip:SetText(L("ЛКМ — следующая свободная метка"))
+            GameTooltip:AddLine(L("В бою смена метки применяется после боя."), .62, .68, .76, true)
+            GameTooltip:Show()
+        end)
+        marker:SetScript("OnLeave", GameTooltip_Hide)
+        BadgeBackdrop(marker)
+        marker.icon = marker:CreateTexture(nil, "ARTWORK")
+        marker.icon:SetPoint("TOPLEFT", 2, -2)
+        marker.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        marker:Hide()
+        display.interruptMarker = marker
+    end
+
+    local namePanel = UI.Panel(holder, C.surface, C.hudEdge)
+    ModernBackdrop(namePanel, .95, true)
     namePanel:SetSize(SIZE.panelWidth, SIZE.headerH)
     namePanel:SetPoint(mirror and "TOPRIGHT" or "TOPLEFT", display.portrait.ring,
         mirror and "TOPLEFT" or "TOPRIGHT", mirror and 1 or SIZE.gap, 0)
@@ -1296,7 +1261,7 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     end
     display.classPanel = classPanel
 
-    local statsPanel = UI.Panel(holder)
+    local statsPanel = UI.Panel(holder, C.surface, C.hudEdge)
     ModernBackdrop(statsPanel, .95)
     statsPanel:SetSize(SIZE.panelWidth, SIZE.statsH)
     statsPanel:SetPoint("TOPLEFT", namePanel, "BOTTOMLEFT", 0, 0)
@@ -1319,7 +1284,7 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     highlightFrame:SetFrameLevel(statsPanel:GetFrameLevel() + 1)
     highlightFrame:SetAllPoints(holder)
     highlightFrame:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-    highlightFrame:SetBackdropBorderColor(.30, .76, 1, .58)
+    highlightFrame:SetBackdropBorderColor(.50, .46, .36, .45)
     highlightFrame:Hide()
     display.highlight = highlightFrame
 
@@ -1336,7 +1301,7 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
 
     if unit == "player" then BuildResourcePips(display) end
 
-    if showAuras then
+    if showAuras and options.preview then
         if unit == "player" then
             display.buffRow = BuildAuraRow(display, SIZE.maxPlayerBuffs, holder, -8, SIZE.maxBuffs)
             display.debuffRow = BuildAuraRow(display, SIZE.maxDebuffs, display.buffRow, -SIZE.auraGap)
@@ -1531,6 +1496,7 @@ function UnitFrames:BuildButton(display, name)
     display.button = button
     if display.levelPanel then display.levelPanel:SetFrameLevel(button:GetFrameLevel() + 2) end
     if display.classPanel then display.classPanel:SetFrameLevel(button:GetFrameLevel() + 2) end
+    if display.interruptMarker then display.interruptMarker:SetFrameLevel(button:GetFrameLevel() + 3) end
 end
 
 function UnitFrames:Hider()
@@ -1606,7 +1572,7 @@ local function ShowTargetPlaceholder(display, moving)
     display.panel:SetSize(SIZE.panelWidth, SIZE.headerH)
     display.panel:SetPoint(display.mirror and "TOPRIGHT" or "TOPLEFT", display.portrait.ring,
         display.mirror and "TOPLEFT" or "TOPRIGHT", display.mirror and 1 or SIZE.gap, 0)
-    ModernBackdrop(display.panel, .82)
+    ModernBackdrop(display.panel, .82, true)
     display.statsPanel:ClearAllPoints()
     display.statsPanel:SetSize(SIZE.panelWidth, SIZE.statsH)
     display.statsPanel:SetPoint("TOPLEFT", display.panel, "BOTTOMLEFT", 0, 0)
@@ -1614,7 +1580,7 @@ local function ShowTargetPlaceholder(display, moving)
     display.health:SetMinMaxValues(0, 1)
     display.health:SetValue(1)
     display.health:SetAlpha(.46)
-    MatteBarColor(display.health, .34, .25, .08)
+    MatteBarColor(display.health, .16, .18, .21)
     display.healthValue:SetText("")
     display.power:SetMinMaxValues(0, 1)
     display.power:SetValue(1)
@@ -1650,7 +1616,7 @@ local function RestoreTargetPlaceholder(display)
     display.panel:SetSize(SIZE.panelWidth, SIZE.headerH)
     display.panel:SetPoint(mirror and "TOPRIGHT" or "TOPLEFT", display.portrait.ring,
         mirror and "TOPLEFT" or "TOPRIGHT", mirror and 1 or SIZE.gap, 0)
-    ModernBackdrop(display.panel, .95)
+    ModernBackdrop(display.panel, .95, true)
     display.name:Show()
     display.statsPanel:ClearAllPoints()
     display.statsPanel:SetSize(SIZE.panelWidth, SIZE.statsH)
@@ -1690,17 +1656,16 @@ function UnitFrames:RefreshDisplay(display, full)
     display.holder:SetAlpha(1)
     UpdateIdentity(display); UpdateHealth(display); UpdatePower(display); UpdateResourcePips(display); UpdateState(display)
     self:UpdateCast(display)
-    if full and display.debuffRow then
-        local settings = ActiveSettings()
-        local aurasEnabled = display.unit == "player" and settings.showPlayerAuras ~= false
-            or display.unit == "target" and settings.showTargetAuras ~= false
-        if aurasEnabled then ReadAuras(display) else wipe(display.cache) end
-        RefreshAuras(display)
-    end
+    if full and display.engineAuras then JP.AuraDisplay:Refresh(display) end
 end
 
 function UnitFrames:RefreshAll()
     for _, display in pairs(self.displays) do self:RefreshDisplay(display, true) end
+end
+
+function UnitFrames:RefreshInterruptMarker()
+    local display=self.displays and self.displays.player
+    if display then UpdateInterruptMarker(display) end
 end
 
 function UnitFrames:ApplySettings()
@@ -1725,16 +1690,13 @@ function UnitFrames:ApplySettings()
         if display.classPanel then display.classPanel:SetShown(settings.showBadges ~= false) end
         self:ConfigureBadgeDisplay(display)
         UpdateResourcePips(display)
-        if display.debuffRow then
-            local aurasEnabled = display.unit == "player" and settings.showPlayerAuras ~= false
-                or display.unit == "target" and settings.showTargetAuras ~= false
-            if aurasEnabled then ReadAuras(display) else wipe(display.cache) end
-            RefreshAuras(display)
-        end
+        if display.engineAuras then JP.AuraDisplay:Configure(display, settings) end
     end
     local replacesBlizzard = settings.enabled ~= false and settings.hideBlizzard ~= false
     if replacesBlizzard then self:HideBlizzard() else self:RestoreBlizzard() end
-    self:SetNativeAurasHidden(replacesBlizzard and settings.showPlayerAuras ~= false)
+    local player = self.displays and self.displays.player
+    self:SetNativeAurasHidden(replacesBlizzard and settings.showPlayerAuras ~= false
+        and player ~= nil and player.auraReady == true)
     return true
 end
 
@@ -2075,8 +2037,7 @@ end
 
 function UnitFrames:QueuePortraitRefresh(display)
     if not display or not display.portrait then return end
-    display.portraitRefreshToken = (display.portraitRefreshToken or 0) + 1
-    local token = display.portraitRefreshToken
+    if display.portraitRefreshPending then return end
     if not C_Timer or type(C_Timer.After) ~= "function" then
         display.portrait:SetUnit(display.unit, true)
         return
@@ -2084,9 +2045,10 @@ function UnitFrames:QueuePortraitRefresh(display)
     -- Model/portrait events commonly arrive in bursts inside a key. Rebuild
     -- once after the burst: a real form/target change still refreshes, while
     -- repeated ClearModel calls can no longer starve OnModelLoaded.
+    display.portraitRefreshPending = true
     C_Timer.After(.05, function()
-        if display.portraitRefreshToken ~= token or not display.portrait then return end
-        display.portraitRefreshToken = nil
+        display.portraitRefreshPending = nil
+        if not display.portrait then return end
         display.portrait:SetUnit(display.unit, true)
     end)
 end
@@ -2102,10 +2064,7 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
             if display.portrait and display.portrait.unit ~= display.unit then
                 display.portrait:SetUnit(display.unit)
             end
-            if display.debuffRow then
-                ReadAuras(display)
-                RefreshAuras(display)
-            end
+            if display.engineAuras then JP.AuraDisplay:Refresh(display) end
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
         self:RefreshDispelSet(); self:RefreshAll()
@@ -2123,19 +2082,13 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
             RefreshAuras(self.displays.player)
         end
     elseif event == "PLAYER_TARGET_CHANGED" then
+        JP.AuraDisplay:Refresh(self.displays.target)
         self:RefreshDisplay(self.displays.target, true)
         self:QueuePortraitRefresh(self.displays.target)
     else
         local display = unit and self.displays[unit]
         if not display then return end
-        if event == "UNIT_AURA" then
-            local settings = ActiveSettings()
-            local aurasEnabled = display.unit == "player" and settings.showPlayerAuras ~= false
-                or display.unit == "target" and settings.showTargetAuras ~= false
-            if display.debuffRow and aurasEnabled and ApplyAuraUpdate(display, updateInfo) then
-                RefreshAuras(display)
-            end
-        elseif event:find("^UNIT_SPELLCAST") then self:UpdateCast(display, event)
+        if event:find("^UNIT_SPELLCAST") then self:UpdateCast(display, event)
         elseif event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then UpdateHealth(display); UpdateState(display)
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER"
             or event == "UNIT_POWER_POINT_CHARGE" then
@@ -2162,7 +2115,7 @@ function UnitFrames:Enable()
     events:RegisterEvent("RUNE_POWER_UPDATE")
     for _, event in ipairs({
         "UNIT_HEALTH", "UNIT_MAXHEALTH", "UNIT_POWER_UPDATE", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER",
-        "UNIT_AURA", "UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_NAME_UPDATE",
+        "UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_NAME_UPDATE",
         "UNIT_FACTION", "UNIT_CONNECTION",
     }) do events:RegisterUnitEvent(event, "player", "target") end
     for _, event in ipairs({

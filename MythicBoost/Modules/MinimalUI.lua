@@ -278,6 +278,26 @@ local function MuteActionSuggestionGlows(self, button)
     end
 end
 
+function MinimalUI:PinQueueStatus(button)
+    if not button or not Minimap then return end
+    if self.queueStatusHookedButton ~= button and type(button.UpdatePosition) == "function" then
+        self.queueStatusHookedButton = button
+        hooksecurefunc(button, "UpdatePosition", function() self:PinQueueStatus(button) end)
+    end
+    if not self.queueStatusPinned or self.queueStatusPositioning then return end
+    if _G.EditModeManagerFrame and EditModeManagerFrame:IsShown() then return end
+    if InCombatLockdown() and button:IsProtected() then return end
+    local point, relative, relativePoint, x, y = button:GetPoint()
+    if point == "BOTTOMLEFT" and relative == Minimap and relativePoint == "BOTTOMLEFT"
+        and x == 6 and y == 6 then return end
+    -- MicroMenuContainer:Layout calls UpdatePosition when the eye appears.
+    -- Finish its layout immediately; don't wait for the five-second fallback.
+    self.queueStatusPositioning = true
+    button:ClearAllPoints()
+    button:SetPoint("BOTTOMLEFT", Minimap, "BOTTOMLEFT", 6, 6)
+    self.queueStatusPositioning = nil
+end
+
 local function StyleMinimapZoneLabel(self, enabled)
     -- SexyMap прячет штатную кнопку зоны и создаёт собственную. Используем её
     -- первой, иначе мы двигаем невидимый Blizzard-фрейм, а видимая строка так
@@ -298,6 +318,7 @@ local function StyleMinimapZoneLabel(self, enabled)
     end
     if not button then return end
     if enabled and InCombatLockdown() then return end
+    self.queueStatusPinned = enabled
 
     if not self.minimapZoneLayout then
         local state = { width = button:GetWidth(), height = button:GetHeight(), parent = button:GetParent(), points = {} }
@@ -367,8 +388,17 @@ local function StyleMinimapZoneLabel(self, enabled)
         Place(difficulty, "difficulty", "TOPRIGHT", "TOPRIGHT", -4, -29)
         Place(guildDifficulty, "guildDifficulty", "TOPRIGHT", "TOPRIGHT", -4, -29)
         Place(challengeDifficulty, "challengeDifficulty", "TOPRIGHT", "TOPRIGHT", -4, -29)
+        -- Move the native indicator container, not its mail child: Blizzard's
+        -- horizontal layout owns child anchors when mail/orders appear.
+        local indicators = _G.MinimapCluster and MinimapCluster.IndicatorFrame
+        local mailWidget = indicators or _G.MiniMapMailFrame
+        local textWidth = label and type(label.GetStringWidth) == "function" and label:GetStringWidth()
+        textWidth = UI.UsableNumber(textWidth) and math.min(width, textWidth) or width
+        Place(mailWidget, "mailIndicators", "LEFT", "TOPLEFT", 8 + textWidth + 6, -14)
+        if mailWidget then mailWidget:SetFrameLevel(Minimap:GetFrameLevel() + 31) end
         Place(queueStatus, "queueStatus", "BOTTOMLEFT", "BOTTOMLEFT", 6, 6)
         if queueStatus then queueStatus:SetFrameLevel(Minimap:GetFrameLevel() + 31) end
+        self:PinQueueStatus(queueStatus)
 
         -- SexyMap намеренно перехватывает SetPoint штатных часов и возвращает
         -- их наружу. Не боремся с его hooksecurefunc: показываем внутри карты
@@ -774,6 +804,8 @@ function MinimalUI:StyleObjectiveTracker(enabled)
         local fittedScale = trackerWidth > 0 and mapWidth / trackerWidth or .75
         tracker:SetScale(math.max(.70, math.min(1, fittedScale)))
         local microAnchor = self.microMenuAnchor
+        -- Never anchor the protected quest tracker to our actively changing
+        -- timer: protected anchor dependencies can propagate into its layout.
         if microAnchor and microAnchor:IsShown() then
             tracker:SetPoint("TOPRIGHT", microAnchor, "BOTTOMRIGHT", 0, -8)
         else
@@ -915,39 +947,29 @@ function MinimalUI:StyleMicroMenu(enabled)
         anchor:EnableMouse(false)
         anchor.rail = anchor:CreateTexture(nil, "BACKGROUND")
         anchor.rail:SetAllPoints()
-        anchor.rail:SetColorTexture(.035, .024, .010, .72)
+        anchor.rail:SetColorTexture(C.surface[1], C.surface[2], C.surface[3], .78)
         anchor.railTop = anchor:CreateTexture(nil, "BORDER")
         anchor.railTop:SetPoint("TOPLEFT", 0, 0)
         anchor.railTop:SetPoint("TOPRIGHT", 0, 0)
         anchor.railTop:SetHeight(1)
-        anchor.railTop:SetColorTexture(.98, .76, .22, .82)
+        anchor.railTop:SetColorTexture(unpack(C.hudAccent))
         anchor.railBottom = anchor:CreateTexture(nil, "BORDER")
         anchor.railBottom:SetPoint("BOTTOMLEFT", 0, 0)
         anchor.railBottom:SetPoint("BOTTOMRIGHT", 0, 0)
         anchor.railBottom:SetHeight(1)
-        anchor.railBottom:SetColorTexture(.20, .11, .025, .90)
+        anchor.railBottom:SetColorTexture(unpack(C.hudShadow))
         self.microMenuAnchor = anchor
     end
 
     local anchor = self.microMenuAnchor
     local mapWidth = math.max(120, Minimap:GetWidth() or 245)
-    -- Ряд шире карты и почти без промежутка между кнопками. Вся выигранная
-    -- ширина уходит в раскладку ниже: чем её больше, тем больше колонок
-    -- помещается и тем меньше строк приходится занимать под картой.
-    -- Blizzard micro-button frames contain roughly three pixels of transparent
-    -- side padding. A numeric gap of zero therefore still produced obvious
-    -- visual holes. Compensate that template padding in the slot pitch: the
-    -- visible artwork now meets edge-to-edge while each native button retains
-    -- its complete clickable frame.
-    -- Весь ряд обязан помещаться ровно под квадратом: ни персонаж слева,
-    -- ни системная кнопка справа не выходят за вертикали рамки миникарты.
-    -- Нулевой шаг: штатные кнопки равномерно делят всю ширину карты без
-    -- дополнительного промежутка между кликабельными слотами.
-    local rowWidth, gap = mapWidth, 0
+    -- Equal inner margins and a small inter-button gutter keep the full row
+    -- inside the map edges without making native hit rectangles overlap.
+    local rowWidth, gap, padding = mapWidth, 1, 3
     anchor:ClearAllPoints()
     -- The minimap sits against the right screen edge. Any extra footer width
     -- must grow leftward; centring it clipped the final buttons off-screen.
-    anchor:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 0, -4)
+    anchor:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", 0, -6)
     anchor:SetWidth(rowWidth)
     anchor:Show()
 
@@ -993,7 +1015,7 @@ function MinimalUI:StyleMicroMenu(enabled)
 
     -- Every visible Blizzard micro button stays in one even row below the map.
     local columns, rows = count, 1
-    local targetWidth = (availableWidth - gap * (columns - 1)) / columns
+    local targetWidth = (availableWidth - padding * 2 - gap * (columns - 1)) / columns
 
     local uiScale = type(UIParent.GetEffectiveScale) == "function" and UIParent:GetEffectiveScale() or 1
 
@@ -1007,7 +1029,7 @@ function MinimalUI:StyleMicroMenu(enabled)
         local parentScale = parent and type(parent.GetEffectiveScale) == "function"
             and parent:GetEffectiveScale() or uiScale
         local scale = (targetWidth / nativeWidth) * (uiScale / math.max(.01, parentScale))
-        scale = math.max(.35, math.min(1.35, scale))
+        scale = math.min(1.35, scale)
         scales[index] = scale
         rowHeight = math.max(rowHeight, nativeHeight * scale * (parentScale / math.max(.01, uiScale)))
     end
@@ -1023,7 +1045,7 @@ function MinimalUI:StyleMicroMenu(enabled)
         end
         slot:ClearAllPoints()
         slot:SetPoint("TOPLEFT", anchor, "TOPLEFT",
-            column * (targetWidth + gap), -row * (rowHeight + gap))
+            padding + column * (targetWidth + gap), -padding - row * (rowHeight + gap))
         slot:SetSize(targetWidth, rowHeight)
         slot:Show()
 
@@ -1035,7 +1057,7 @@ function MinimalUI:StyleMicroMenu(enabled)
         button:SetPoint("CENTER", slot, "CENTER", 0, 0)
     end
     for index = count + 1, #(self.microMenuSlots or {}) do self.microMenuSlots[index]:Hide() end
-    anchor:SetHeight(rows * rowHeight + (rows - 1) * gap)
+    anchor:SetHeight(padding * 2 + rows * rowHeight + (rows - 1) * gap)
 end
 
 local ACTION_BUTTON_PREFIXES = {
@@ -2012,17 +2034,58 @@ function MinimalUI:StylePlayerAuras(_)
     if self.playerAuraAnchor then self.playerAuraAnchor:Hide() end
 end
 
+function MinimalUI:StyleTooltips(enabled)
+    JP.AuraDisplay:StyleTooltip(enabled)
+    self.tooltipSkins = self.tooltipSkins or {}
+    for _, name in ipairs({"GameTooltip", "ItemRefTooltip", "ShoppingTooltip1", "ShoppingTooltip2"}) do
+        local tip = _G[name]
+        if tip then
+            local state = self.tooltipSkins[tip]
+            if not state and enabled then
+                local skin = CreateFrame("Frame", nil, tip, "BackdropTemplate")
+                skin:SetPoint("TOPLEFT", tip, "TOPLEFT", 0, 0)
+                skin:SetPoint("BOTTOMRIGHT", tip, "BOTTOMRIGHT", 0, 0)
+                skin:SetFrameLevel(math.max(0, tip:GetFrameLevel()-1))
+                skin:EnableMouse(false)
+                skin:SetBackdrop({bgFile=SQUARE_MASK, edgeFile=SQUARE_MASK, edgeSize=1,
+                    insets={left=1,right=1,top=1,bottom=1}})
+                skin:SetBackdropColor(.025,.032,.04,.94)
+                skin:SetBackdropBorderColor(.72,.53,.12,1)
+                state={skin=skin, nine=tip.NineSlice, alpha=tip.NineSlice and tip.NineSlice:GetAlpha() or 1}
+                self.tooltipSkins[tip]=state
+                tip:HookScript("OnShow",function()
+                    local active=MythicBoostDB and MythicBoostDB.minimalUI==true
+                    state.skin:SetShown(active)
+                    if state.nine then state.nine:SetAlpha(active and 0 or state.alpha) end
+                end)
+            end
+            if state then
+                state.skin:SetShown(enabled)
+                if state.nine then state.nine:SetAlpha(enabled and 0 or state.alpha) end
+            end
+        end
+    end
+end
+
 function MinimalUI:Apply()
     local enabled = MythicBoostDB and MythicBoostDB.minimalUI == true
+    -- A disabled first install owns nothing: even a "restore" pass can
+    -- overwrite another addon's textures/visibility. Only undo our own work.
+    if not enabled and not self.appliedActive then return end
+    if InCombatLockdown() then return end
+    if enabled then self.appliedActive = true end
     local minimapEnabled = enabled and MythicBoostDB.minimalUIOptions
         and MythicBoostDB.minimalUIOptions.minimap ~= false
-    local hideBags = MythicBoostDB and MythicBoostDB.convenience
+    local hideBags = enabled and MythicBoostDB and MythicBoostDB.convenience
         and MythicBoostDB.convenience.hideBags ~= false
     if not enabled then
         RestoreVisibility(self)
     end
     self:StyleMinimap(minimapEnabled)
     self:StyleMicroMenu(enabled)
+    self:StyleTooltips(enabled)
+    if JP.DungeonTimer then JP.DungeonTimer:Layout() end
+    if JP.BossFrames then JP.BossFrames:Layout() end
     self:StyleObjectiveTracker(enabled)
     local options = MythicBoostDB and MythicBoostDB.minimalUIOptions or {}
     self:StyleStanceBar(enabled and options.hideStanceBar == true)
@@ -2073,6 +2136,7 @@ function MinimalUI:Apply()
         self.maintenanceTicker:Cancel()
         self.maintenanceTicker = nil
     end
+    if not enabled then self.appliedActive = nil end
 end
 
 function MinimalUI:SetEnabled(enabled)
@@ -2125,6 +2189,7 @@ function MinimalUI:Create()
     -- Регистрируем по одному и переживаем пропажу любого.
     for _, event in ipairs({
         "PLAYER_ENTERING_WORLD", "ADDON_LOADED",
+        "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA", "UPDATE_PENDING_MAIL",
         "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED",
         "SCENARIO_UPDATE", "TRACKED_ACHIEVEMENT_UPDATE",
         "ACTIONBAR_SLOT_CHANGED", "UPDATE_BINDINGS", "ACTIONBAR_PAGE_CHANGED",

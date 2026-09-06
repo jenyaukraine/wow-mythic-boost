@@ -100,12 +100,23 @@ def check_release_surface(entries: list[str]) -> None:
         fail("TOC version must match the first changelog release")
 
 
+def check_restricted_combat_log(entries: list[str]) -> None:
+    # Presence/function checks and pcall do not authorize these Retail APIs.
+    restricted = re.compile(r"\bCOMBAT_LOG_EVENT(?:_INTERNAL)?(?:_UNFILTERED)?\b|\bCombatLogGetCurrentEventInfo\s*\(")
+    for entry in entries:
+        if not entry.endswith('.lua'):
+            continue
+        if restricted.search((ADDON / entry).read_text(encoding='utf-8-sig')):
+            fail(f"{entry} uses a restricted raw combat-log path")
+
+
 def main() -> None:
     entries = toc_entries()
     check_load_order(entries)
     check_api_ownership(entries)
     check_limits(entries)
     check_release_surface(entries)
+    check_restricted_combat_log(entries)
     print(f"Architecture check OK: {len(entries)} TOC entries")
 
 

@@ -11,6 +11,7 @@ The addon is not just a unit-frame replacement. Group search, applicant analysis
 - Search all eight seasonal dungeons from one screen.
 - See your personal best, next rating target, and useful-loot chance on each dungeon card.
 - Filter by key range, leader rating, completed +10 runs, free party slots, tank, healer, Bloodlust, battle resurrection, previous declines, and full-party dungeon experience.
+- Keep the group list cleaner with spam detection on listing text (WTS, WTB, boosting, and paid-service patterns), while still showing a transparent rejected section with reason.
 - Use **Only rating upgrades** to focus on keys above your personal record.
 - Keep the real Blizzard result set visible: matching groups stay on top, while everything else moves to a grey section with a concrete rejection reason.
 - Allow or disable manual applications from the grey section without changing the filter calculation.
@@ -39,6 +40,18 @@ MythicBoost stores compact local summaries after Mythic+ runs: duration, timer r
 - View a guild Raider.IO leaderboard with the top three and a scrollable roster.
 - Optionally mark promising players whose gear is ahead of their current rating.
 
+## Focus interrupts without hand-written macros
+
+The **Settings → Interrupts** page has three compact sections: alert appearance,
+direct key bindings, and party markers. Focus and interrupt are secure built-in
+actions: bind two unused keys directly in the addon without creating character
+macros or using action-bar slots. Occupied key bindings are preserved.
+
+Customize and position a focus-cast alert, choose target fallback behavior, and
+coordinate focus markers with party members using MythicBoost. ItruliaQoL and MDT
+are not required. Casting still requires your keypress; this is not auto-interrupt.
+The optional sound announces a cast starting, not interrupt readiness.
+
 ## Optional compact HUD
 
 The dedicated **Unit Frames** settings page controls player and target frame scale, opacity, health and resource numbers, portrait animation, class/level badges, auras, and class-resource segments. Resource height, spacing, brightness, and empty segments can all be tuned independently.
@@ -63,4 +76,3 @@ An anonymous screenshot mode provides five fictional player/target scenes withou
 - `/mb players` - show the number of saved promising players
 - `/mb log` - show the diagnostic log
 - `/mb reload` - reload the interface
-

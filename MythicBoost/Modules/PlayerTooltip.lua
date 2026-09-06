@@ -8,6 +8,17 @@ local C = JP.UI.colors
 local TOOLTIP_BG = { JP.UI.colors.surface[1], JP.UI.colors.surface[2], JP.UI.colors.surface[3], .97 }
 local TOOLTIP_EDGE = { JP.UI.colors.surfaceEdge[1], JP.UI.colors.surfaceEdge[2], JP.UI.colors.surfaceEdge[3], .96 }
 
+-- Blizzard also routes restricted UI-widget tooltips through these hooks.
+-- IsForbidden must be checked before fields, regions or deferred callbacks.
+local function FrameAccessible(frame)
+    return frame and (not frame.IsForbidden or not frame:IsForbidden())
+end
+local function SkinAccessible(tooltip)
+    return FrameAccessible(tooltip)
+        and (not tooltip.NineSlice or FrameAccessible(tooltip.NineSlice))
+end
+local skinQueued = setmetatable({}, {__mode="k"})
+
 local function PlayerAnalysisEnabled()
     local settings = MythicBoostDB and MythicBoostDB.playerAnalysis
     return not settings or settings.enabled ~= false
@@ -18,6 +29,7 @@ local function TooltipSkinEnabled()
 end
 
 local function RestoreTooltipSkin(tooltip)
+    if not SkinAccessible(tooltip) then return end
     if not tooltip.__mbSkinApplied then return end
     if tooltip.NineSlice then
         local original = tooltip.__mbNineSliceOriginal
@@ -32,7 +44,7 @@ local function RestoreTooltipSkin(tooltip)
 end
 
 local function ApplyTooltipSkin(tooltip)
-    if not tooltip then return end
+    if not SkinAccessible(tooltip) then return end
     -- Tooltip enrichment is part of the player-analysis core, but replacing
     -- every Blizzard tooltip is visual customization. Keep that replacement
     -- coupled to the explicit Minimal UI opt-in and restore the native skin
@@ -104,12 +116,16 @@ local function ApplyTooltipSkin(tooltip)
 end
 
 local function HookTooltipSkin(tooltip)
-    if not tooltip or tooltip.__mbSkinHooked then return end
+    if not SkinAccessible(tooltip) or tooltip.__mbSkinHooked then return end
     tooltip.__mbSkinHooked = true
     tooltip:HookScript("OnShow", function(owner)
+        if not SkinAccessible(owner) then return end
         ApplyTooltipSkin(owner)
+        if skinQueued[owner] then return end
+        skinQueued[owner] = true
         C_Timer.After(0, function()
-            if owner:IsShown() then ApplyTooltipSkin(owner) end
+            skinQueued[owner] = nil
+            if SkinAccessible(owner) and owner:IsShown() then ApplyTooltipSkin(owner) end
         end)
     end)
     ApplyTooltipSkin(tooltip)
@@ -204,18 +220,35 @@ local function AddPotential(tooltip, runs, itemLevel, fullName, saveRecent)
     end
 end
 
-local function AddRunCount(tooltip, runs)
-    -- Считаем прямо из того же свежего списка Raider.IO, который показан
-    -- строками выше. Milestone-поля профиля обновляются отдельно и могли
-    -- показывать старое «2», когда в списке уже восемь рекордов +10.
-    local total = 0
-    for _, run in ipairs(type(runs) == "table" and runs or {}) do
-        if IsUsableNumber(run.level) and run.level >= 10 then total = total + 1 end
+local function TimedRunCount(keystone)
+    keystone = JP.SafeTable(keystone)
+    -- Raider.IO milestones are disjoint level ranges, not cumulative totals.
+    -- Current retail uses 10-11, 12-14 and 15+; discover the higher boundaries
+    -- from the profile rather than hard-coding a season's range list.
+    if not keystone or not IsUsableNumber(keystone.keystoneMilestone10) then return end
+    local total, lowerBound = 0, false
+    for key, value in pairs(keystone) do
+        local field = JP.SafeString(key)
+        local level = field and tonumber(field:match("^keystoneMilestone(%d+)$"))
+        if level and level >= 10 then
+            if not IsUsableNumber(value) or value < 0 or value == math.huge
+                or value ~= math.floor(value) then return end
+            total = total + value
+            -- Raider.IO's 8-bit counters are quantized from 200 and capped.
+            -- Preserve the lower-bound meaning rather than inventing precision.
+            if value >= 200 then lowerBound = true end
+        end
     end
-    tooltip:AddDoubleLine(L("Подземелий с рекордом +10 и выше"), tostring(total), .75, .78, .82, 1, .82, .25)
+    return tostring(total) .. (lowerBound and "+" or "")
+end
+
+local function AddRunCount(tooltip, keystone)
+    local count = TimedRunCount(keystone)
+    tooltip:AddDoubleLine(L("В таймер +10 и выше за сезон (Raider.IO)"), count or L("Нет данных"), .75, .78, .82, 1, .82, .25)
 end
 
 local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, saveRecent)
+    if not FrameAccessible(tooltip) then return end
     if not PlayerAnalysisEnabled() then return end
     local keystone = profile and profile.mythicKeystoneProfile
     local runs = keystone and keystone.sortedDungeons
@@ -236,8 +269,12 @@ local function AppendProfile(tooltip, profile, itemLevel, uniqueKey, fullName, s
         local chests = IsUsableNumber(run.chests) and run.chests or 0
         tooltip:AddDoubleLine(dungeonName, FormatRun(level, chests), .86, .89, .93, 1, 1, 1)
     end
-    AddRunCount(tooltip, runs)
+    AddRunCount(tooltip, keystone)
     AddPotential(tooltip, runs, itemLevel, fullName, saveRecent)
+    if JP.AddonPresence and JP.AddonPresence:IsUser(fullName) then
+        tooltip:AddLine(JP.AddonPresence:Decorate(fullName,"MythicBoost"), .2,.8,1)
+    end
+    if JP.Reviews then JP.Reviews:AddTooltip(tooltip,fullName) end
     tooltip:Show()
 end
 
@@ -253,6 +290,7 @@ local function IsUsableString(value)
 end
 
 local function AddUnitProfile(tooltip)
+    if not FrameAccessible(tooltip) then return end
     if not PlayerAnalysisEnabled() then return end
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local playerName, unit = tooltip:GetUnit()
@@ -274,11 +312,13 @@ local function AddUnitProfile(tooltip)
 end
 
 local function AddApplicantProfile(tooltip)
+    if not FrameAccessible(tooltip) then return end
     if not PlayerAnalysisEnabled() then return end
     if not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local owner = tooltip:GetOwner()
-    if not owner or not owner.memberIdx then return end
+    if not FrameAccessible(owner) or not owner.memberIdx then return end
     local parent = owner:GetParent()
+    if parent and not FrameAccessible(parent) then return end
     local applicantID = owner.applicantID or (parent and parent.applicantID)
     if not applicantID then return end
     local fullName, _, _, _, itemLevel = C_LFGList.GetApplicantMemberInfo(applicantID, owner.memberIdx)
@@ -287,6 +327,7 @@ local function AddApplicantProfile(tooltip)
 end
 
 local function AddGenericRaiderIOProfile(tooltip)
+    if not FrameAccessible(tooltip) then return end
     if not PlayerAnalysisEnabled() then return end
     if tooltip.__jpDungeonKey or not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local tooltipName = tooltip:GetName()
@@ -304,6 +345,7 @@ local function AddGenericRaiderIOProfile(tooltip)
 end
 
 local function AddSearchResultProfile(tooltip, searchResultID)
+    if not FrameAccessible(tooltip) then return end
     if JP.GroupSearchUI and JP.GroupSearchUI.IsMythicPlusSearchResult
         and not JP.GroupSearchUI:IsMythicPlusSearchResult(searchResultID) then
         JP.GroupSearchUI:HideBlizzardResultTooltip()
@@ -324,9 +366,11 @@ local function AddSearchResultProfile(tooltip, searchResultID)
 end
 
 local function AddFriendProfile()
+    if not FrameAccessible(FriendsTooltip) then return end
     if not PlayerAnalysisEnabled() then return end
     if not FriendsTooltip or not FriendsTooltip.button or not RaiderIO or type(RaiderIO.GetProfile) ~= "function" then return end
     local button = FriendsTooltip.button
+    if not FrameAccessible(button) then return end
     local characterName, realmName
     if button.buttonType == FRIENDS_BUTTON_TYPE_BNET then
         local accountInfo = C_BattleNet.GetFriendAccountInfo(button.id)
@@ -355,7 +399,7 @@ local function AddFriendProfile()
 end
 
 local function HookFriendsTooltip(module)
-    if module.friendsHooked or not FriendsTooltip then return end
+    if module.friendsHooked or not FrameAccessible(FriendsTooltip) then return end
     hooksecurefunc(FriendsTooltip, "Show", function()
         C_Timer.After(0, AddFriendProfile)
     end)
@@ -380,7 +424,9 @@ function PlayerTooltip:Create()
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, AddUnitProfile)
     GameTooltip:HookScript("OnShow", AddApplicantProfile)
     GameTooltip:HookScript("OnShow", AddGenericRaiderIOProfile)
-    GameTooltip:HookScript("OnTooltipCleared", function(tooltip) tooltip.__jpDungeonKey = nil end)
+    GameTooltip:HookScript("OnTooltipCleared", function(tooltip)
+        if FrameAccessible(tooltip) then tooltip.__jpDungeonKey = nil end
+    end)
     GameTooltip:HookScript("OnHide", function()
         if JP.GroupSearchUI and JP.GroupSearchUI.HideBlizzardResultTooltip then
             JP.GroupSearchUI:HideBlizzardResultTooltip()

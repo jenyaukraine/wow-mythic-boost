@@ -140,6 +140,8 @@ end
 
 function PositiveAuraTracker:ClearSpells()
     wipe(Settings().spellIDs)
+    Settings().filters = {}
+    if JP.AuraFilters then JP.AuraFilters:Invalidate() end
     self:ApplySettings()
 end
 
@@ -237,12 +239,20 @@ function PositiveAuraTracker:Create()
     self.frame = frame
 
     self.events = CreateFrame("Frame")
-    self.events:SetScript("OnEvent", function(_, event, unit)
-        if event ~= "UNIT_AURA" or unit == "player" then self:Refresh() end
+    self.events:SetScript("OnEvent", function(_, event)
+        if event == "UNIT_AURA" then self:QueueRefresh() else self:Refresh() end
     end)
-    self.events:RegisterEvent("PLAYER_ENTERING_WORLD")
-    self.events:RegisterEvent("PLAYER_REGEN_ENABLED")
-    self.events:RegisterUnitEvent("UNIT_AURA", "player")
+end
+
+function PositiveAuraTracker:BindEvents()
+    self.events:UnregisterAllEvents()
+    if Settings().enabled ~= true then return end
+    for _, event in ipairs({"PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
+        "GROUP_ROSTER_UPDATE", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "ZONE_CHANGED_NEW_AREA",
+        "PLAYER_MOUNT_DISPLAY_CHANGED", "PLAYER_ALIVE", "PLAYER_DEAD", "PLAYER_UNGHOST"}) do
+        self.events:RegisterEvent(event)
+    end
+    self.events:RegisterUnitEvent("UNIT_AURA", "player", "target", "focus", "pet", "party1", "party2", "party3", "party4")
 end
 
 function PositiveAuraTracker:SetUnlocked(value)
@@ -310,8 +320,12 @@ function PositiveAuraTracker:QueueRefresh()
     self.refreshQueued = true
     C_Timer.After(0, function()
         self.refreshQueued = nil
-        if self.frame and self.frame:IsShown() then self:Refresh() end
+        if not self.disabled and self.frame then self:Refresh() end
     end)
+end
+
+function PositiveAuraTracker:CancelFilterTimer()
+    if self.filterTimer then self.filterTimer:Cancel(); self.filterTimer=nil end
 end
 
 function PositiveAuraTracker:UpdateTimers()
@@ -358,6 +372,8 @@ end
 function PositiveAuraTracker:Refresh()
     if not self.frame or self.refreshing then return end
     self.refreshing = true
+    self:CancelFilterTimer()
+    self.blockedCount = 0
     local settings = Settings()
     for _, icon in ipairs(self.frame.icons) do
         icon:Hide(); icon.expiration = nil; icon.duration = nil
@@ -371,10 +387,24 @@ function PositiveAuraTracker:Refresh()
     end
 
     local visible, missing, refreshNow = 0, {}, GetTime()
+    local filters, nextBoundary = JP.AuraFilters, nil
     for _, spellID in ipairs(settings.spellIDs) do
         if visible >= math.min(8, tonumber(settings.maxIcons) or 8) then break end
         if UI.UsableNumber(spellID) then
-            local aura, blocked = UI.SafeUnitAura("player", spellID)
+            local rules = filters and filters:Rules(spellID)
+            local load = not filters or filters:CanLoad(rules)
+            local aura, blocked
+            if load then aura, blocked = UI.SafeUnitAura(rules and rules.unit or "player", spellID) end
+            local matches = true
+            if load and filters and not blocked then
+                matches, blocked = filters:Matches(rules, aura, refreshNow)
+                local boundary = filters:NextBoundary(rules, aura, refreshNow)
+                if boundary and (not nextBoundary or boundary < nextBoundary) then nextBoundary=boundary end
+            end
+            if blocked then self.blockedCount=self.blockedCount+1 end
+            -- A filter mismatch is not a missing aura. Never warn about an
+            -- absent buff just because stacks/source/time could not be read.
+            blocked = blocked or not load or not matches
             if not blocked then
                 local _, spellName, spellTexture = SpellInfo(spellID)
                 local duration = aura and UI.SafeNumber(aura.duration)
@@ -414,6 +444,13 @@ function PositiveAuraTracker:Refresh()
         icon:Show()
     end
     self.frame:SetShown(visible > 0 or settings.unlocked == true)
+    if nextBoundary and C_Timer.NewTimer then
+        self.filterTimer=C_Timer.NewTimer(math.max(.02, nextBoundary-refreshNow), function()
+            self.filterTimer=nil
+            if not self.disabled then self:Refresh() end
+        end)
+    end
+    if filters then filters:UpdateStatus() end
     self.refreshing = nil
     self:UpdateTimers()
 end
@@ -431,12 +468,16 @@ function PositiveAuraTracker:GetSpellSummary()
 end
 
 function PositiveAuraTracker:Enable()
+    self.disabled = nil
     if not self.frame then self:Create() end
+    self:BindEvents()
     self:ApplySettings()
     self:Refresh()
 end
 
 function PositiveAuraTracker:Disable()
+    self.disabled = true
+    self:CancelFilterTimer()
     if self.frame then self.frame:Hide() end
     if self.events then self.events:UnregisterAllEvents() end
 end

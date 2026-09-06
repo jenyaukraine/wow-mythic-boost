@@ -6,11 +6,37 @@ local UI = JP.UI
 local BLOODLUST_CLASSES = { HUNTER = true, MAGE = true, SHAMAN = true, EVOKER = true }
 local BATTLE_REZ_CLASSES = { DEATHKNIGHT = true, DRUID = true, PALADIN = true, WARLOCK = true }
 local MIN_KEY_LEVEL, MAX_KEY_LEVEL = 2, 40
+local SPAM_PATTERNS = {
+    " wts ", " wtb ", " wtt ", " boost service ", " boosting service ",
+    " paid ", " for gold ", " gold only ", " платно ", " продажа ", " продам ",
+    " услуги ", " услугу ", " за золото ",
+}
 
 -- Строки и числа из C_LFGList в Midnight могут быть защищёнными. Все
 -- потребители используют общий фильтр, чтобы отбор и UI видели одно значение.
 local UsableNumber, SafeString = UI.UsableNumber, UI.SafeString
 local SafeBoolean, SafeTable = UI.SafeBoolean, UI.SafeTable
+
+local function NormalizeSpamText(value)
+    if type(value) ~= "string" or value == "" then return nil end
+    local text = value:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    text = text:lower()
+    return " " .. text:gsub("[%p%s]+", " "):gsub("%s+", " ") .. " "
+end
+
+local function ContainsSpamPattern(title, comment)
+    local candidates = {}
+    local titleText = NormalizeSpamText(title)
+    local commentText = NormalizeSpamText(comment)
+    if titleText then candidates[#candidates+1]=titleText end
+    if commentText then candidates[#candidates+1]=commentText end
+    for _, text in ipairs(candidates) do
+        for _, pattern in ipairs(SPAM_PATTERNS) do
+            if text:find(pattern, 1, true) then return pattern end
+        end
+    end
+    return nil
+end
 
 local function Contains(list, value)
     if type(list) ~= "table" then return false end
@@ -253,6 +279,7 @@ local function InRange(value, minimum, maximum, allowUnknown)
 end
 
 local function DungeonSelected(filters, mapID)
+    if filters and filters.dungeonsNone then return false end
     local selected = filters and filters.dungeons
     if type(selected) ~= "table" then return true end
     local any = false
@@ -300,6 +327,7 @@ local REASON = {
     full = L("группа уже полная"),
     belowBest = L("ключ ниже твоего рекорда"),
     keyUnknown = L("уровень ключа не распознан"),
+    spam = L("рекламный/платный пост"),
     recordUnknown = L("не найден твой рекорд подземелья"),
     roleFit = L("нет места под роли твоей пати"),
     tank = L("в группе нет танка"),
@@ -313,6 +341,7 @@ local REASON = {
     runsUnknown = L("нет данных Raider.IO о лидере"),
     runs = L("мало ключей +10 у лидера"),
     readError = L("ошибка чтения результата"),
+    dataUnavailable = L("данные группы временно недоступны аддону"),
 }
 
 local function Reject(match, reason, actionable)
@@ -357,12 +386,29 @@ local function BuildMatch(searchResultID, filters, runtime, party)
             members = 0, score = 0, bestLevel = 0,
         }, REASON.delisted, false)
     end
+    -- Chat-messaging lockdown may hide the whole result, including activities.
+    -- An unreadable dungeon is NOT a dungeon the player excluded.
+    if not SafeTable(info) or not GetActivityID(info) then
+        return Reject({searchResultID=searchResultID, dungeon=L("Данные группы недоступны"),
+            members=0, score=0, bestLevel=0, dataUnavailable=true}, REASON.dataUnavailable, false)
+    end
     filters = filters or {}
     local members = UsableNumber(info.numMembers) and info.numMembers or 0
 
     local activityID = GetActivityID(info)
     local activity = activityID and C_LFGList.GetActivityInfoTable(activityID)
     local title, comment = SafeString(info.name), SafeString(info.comment)
+    if filters.hideSpamListings ~= false then
+        local spamMarker = ContainsSpamPattern(title, comment)
+        if spamMarker then
+            return Reject({
+                searchResultID = searchResultID,
+                dungeon = L("Рекламное объявление"),
+                members = 0, score = 0, bestLevel = 0,
+                spamMarker = spamMarker,
+            }, REASON.spam, false)
+        end
+    end
     local keyLevel = ParseKeyLevel(title) or ParseKeyLevel(comment)
 
     local run = PlayerDungeon(activityID)
@@ -423,6 +469,10 @@ local function BuildMatch(searchResultID, filters, runtime, party)
 
     -- Сначала отбираем подземелье: activityID остаётся обычным числом даже
     -- тогда, когда Blizzard защищает пользовательское название объявления.
+    if not mapID then
+        match.dataUnavailable = true
+        return Reject(match, REASON.dataUnavailable, false)
+    end
     if not DungeonSelected(filters, mapID) then return Reject(match, REASON.dungeon) end
 
     -- Ключ ниже личного рекорда рейтинг не поднимет — такие группы прячем,
@@ -570,12 +620,16 @@ function AutoMatch:Apply(match, editBeforeApply)
     -- button may also be clicked synchronously in the same hardware event.
     -- Shift deliberately keeps the dialog open for role/note editing.
     if type(LFGListApplicationDialog_Show) == "function" and LFGListApplicationDialog then
-        if not editBeforeApply and type(SetLFGRoles) == "function"
+        local roleReady = false
+        if type(SetLFGRoles) == "function"
             and type(GetSpecialization) == "function" and type(GetSpecializationRole) == "function" then
             local spec = GetSpecialization()
             local role = spec and GetSpecializationRole(spec)
             if role == "TANK" or role == "HEALER" or role == "DAMAGER" then
-                pcall(SetLFGRoles, role == "TANK", role == "HEALER", role == "DAMAGER")
+                -- The first argument is the independent leader preference,
+                -- not tank. Omitting it registered healers as tanks.
+                local leader = type(GetLFGRoles) == "function" and GetLFGRoles() or false
+                roleReady = pcall(SetLFGRoles, leader, role == "TANK", role == "HEALER", role == "DAMAGER")
             end
         end
         local ok = pcall(LFGListApplicationDialog_Show, LFGListApplicationDialog, searchResultID)
@@ -596,7 +650,7 @@ function AutoMatch:Apply(match, editBeforeApply)
             -- application is already sent; never click the stale button twice.
             if not LFGListApplicationDialog:IsShown() then return true end
             local signUp = LFGListApplicationDialog.SignUpButton
-            if signUp and signUp:IsEnabled() then
+            if roleReady and signUp and signUp:IsEnabled() then
                 local clicked = pcall(signUp.Click, signUp)
                 if clicked then return true end
             end
@@ -643,4 +697,5 @@ function AutoMatch:Enable() end
 function AutoMatch:Disable() ResetCache() end
 function AutoMatch:Destroy() ResetCache() end
 JP.AutoMatch = AutoMatch
+if JP.IsTest then AutoMatch.TestBuildMatch = BuildMatch end
 JP:RegisterModule("AutoMatch", AutoMatch)

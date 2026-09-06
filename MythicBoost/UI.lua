@@ -18,6 +18,7 @@ UI.colors = {
     amber     = { 1, .74, .24, 1 },
     red       = { .93, .38, .38, 1 },
     window    = { .043, .055, .075, .97 },
+    windowContent = { .063, .079, .102, .18 },
     panel     = { .063, .079, .102, .95 },
     raised    = { .090, .112, .140, .96 },
     field     = { .028, .036, .048, .95 },
@@ -36,6 +37,10 @@ UI.colors = {
     -- аддонов; одинаковые — как один интерфейс.
     surface     = { .014, .020, .028, .94 },
     surfaceEdge = { .78, .56, .12, .98 },
+    -- Persistent HUD elements use quieter edges than the large menu panels.
+    hudEdge     = { .30, .32, .34, .92 },
+    hudAccent   = { .60, .49, .29, .55 },
+    hudShadow   = { .008, .011, .016, .88 },
 }
 
 local C = UI.colors
@@ -66,8 +71,13 @@ end
 function UI.SafeUnitAura(unit, spellID)
     if not C_UnitAuras or type(C_UnitAuras.GetUnitAuraBySpellID) ~= "function"
         or not UI.UsableNumber(spellID) then return nil, true end
+    if type(C_UnitAuras.AuraIsPrivate) == "function" then
+        local ok, private = pcall(C_UnitAuras.AuraIsPrivate, spellID)
+        if not ok or JP.SafeOptionalBoolean(private) ~= false then return nil, true end
+    end
     local ok, data = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
     if not ok or JP.IsSecret(data) then return nil, true end
+    if data ~= nil and type(data) ~= "table" then return nil, true end
     return data, false
 end
 
@@ -181,6 +191,48 @@ function UI.Line(parent, color)
     texture:SetColorTexture(Unpack(color or C.lineSoft))
     texture:SetHeight(1)
     return texture
+end
+
+-- Shared, quiet HUD primitives. These create only owned frames; no skinning
+-- or recursive traversal of Blizzard / third-party frame trees.
+function UI.HUDPanel(parent, name, width, height, template)
+    local f = CreateFrame(template and "Button" or "Frame", name, parent,
+        template and (template .. ", BackdropTemplate") or "BackdropTemplate")
+    f:SetSize(width, height)
+    f:SetBackdrop({bgFile = WHITE, edgeFile = "Interface/AddOns/MythicBoost/Media/XPerl_ThinEdge.blp",
+        edgeSize = 8, insets = {left=2, right=2, top=2, bottom=2}})
+    f:SetBackdropColor(Unpack(C.surface))
+    f:SetBackdropBorderColor(Unpack(C.hudEdge))
+    return f
+end
+
+function UI.HUDBar(parent, height, color)
+    local bar = CreateFrame("StatusBar", nil, parent)
+    bar:SetHeight(height)
+    bar:SetStatusBarTexture(WHITE)
+    bar:SetStatusBarColor(Unpack(color or C.accentDim))
+    bar:SetMinMaxValues(0, 1); bar:SetValue(0)
+    local back = bar:CreateTexture(nil, "BACKGROUND")
+    back:SetAllPoints(); back:SetColorTexture(.022, .033, .043, .9)
+    bar.left = UI.Text(bar, "GameFontHighlightSmall", "", C.text)
+    bar.left:SetPoint("LEFT", 5, 0); bar.left:SetJustifyH("LEFT"); bar.left:SetWordWrap(false)
+    bar.right = UI.Text(bar, "GameFontHighlightSmall", "", C.text)
+    bar.right:SetPoint("RIGHT", -5, 0); bar.right:SetJustifyH("RIGHT")
+    return bar
+end
+
+function UI.HUDMover(frame, settings, unlocked)
+    frame:SetMovable(true); frame:SetClampedToScreen(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", function()
+        if not InCombatLockdown() and unlocked() then frame:StartMoving() end
+    end)
+    frame:SetScript("OnDragStop", function()
+        if InCombatLockdown() then return end
+        frame:StopMovingOrSizing()
+        local point, _, relativePoint, x, y = frame:GetPoint()
+        settings().position = {point=point, relativePoint=relativePoint, x=x, y=y}
+    end)
 end
 
 -- Вертикальная затемняющая подложка: делает текст читаемым поверх арта.
@@ -635,12 +687,13 @@ end
 
 -- Настоящий живой портрет, как в X-Perl 2.4.3. Двумерная текстура остаётся
 -- под моделью как запасной вариант для невидимых/ещё не загруженных юнитов.
-function UI.Portrait(parent, size, thickness)
+function UI.Portrait(parent, size, thickness, borderColor)
     size, thickness = size or 38, math.max(thickness or 2, 1)
     local portrait = {}
     local ring = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     ring:SetSize(size + thickness * 2, size + thickness * 2)
-    UI.Backdrop(ring, C.field, C.edge, thickness)
+    borderColor = borderColor or C.edge
+    UI.Backdrop(ring, C.field, borderColor, thickness)
 
     local face = ring:CreateTexture(nil, "ARTWORK")
     -- XPerl_Portrait_Template из 2.4.3: 50x50 внутри рамки 60x62.
@@ -694,7 +747,7 @@ function UI.Portrait(parent, size, thickness)
         if unit and not missing and type(SetPortraitTexture) == "function" then
             textureOK = pcall(SetPortraitTexture, self.face, unit)
         end
-        if not textureOK or not self.face:GetTexture() then
+        if not textureOK then
             self.face:SetTexture(WHITE)
             self.face:SetVertexColor(.09, .11, .14, 1)
         end
@@ -731,7 +784,7 @@ function UI.Portrait(parent, size, thickness)
     end
 
     function portrait:SetStateAlpha(alpha)
-        self.ring:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], alpha or 1)
+        self.ring:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], alpha or borderColor[4] or 1)
         self.ring:SetAlpha(math.max(alpha or 1, .55))
     end
     return portrait
