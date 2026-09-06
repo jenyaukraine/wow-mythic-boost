@@ -303,8 +303,27 @@ def test_continuous_key_report_scroll():
     ''')
 
 
+def test_empty_share_is_local_only():
+    lua=fixture()
+    lua.execute('''
+        local m=JP.AvoidableDamage; m:Enable()
+        sent={}; function IsInGroup() return true end; function IsInRaid() return false end
+        C_ChatInfo.SendChatMessage=function(text) sent[#sent+1]=text end
+        m.reportView='players'
+        m.lastReport={key=true,complete=false,entries={},players={
+            {name='A',known=false,amount=0,fatal=0}, {name='B',known=false,amount=0,fatal=0}}}
+        local ok,reason=m:ShareReport('PARTY')
+        assert(not ok and reason and #sent==0 and not m.lastShare)
+        m.lastReport.players[2].known=true
+        assert(m:ShareReport('PARTY') and #sent==2 and not sent[2]:find('unknown',1,true))
+        now=6; sent={}; m.lastReport.players={}; m.lastReport.complete=true
+        assert(m:ShareReport('PARTY') and #sent==2,'confirmed zero remains shareable')
+    ''')
+
+
 if __name__=='__main__':
     for test in (test_combat_reports,test_report_secrets_and_cancellation,test_loot_actions_and_timers,
                  test_guild_real_profile_path,test_center_recovery,test_headerless_feed_and_severity,
-                 test_severity_uses_only_public_matching_health,test_continuous_key_report_scroll):
+                 test_severity_uses_only_public_matching_health,test_continuous_key_report_scroll,
+                 test_empty_share_is_local_only):
         test(); print(test.__name__+': OK')

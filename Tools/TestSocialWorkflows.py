@@ -173,6 +173,14 @@ def test_addon_presence():
         assert(allocations==built and #packets==3)
         p:Receive(Secret('MBPresence1'),Secret('Q1'),Secret('WHISPER'),Secret('Name'))
         now=800; p:Pump(); assert(not p:IsUser('Bob-Realm') and not p.ticker)
+        grouped=true; p:Request(); p:Pump()
+        local sentBefore=#packets
+        for i=1,12 do
+            now=now+121; p:Pump()
+            p:Receive('MBPresence1','A1','PARTY','Bob-Realm')
+            assert(p:IsUser('Bob-Realm') and p.ticker)
+        end
+        assert(#packets==sentBefore+12,'quiet groups renew discovery beyond the ten-minute TTL')
         p:Disable(); assert(not next(p.events.events) and not p.ticker)
     ''')
 

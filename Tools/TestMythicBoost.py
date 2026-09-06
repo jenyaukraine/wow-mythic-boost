@@ -102,9 +102,10 @@ def test_safe_defaults():
     assert db.convenience.autoKeystone is True
     for key in ("autoQuests", "summon", "resurrection", "sellJunk", "repair", "whisperInvite"):
         assert db.convenience[key] is False
-    assert db.minimalUI is False and db.minimalUIOptions.hideStanceBar is False
-    assert db.unitFrames.enabled is False and db.unitFrames.hideBlizzard is False
-    assert db.bossFrames.enabled is False and db.dungeonTimer.enabled is False
+    assert db.minimalUI is True and db.minimalUIOptions.minimap is True
+    assert db.minimalUIOptions.hideStanceBar is False
+    assert db.unitFrames.enabled is True and db.unitFrames.hideBlizzard is True
+    assert db.bossFrames.enabled is True and db.dungeonTimer.enabled is True
     assert (db.unitFrames.scale, db.unitFrames.opacity) == (1.5, 1)
     assert db.unitFrames.showHealthText is True and db.unitFrames.showPowerText is True
     assert db.unitFrames.animatedPortrait is True and db.unitFrames.showBadges is True
@@ -112,8 +113,8 @@ def test_safe_defaults():
     assert db.unitFrames.alwaysShowTarget is True and db.unitFrames.aurasAbove is True
     assert db.unitFrames.showResourcePips is True and db.unitFrames.showEmptyResources is False
     assert (db.unitFrames.resourceHeight, db.unitFrames.resourceGap, db.unitFrames.resourceOpacity) == (10, 2, 1)
-    assert db.castBar.enabled is False
-    assert db.lootUI.enabled is False
+    assert db.castBar.enabled is True
+    assert db.lootUI.enabled is True
     assert db.smartClick.buff is False and db.smartClick.res is False
     assert db.rcLoot.enabled is False and db.errorGuard.enabled is False
     assert db.errorGuard.stabilityPrunedRevision == 4
@@ -654,7 +655,7 @@ def test_basicminimap_owns_the_minimap():
     assert "self:StyleMinimap(minimapEnabled)" in source
     assert 'L("Оформлять миникарту MythicBoost")' in settings
     assert 'Enable("minimalUIMinimap", MythicBoostDB.minimalUI == true)' in settings
-    assert "db.minimalUIOptions.minimap = false" in core
+    assert "db.minimalUIOptions.minimap = freshProfile" in core
 
 
 def test_run_history_can_invite_by_whisper():

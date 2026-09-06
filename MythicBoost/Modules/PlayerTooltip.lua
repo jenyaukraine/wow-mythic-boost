@@ -308,6 +308,8 @@ local function AddUnitProfile(tooltip)
     if IsUsableString(name) then
         fullName = IsUsableString(realm) and (name .. "-" .. realm) or name
     end
+    -- Same-realm unit tokens can omit the realm; presence keys never do.
+    if JP.Reviews and JP.Reviews.FullName then fullName = JP.Reviews.FullName(fullName) or fullName end
     AppendProfile(tooltip, RaiderIO.GetProfile(unit), itemLevel, "unit:" .. playerName, fullName, true)
 end
 

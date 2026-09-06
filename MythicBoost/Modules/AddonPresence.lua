@@ -94,6 +94,14 @@ end
 
 function Presence:Pump()
     local now=GetTime()
+    -- A quiet party can stay together longer than the presence TTL. Renew
+    -- discovery while joined, including when the first handshake was missed.
+    local joined=ChannelAvailable("INSTANCE_CHAT") or ChannelAvailable("RAID")
+        or ChannelAvailable("PARTY") or ChannelAvailable("GUILD")
+    if self.running and joined and now>=(self.discoveryAt or 0) then
+        self.discoveryAt=now+120
+        self:Request()
+    end
     if self.running and (not self.expiryAt or now>=self.expiryAt) then
         self.expiryAt=now+10
         local changed=false
@@ -102,7 +110,7 @@ function Presence:Pump()
         end
         if changed then self:Notify() end
     end
-    if not self.running or ((not self.queue or #self.queue==0) and not next(self.seen or {})) then
+    if not self.running or (not joined and (not self.queue or #self.queue==0) and not next(self.seen or {})) then
         if self.ticker then self.ticker:Cancel(); self.ticker=nil end
         return
     end
@@ -123,7 +131,7 @@ function Presence:Pump()
         entry.tries=entry.tries+1; self.retryAt=now+5
         if entry.tries>=3 then table.remove(self.queue,1) end
     end
-    if #self.queue==0 and not next(self.seen or {}) and self.ticker then self.ticker:Cancel(); self.ticker=nil end
+    if not joined and #self.queue==0 and not next(self.seen or {}) and self.ticker then self.ticker:Cancel(); self.ticker=nil end
 end
 
 function Presence:Receive(prefix,message,channel,sender)
@@ -154,7 +162,7 @@ function Presence:Enable()
 end
 
 function Presence:Disable()
-    self.running=false; self.queue={}; self.seen={}; self.announced={}
+    self.running=false; self.queue={}; self.seen={}; self.announced={}; self.discoveryAt=nil
     if self.ticker then self.ticker:Cancel(); self.ticker=nil end
     if self.events then self.events:UnregisterAllEvents() end
 end

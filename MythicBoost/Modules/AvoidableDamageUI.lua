@@ -192,17 +192,27 @@ function Monitor:ShareReport(channel,target)
     if not send then return false,L("Чат недоступен") end
     local rows,report=self:ReportRows(),self.lastReport
     local offset=self.reportOffset or 0
+    local readable=false
+    for i=offset+1,math.min(offset+5,#rows) do
+        local row=rows[i]
+        if row.known~=false or (row.fatal or 0)>0 then readable=true; break end
+    end
+    if not readable and not (#rows==0 and report.complete) then
+        return false,L("Нет доступных данных")
+    end
     local lines={"[MythicBoost] "..(report.key and "Keystone" or "Combat").." avoidable damage"..
         (report.complete and "" or " (partial data)").." - "..(self.reportView=="players" and "players" or "spells")..
         " ["..(#rows>0 and offset+1 or 0).."-"..math.min(offset+5,#rows).."/"..#rows.."]"}
     for i=offset+1,math.min(offset+5,#rows) do
         local row=rows[i]
+        if row.known~=false or (row.fatal or 0)>0 then
         local name=(row.name or "?"):gsub("|"," "):gsub("[%c]"," ")
         -- Unit names are short; reject corrupted data rather than truncating UTF-8.
         if #name>100 then name="?" end
         local label=row.spellID and (" - |Hspell:"..row.spellID.."|h[Spell "..row.spellID.."]|h") or ""
         lines[#lines+1]="[MythicBoost] "..name..label..": "..(row.known==false and "unknown" or Amount(row.amount))..
             (not row.spellID and ("; confirmed fatal: "..tostring(row.fatal or 0)..(row.deathUnknown and "+?" or "")) or "")
+        end
     end
     if #rows==0 then lines[#lines+1]="[MythicBoost] "..(report.complete and "No avoidable damage recorded." or "No readable data.") end
     self.lastShare=now

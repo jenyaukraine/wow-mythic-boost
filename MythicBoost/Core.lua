@@ -301,8 +301,8 @@ end
 ---------------------------------------------------------------------------
 
 local function InitializeDatabase()
-    -- Installing an addon is not consent to replace an existing interface.
-    -- Native-frame replacements are opt-in; preserve explicit saved choices.
+    -- Fresh installs start with the signature HUD. Existing profiles retain
+    -- their saved choices, including intentionally disabled replacements.
     local freshProfile = type(MythicBoostDB) ~= "table" or next(MythicBoostDB) == nil
     MythicBoostDB = type(MythicBoostDB) == "table" and MythicBoostDB or {}
     local db = MythicBoostDB
@@ -344,11 +344,11 @@ local function InitializeDatabase()
     -- Старый режим захвата штатной кнопки удалён: MythicBoost теперь
     -- открывается только своей кнопкой внутри Blizzard Group Finder.
     db.replaceGroupFinder = false
-    if db.minimalUI == nil then db.minimalUI = false end
+    if db.minimalUI == nil then db.minimalUI = freshProfile end
     db.minimalUIOptions = type(db.minimalUIOptions) == "table" and db.minimalUIOptions or {}
     -- Отдельное владение миникартой: старым пользователям сохраняем прежний
     -- вид, но теперь его можно выключить независимо от остального Minimal UI.
-    if db.minimalUIOptions.minimap == nil then db.minimalUIOptions.minimap = false end
+    if db.minimalUIOptions.minimap == nil then db.minimalUIOptions.minimap = freshProfile end
     if db.minimalUIOptions.hideStanceBar == nil then db.minimalUIOptions.hideStanceBar = false end
     -- Removed layout-takeover settings are scrubbed from old profiles. The
     -- addon no longer owns ChatFrame/DamageMeter positions or action-bar roots.
@@ -379,14 +379,12 @@ local function InitializeDatabase()
     }
     for key, value in pairs(convenienceDefaults) do Default(db.convenience, key, value) end
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
-    Default(db.unitFrames, "enabled", false)
-    Default(db.unitFrames, "hideBlizzard", false)
-    -- These modules previously defaulted on lazily. Keep that behaviour for
-    -- existing installs, but do not hide native bosses/tracker on first use.
+    Default(db.unitFrames, "enabled", freshProfile)
+    Default(db.unitFrames, "hideBlizzard", freshProfile)
     db.bossFrames = type(db.bossFrames) == "table" and db.bossFrames or {}
     db.dungeonTimer = type(db.dungeonTimer) == "table" and db.dungeonTimer or {}
-    Default(db.bossFrames, "enabled", not freshProfile)
-    Default(db.dungeonTimer, "enabled", not freshProfile)
+    Default(db.bossFrames, "enabled", true)
+    Default(db.dungeonTimer, "enabled", true)
     -- The compact player/target capsule is optional, but once enabled it must
     -- be a complete HUD component rather than a fixed mock-up. These values
     -- are deliberately independent so an existing profile only receives the
@@ -423,9 +421,9 @@ local function InitializeDatabase()
     ClampFrameNumber("resourceGap", 0, 6, 2)
     ClampFrameNumber("resourceOpacity", .30, 1, 1)
     db.castBar = type(db.castBar) == "table" and db.castBar or {}
-    Default(db.castBar, "enabled", false)
+    Default(db.castBar, "enabled", freshProfile)
     db.lootUI = type(db.lootUI) == "table" and db.lootUI or {}
-    Default(db.lootUI, "enabled", false)
+    Default(db.lootUI, "enabled", freshProfile)
     Default(db.lootUI, "atCursor", true)
     Default(db.lootUI, "showRolls", true)
     Default(db.lootUI, "showHistory", true)
