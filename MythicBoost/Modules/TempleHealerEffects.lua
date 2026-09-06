@@ -33,7 +33,9 @@ end
 
 function Effects:ConfigureAuras(frame, enabled)
     if InCombatLockdown() then return end
-    if enabled and not frame.healAuras and AuraContainerInboundMixin and AnchorUtil then
+    -- The mixins live in Blizzard's secure environment, not addon globals.
+    -- AuraContainerInbound is the public bridge exported with the templates.
+    if enabled and not frame.healAuras and AuraContainerInbound and AnchorUtil then
         frame.healAuras = {}
         for i = 1, 5 do
             local holder = CreateFrame("Frame", nil, frame)

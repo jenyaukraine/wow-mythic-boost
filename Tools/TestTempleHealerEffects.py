@@ -10,7 +10,8 @@ def fixture():
     lua = runtime()
     lua.execute(r'''
         instance=1877; STANDARD_TEXT_FONT='font'; auraRecords={}; auraButtons=0
-        AuraContainerInboundMixin={}
+        AuraContainerInbound={}
+        AuraContainerInboundMixin=nil -- Blizzard keeps mixins in the secure environment.
         AnchorUtil={FlowDirection={Right=1,Down=2}}
         function GetInstanceInfo() return nil,nil,nil,nil,nil,nil,nil,instance end
         function UnregisterStateDriver(f) f.condition=nil end
@@ -181,6 +182,21 @@ def test_heal_events_and_cleanup():
     ''')
 
 
+def test_public_aura_bridge_availability():
+    lua = fixture()
+    lua.execute(r'''
+        AuraContainerInbound=nil
+        local h=JP.TempleHealer; h:Enable()
+        assert(not h.frame.healAuras and #auraRecords==0)
+        AuraContainerInbound={}; h:Apply(); Driver('boss1')
+        assert(AuraContainerInboundMixin==nil)
+        assert(#auraRecords==5 and h.frame.healAuras[1].shown)
+        local built=allocations
+        h:Apply(); Driver('boss1')
+        assert(allocations==built and #auraRecords==5)
+    ''')
+
+
 def test_memory_and_instance_scope():
     lua = fixture()
     lua.execute(r'''
@@ -212,6 +228,7 @@ def test_memory_and_instance_scope():
 
 
 if __name__ == '__main__':
-    for test in (test_native_auras_and_secure_clicks, test_heal_events_and_cleanup, test_memory_and_instance_scope):
+    for test in (test_native_auras_and_secure_clicks, test_heal_events_and_cleanup,
+                 test_public_aura_bridge_availability, test_memory_and_instance_scope):
         test()
         print(test.__name__ + ': OK')
