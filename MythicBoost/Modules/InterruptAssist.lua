@@ -19,21 +19,41 @@ end
 Assist.Settings = Settings
 function Assist:AlertText()
     local text = Settings().text
-    return text and text ~= "" and text or L("ПРЕРВИ КАСТ")
+    return text and text ~= "" and text or (self.spellKind == "stun" and L("ОГЛУШЕНИЕ ПО ФОКУСУ") or L("ПРЕРВИ КАСТ"))
 end
 function Assist:SetAlertText(text)
-    Settings().text = text ~= "" and not defaultTexts[text] and text or nil
+    Settings().text = text ~= "" and not defaultTexts[text] and text ~= L("ОГЛУШЕНИЕ ПО ФОКУСУ") and text or nil
 end
 local spells = {SHAMAN={57994}, WARRIOR={6552}, PALADIN={96231}, HUNTER={147362,187707},
     ROGUE={1766}, PRIEST={15487}, DEATHKNIGHT={47528}, MAGE={2139}, WARLOCK={119914,19647,132409,119910},
-    MONK={116705}, DRUID={106839,78675}, DEMONHUNTER={183752}, EVOKER={351338}}
+    MONK={116705}, DRUID={106839,78675,5211}, DEMONHUNTER={183752}, EVOKER={351338}}
+local function Known(value)
+    return not (issecretvalue and issecretvalue(value)) and value == true
+end
+local function Learned(id)
+    if C_SpellBook and C_SpellBook.IsSpellKnown then
+        if Known(C_SpellBook.IsSpellKnown(id)) then return true end
+        local banks = Enum and Enum.SpellBookSpellBank
+        return banks and Known(C_SpellBook.IsSpellKnown(id, banks.Pet)) or false
+    end
+    return (IsPlayerSpell and Known(IsPlayerSpell(id)))
+        or (IsSpellKnown and (Known(IsSpellKnown(id)) or Known(IsSpellKnown(id, true))))
+end
 function Assist:CacheSpell()
-    self.spell = nil
+    -- Keep the displayed spell and the protected action in sync through combat.
+    if InCombatLockdown() then self.actionsDirty=true; return end
+    self.spell, self.spellKind = nil, nil
     for _, id in ipairs(spells[select(2, UnitClass("player"))] or {}) do
-        if (IsPlayerSpell and IsPlayerSpell(id)) or (IsSpellKnown and IsSpellKnown(id, true)) then
-            self.spell = id; break
+        if Learned(id) then
+            -- Mighty Bash is a fallback stop, never a school-locking interrupt.
+            self.spell, self.spellKind = id, id == 5211 and "stun" or "interrupt"; break
         end
     end
+end
+function Assist:SpellStatus()
+    local info = self.spell and C_Spell.GetSpellInfo(self.spell)
+    if not info then return L("Прерывание или оглушение не изучено для текущей специализации") end
+    return info.name .. (self.spellKind == "stun" and (" | " .. L("Оглушение: иммунитет цели не проверяется.")) or "")
 end
 function Assist:ActionBody(focus)
     self:CacheSpell()
@@ -63,6 +83,8 @@ function Assist:UpdateActions()
         button:SetAttribute("type", body and "macro" or nil)
         button:SetAttribute("macrotext", body)
     end
+    if self.frame then self.frame.text:SetText(self:AlertText()) end
+    if self.status then self.status:SetText(self:SpellStatus()) end
 end
 function Assist:Update()
     local f = self.frame
@@ -76,12 +98,15 @@ function Assist:Update()
         name, _, _, _, _, _, locked = UnitChannelInfo("focus")
     end
     if not name then f:Hide(); return end
-    local duration = C_Spell.GetSpellCooldownDuration(self.spell)
+    local duration = C_Spell.GetSpellCooldownDuration(self.spell, true)
     if not duration then f:Hide(); return end
     -- Pass restricted booleans directly to Blizzard's rendering API.
     -- Never branch on cooldown/interruptibility or derive sound from alpha.
     f:Show()
-    f:SetAlphaFromBoolean(locked, 0, 1)
+    -- A cast's interrupt shield does not describe stun immunity. The stun
+    -- caption announces a manual option, not a guarantee it will stop this cast.
+    if self.spellKind == "stun" then f:SetAlpha(1)
+    else f:SetAlphaFromBoolean(locked, 0, 1) end
     f.text:SetAlphaFromBoolean(duration:IsZero(), 1, 0)
 end
 function Assist:Style()

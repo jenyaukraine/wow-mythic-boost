@@ -38,8 +38,10 @@ function MakeFrame(name)
  function f:Hide() self.shown=false end
  function f:SetShown(value) self.shown=value end
  function f:SetEnabled(value) self.enabled=value end
+ function f:SetAlpha(value) self.alpha=value end
+ function f:SetText(value) self.value=value end
  function f:SetAlphaFromBoolean(v,a,b) self.alphaArg=v end
- function f:SetAttribute(k,v) self.attrs[k]=v end
+ function f:SetAttribute(k,v) assert(not combat, 'protected attribute changed in combat'); self.attrs[k]=v end
  function f:RegisterForClicks(...) self.clicks={...} end
  function f:GetName() return self.name end
  function f:CreateFontString() return MakeFrame() end
@@ -86,6 +88,46 @@ combat=false; A.frame.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED'); assert(A.acti
 db.fallback='none'; assert(not A:ActionBody(false):find('[]',1,true))
 db.fallback='nearby'; assert(A:ActionBody(false):find('/targetenemy',1,true))
 known=0; assert(A:ActionBody(false)==nil); known=57994
+-- A learned Mighty Bash must produce a real focus action without a kick talent.
+local oldClass, oldInfo, oldPlayer, oldKnown = UnitClass, C_Spell.GetSpellInfo, IsPlayerSpell, IsSpellKnown
+function UnitClass() return 'Druid','DRUID' end
+C_Spell.GetSpellInfo=function(id) return {name=id==5211 and 'Mighty Bash' or 'Skull Bash'} end
+known=5211; db.fallback='target'; A:UpdateActions(); A:Update()
+assert(A.spell==5211 and A.spellKind=='stun')
+assert(A.actions[false].attrs.macrotext=='#showtooltip Mighty Bash\n/stopcasting\n/cast [@focus,harm,nodead][] Mighty Bash')
+assert(A:AlertText()=='ОГЛУШЕНИЕ ПО ФОКУСУ' and A.frame.text.value==A:AlertText())
+assert(A:SpellStatus():find('Mighty Bash',1,true) and A:SpellStatus():find('иммунитет',1,true))
+assert(A.frame.shown and A.frame.alpha==1, 'interrupt shield must not hide a stun option')
+A:SetAlertText(A:AlertText()); assert(db.text==nil, 'stun default must not become a custom caption')
+A:SetAlertText('My stun'); assert(A:AlertText()=='My stun'); A:SetAlertText('')
+ready=secret; A:Update(); assert(rawequal(A.frame.text.alphaArg,secret)); ready=true
+db.fallback='none'; assert(A:ActionBody(false):find('/cast [@focus,harm,nodead] Mighty Bash',1,true))
+db.fallback='nearby'; assert(A:ActionBody(false):find('/targetenemy\n/cast Mighty Bash',1,true))
+-- Modern spellbook API is authoritative and independent of action bars/forms.
+IsPlayerSpell=function() error('deprecated player API used') end
+IsSpellKnown=function() error('deprecated known API used') end
+Enum={SpellBookSpellBank={Player=0,Pet=1}}
+local learned={[5211]=true,[106839]=true}
+C_SpellBook={IsSpellKnown=function(id,bank) return bank~=1 and learned[id] or false end}
+A:UpdateActions(); assert(A.spell==106839 and A.spellKind=='interrupt')
+assert(A:AlertText()=='ПРЕРВИ КАСТ')
+learned[106839]=nil; learned[78675]=true; A:UpdateActions(); assert(A.spell==78675)
+learned[78675]=nil; A:UpdateActions(); assert(A.spell==5211)
+local oldMacro=A.actions[false].attrs.macrotext
+combat=true; learned[5211]=nil; learned[106839]=true
+A.frame.scripts.OnEvent(nil,'SPELLS_CHANGED'); A:CacheSpell()
+assert(A.spell==5211 and A.actionsDirty and A.actions[false].attrs.macrotext==oldMacro)
+combat=false; A.frame.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED')
+assert(A.spell==106839 and A.actions[false].attrs.macrotext~=oldMacro)
+learned={}; A.frame.scripts.OnEvent(nil,'SPELLS_CHANGED')
+assert(A.spell==nil and A.spellKind==nil and A.actions[false].attrs.type==nil and not A.frame.shown)
+assert(A.actions[true].attrs.type=='macro', 'focus binding remains usable without a stop spell')
+learned[5211]=secret; A:UpdateActions(); assert(A.spell==nil)
+function UnitClass() return 'Warlock','WARLOCK' end
+C_SpellBook.IsSpellKnown=function(id,bank) return id==19647 and bank==1 end
+A:UpdateActions(); assert(A.spell==19647, 'pet spell bank still works')
+UnitClass, C_Spell.GetSpellInfo, IsPlayerSpell, IsSpellKnown = oldClass, oldInfo, oldPlayer, oldKnown
+C_SpellBook=nil; Enum=nil; known=57994; db.fallback='target'; A:UpdateActions()
 A:SyncMarks(); local before=sends
 A:ReceiveMark('MBFocus1','Q:7','PARTY','Friend-Realm'); assert(sends==before+1)
 A:ReceiveMark('MBFocus1','Q:7','PARTY','Friend-Realm'); assert(sends==before+1)
@@ -157,6 +199,8 @@ function SaveBindings() end
 ''')
 loader((root / 'MythicBoost/Modules/InterruptAssistUI.lua').read_text(encoding='utf-8'))
 lua.execute('A:Build(MakeFrame())')
+lua.execute("known=0; A.frame.scripts.OnEvent(nil,'SPELLS_CHANGED'); assert(A.status.value=='Прерывание или оглушение не изучено для текущей специализации')")
+lua.execute("known=57994; A.frame.scripts.OnEvent(nil,'SPELLS_CHANGED'); assert(A.status.value=='Wind Shear')")
 lua.execute('capture=created[3]')  # scroll, scroll child, keyboard capture
 lua.execute("assert(buttons['1. Подсказка'].enabled==false)")
 lua.execute("assert(buttons['Предпросмотр и перемещение'].shown and not buttons['Назначить клавишу фокуса: Нет'].shown)")
@@ -214,3 +258,5 @@ for reverse in (False, True):
     assert len({client.globals().db.marker for _, client in clients}) == 5
     assert clients[0][1].globals().db.marker == 7
 print('Marker conflicts: portrait cycling, combat deferral, no reply loop, five-client convergence passed')
+print('Mighty Bash fallback: learned talent, focus/target macros, kick priority, modern/pet spellbook,')
+print('secret cooldowns, combat deferral, unlearning and live status refresh passed')
