@@ -3,6 +3,8 @@ local UI, L, C = JP.UI, JP.L, JP.UI.colors
 local Timer = {}
 local MAX_BOSSES = 8
 local WIDTH = 300
+local CLOCK_HEIGHT = 64
+local CONTENT_TOP = 32 + CLOCK_HEIGHT + 6
 local THRESHOLD_FRACTIONS = {.6, .8}
 local EXPIRED_FILL = {.46, .075, .09, 1}
 local EXPIRED_TEXT = {1, .52, .48, 1}
@@ -58,8 +60,8 @@ function Timer:SyncWidth()
     self.frame:SetWidth(width)
     for i, fraction in ipairs(THRESHOLD_FRACTIONS) do
         local marker, shadow = self.thresholdMarkers[i], self.thresholdShadows[i]
-        marker:ClearAllPoints(); marker:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (width-2)*fraction-1, -1)
-        shadow:ClearAllPoints(); shadow:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (width-2)*fraction-2, -1)
+        marker:ClearAllPoints(); marker:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (width-2)*fraction-1, -25)
+        shadow:ClearAllPoints(); shadow:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (width-2)*fraction-2, -25)
         self.thresholds[i]:ClearAllPoints()
         self.thresholds[i]:SetPoint("BOTTOM", self.timeBar, "BOTTOMLEFT", (width-2)*(i==1 and .32 or .77), 4)
     end
@@ -263,10 +265,10 @@ function Timer:RefreshCriteria(initial)
 end
 
 function Timer:LayoutRows()
-    self.bres:ClearAllPoints(); self.bres:SetPoint("TOPLEFT", 7, -78); self.bres:SetPoint("TOPRIGHT", -7, -78)
+    self.bres:ClearAllPoints(); self.bres:SetPoint("TOPLEFT", 7, -CONTENT_TOP); self.bres:SetPoint("TOPRIGHT", -7, -CONTENT_TOP)
     local showRes = not self.finished and (self.preview or self.bresKnown == true)
     self.bres:SetShown(showRes)
-    local y = showRes and 109 or 78
+    local y = CONTENT_TOP + (showRes and 31 or 0)
     for i = 1, self.rowCount or 0 do
         local row = self.rows[i]
         local height = math.max(27, math.min(42, row.name:GetStringHeight() + 10))
@@ -294,6 +296,20 @@ function Timer:StyleClock(elapsed, limit)
         self.thresholds[i]:SetTextColor(UI.Unpack(missed and EXPIRED_TEXT or C.muted))
         self.thresholdMarkers[i]:SetColorTexture(UI.Unpack(missed and EXPIRED_TEXT or MARKER_COLOR))
     end
+end
+
+function Timer:UpdateRemaining(elapsed, limit)
+    local known = elapsed ~= nil and limit ~= nil and limit > 0
+    local remaining = known and (limit - elapsed) or nil
+    local expired = remaining ~= nil and remaining <= 0
+    self.remainingLabel:SetText(expired and L("Сверх времени:") or
+        (self.finished and L("Запас времени:") or L("До конца:")))
+    -- Count down with ceil: a fraction of the final second is still time left.
+    -- ReadElapsed already includes death penalties; never add them a second time.
+    self.remaining:SetText(remaining and Clock(expired and -remaining or math.ceil(remaining)) or "—")
+    self.remaining:SetTextColor(UI.Unpack(expired and EXPIRED_TEXT or
+        (remaining and remaining <= 300 and not self.finished and C.amber or C.green)))
+    if not known then self.remaining:SetTextColor(UI.Unpack(C.muted)) end
 end
 
 function Timer:RefreshBattleRes()
@@ -335,6 +351,7 @@ function Timer:UpdateClock()
     self.timeBar.left:SetText(elapsed and (Clock(elapsed) .. " / " .. Clock(limit)) or L("Ожидание старта"))
     self.timeBar:SetMinMaxValues(0, math.max(1, limit or 1)); self.timeBar:SetValue(elapsed or 0)
     self:StyleClock(elapsed, limit)
+    self:UpdateRemaining(elapsed, limit)
     if elapsed and limit and limit > 0 then
         for i, fraction in ipairs(THRESHOLD_FRACTIONS) do
             local remaining = limit * fraction - elapsed
@@ -533,6 +550,7 @@ function Timer:Preview()
     self.bres:SetMinMaxValues(0, 100); self.bres:SetValue(65)
     self.timeBar:SetMinMaxValues(0, 1920); self.timeBar:SetValue(369)
     self:StyleClock(369, 1920)
+    self:UpdateRemaining(369, 1920)
     self.thresholds[1]:SetText("+3  13:03"); self.thresholds[2]:SetText("+2  19:27")
     self.rowCount = 4
     for i, row in ipairs(self.rows) do
@@ -581,10 +599,19 @@ function Timer:Create()
     end
     self.deathHover:SetScript("OnLeave", HideDeathTooltip)
     self.deathHover:SetScript("OnHide", HideDeathTooltip)
-    self.timeBar = UI.HUDBar(f, 40, C.accentDim)
+    self.timeBar = UI.HUDBar(f, CLOCK_HEIGHT, C.accentDim)
     self.timeBar:SetPoint("TOPLEFT", 1, -32); self.timeBar:SetPoint("TOPRIGHT", -1, -32)
-    self.timeBar.left:ClearAllPoints(); self.timeBar.left:SetPoint("TOPLEFT", 9, -3)
-    Font(self.timeBar.left, 18, "OUTLINE")
+    self.remaining = UI.Text(self.timeBar, "GameFontNormalLarge", "", C.green)
+    self.remaining:SetPoint("TOPRIGHT", -9, -2); self.remaining:SetWidth(88)
+    self.remaining:SetJustifyH("RIGHT"); self.remaining:SetWordWrap(false)
+    Font(self.remaining, 20, "OUTLINE")
+    self.remainingLabel = UI.Text(self.timeBar, "GameFontHighlightSmall", L("До конца:"), C.text)
+    self.remainingLabel:SetPoint("TOPLEFT", 9, -7)
+    self.remainingLabel:SetPoint("TOPRIGHT", self.remaining, "TOPLEFT", -6, -5)
+    self.remainingLabel:SetJustifyH("LEFT"); self.remainingLabel:SetWordWrap(false)
+    Font(self.remainingLabel, 13, "OUTLINE")
+    self.timeBar.left:ClearAllPoints(); self.timeBar.left:SetPoint("TOPLEFT", 9, -28)
+    Font(self.timeBar.left, 13, "OUTLINE")
     local gloss = self.timeBar:CreateTexture(nil, "ARTWORK")
     gloss:SetAllPoints(); gloss:SetColorTexture(1, 1, 1, 1)
     gloss:SetGradient("VERTICAL", CreateColor(1,1,1,0), CreateColor(1,1,1,.055))
@@ -597,11 +624,11 @@ function Timer:Create()
     for i, fraction in ipairs(THRESHOLD_FRACTIONS) do
         local shadow = self.timeBar:CreateTexture(nil, "OVERLAY", nil, -2)
         shadow:SetColorTexture(.015, .02, .025, 1); shadow:SetSize(4, 38)
-        shadow:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (WIDTH-2)*fraction-2, -1)
+        shadow:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (WIDTH-2)*fraction-2, -25)
         self.thresholdShadows[i] = shadow
         local marker = self.timeBar:CreateTexture(nil, "OVERLAY", nil, -1)
         marker:SetColorTexture(UI.Unpack(MARKER_COLOR)); marker:SetSize(2, 38)
-        marker:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (WIDTH-2)*fraction-1, -1)
+        marker:SetPoint("TOPLEFT", self.timeBar, "TOPLEFT", (WIDTH-2)*fraction-1, -25)
         self.thresholdMarkers[i] = marker
         self.thresholds[i] = UI.Text(self.timeBar, "GameFontHighlightSmall", "", C.muted)
         Font(self.thresholds[i], 12, "OUTLINE")

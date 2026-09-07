@@ -276,7 +276,8 @@ def test_battle_res_and_finish():
         end
         assert(allocations==iconCount,'BR progress must reuse its icon')
         criteriaCount=3; t:RefreshCriteria(true)
-        assert(t.rows[1].name.font[2]==12 and t.title.font[2]==13 and t.timeBar.left.font[2]==18)
+        assert(t.rows[1].name.font[2]==12 and t.title.font[2]==13 and t.timeBar.left.font[2]==13)
+        assert(t.remaining.font[2]==20, 'remaining time has priority over elapsed time')
         t:UpdateClock(); assert(not t.bres.shown and not t.bresKnown)
         chargeInfo={currentCharges=1,maxCharges=5,cooldownStartTime=100,cooldownDuration=87}
         t.bresDirty=true; t:UpdateClock()
