@@ -50,6 +50,11 @@ lua.execute(r'''
 -- Disabled means untouched forwarding, not stack inspection.
 assert(handler('original disabled')); assert(forwarded==1 and captures==0)
 settings.enabled=true
+JP.UI.IsAddOnLoaded=function(name) return name=='BugSack' end
+local before=forwarded
+assert(handler('external collector') and forwarded==before+1 and #settings.log==0)
+forwarded=before
+JP.UI.IsAddOnLoaded=function() return false end
 assert(handler('original message'))
 assert(settings.log[1].message=='original message')
 assert(settings.log[1].stack=='[WoW restricted stack]')

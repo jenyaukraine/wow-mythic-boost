@@ -11,15 +11,15 @@ local DEFAULTS = {
     autoHi = true,
     greetingText = "hi",
     warnDifferentInstance = true,
-    autoQuests = false,
-    summon = false,
-    resurrection = false,
+    autoQuests = true,
+    summon = true,
+    resurrection = true,
     resNoCombat = true,
-    sellJunk = false,
-    repair = false,
+    sellJunk = true,
+    repair = true,
     guildRepair = true,
     merchantSummary = true,
-    whisperInvite = false,
+    whisperInvite = true,
     inviteKeyword = "inv",
     autoKeystone = true,
     movableKeystoneFrame = false,
@@ -672,7 +672,7 @@ function SettingsHub:Build(_, parent)
     -- are HUD decisions, not incidental toggles in the global interface page.
     -----------------------------------------------------------------------
     local unitFrameSettings = JP.Settings("unitFrames", {
-        enabled = false, hideBlizzard = false, unlocked = false,
+        enabled = true, hideBlizzard = true, unlocked = false,
         scale = 1.5, opacity = 1,
         showHealthText = true, classColoredHealth = false, showPowerText = true,
         animatedPortrait = true, showBadges = true,
@@ -793,7 +793,7 @@ function SettingsHub:Build(_, parent)
     -- it never enumerates the player's global aura list in restricted combat.
     -----------------------------------------------------------------------
     local auraSettings = JP.Settings("positiveAuraTracker", {
-        enabled = false, spellIDs = {}, showWhenMissing = false,
+        enabled = true, spellIDs = {}, showWhenMissing = false,
         showSeconds = true, showStacks = true, showIcon = true,
         barHeight = 190, barWidth = 72, sideGap = 110, barSpacing = 12,
         colorPreset = 2, texturePreset = 1, fontSize = 24,
@@ -1187,12 +1187,12 @@ function SettingsHub:Build(_, parent)
         UI.Tooltip(self, L("Перехват Lua-ошибок"),
             L("Ошибки Lua не показываются на экране, а сохраняются в журнале со счётчиком повторов."),
             L("Они не теряются — копятся в журнале со счётчиком повторов и переживают /reload."),
-            L("Функция выключена по умолчанию. Не включай её одновременно с BugGrabber или BugSack."))
+            L("Функция включена по умолчанию. При наличии BugGrabber или BugSack используется их обработчик."))
     end)
     preventErrors:HookScript("OnLeave", GameTooltip_Hide)
     self.checks.preventErrors = preventErrors
 
-    local errorKeepSettings = JP.Settings("errorGuard", { enabled = false, keepBetweenSessions = true })
+    local errorKeepSettings = JP.Settings("errorGuard", { enabled = true, keepBetweenSessions = true })
     self:AddStoredCheck(systemPage, errorKeepSettings, "keepBetweenSessions",
         L("Сохранять журнал между перезагрузками"), 52, -152, nil, "errorKeep")
 

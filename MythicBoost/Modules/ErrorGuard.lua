@@ -20,7 +20,7 @@ local UI, C = JP.UI, JP.UI.colors
 local MAX_ENTRIES = 100     -- уникальных ошибок в журнале
 local MAX_MESSAGE = 1200    -- обрезаем гигантские сообщения
 local MAX_STACK = 4000      -- и трейсы: они бывают на сотни строк
-local SETTINGS_DEFAULTS = { enabled = false, keepBetweenSessions = true }
+local SETTINGS_DEFAULTS = { enabled = true, keepBetweenSessions = true }
 
 -- Журнал до появления SavedVariables. MythicBoostDB создаётся только на
 -- ADDON_LOADED, а ошибка может прилететь раньше — тогда она копится здесь
@@ -48,9 +48,12 @@ end
 
 function ErrorGuard:IsEnabled()
     local settings = self:GetSettings()
-    -- Until SavedVariables are ready, forward errors to Blizzard. Globally
-    -- suppressing errors before the player has opted in is too invasive for
-    -- an addon whose primary purpose is Mythic+ group analysis.
+    -- Keep a single owner when another error collector is installed.
+    if UI.IsAddOnLoaded then
+        for _, name in ipairs({"!BugGrabber", "BugGrabber", "BugSack", "Swatter"}) do
+            if UI.IsAddOnLoaded(name) then return false end
+        end
+    end
     if not settings then return false end
     return settings.enabled == true
 end

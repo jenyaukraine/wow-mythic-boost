@@ -2,7 +2,7 @@ local _, JP = ...
 local L = JP.L
 local SmartClick = {}
 local UI, C = JP.UI, JP.UI.colors
-local SETTINGS_DEFAULTS = { buff = false, res = false }
+local SETTINGS_DEFAULTS = { buff = true, res = true }
 
 ---------------------------------------------------------------------------
 -- Умный клик: макрос MBSmartClick, который ведёт аддон

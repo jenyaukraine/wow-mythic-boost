@@ -2,9 +2,9 @@
 local _, JP = ...
 local L, UI = JP.L, JP.UI
 local Assist = {}
-local DEFAULTS = {enabled=false, size=44, x=0, y=120,
+local DEFAULTS = {enabled=true, size=44, x=0, y=120,
     marker=7, preserveMark=true, skipRaid=true, fallback="target", stopCasting=true,
-    sound=false, announceReady=false, color=2}
+    sound=true, announceReady=true, color=2}
 local defaultTexts = {["ПРЕРВИ КАСТ"]=true, INTERRUPT=true, UNTERBRECHEN=true}
 local function Settings()
     local s=JP.Settings("interruptAssist", DEFAULTS)

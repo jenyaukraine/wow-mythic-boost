@@ -6,7 +6,7 @@ local PositiveAuraTracker = {}
 local Settings
 
 local DEFAULTS = {
-    enabled = false,
+    enabled = true,
     spellIDs = {},
     showWhenMissing = false,
     showSeconds = true,

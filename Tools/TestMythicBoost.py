@@ -101,7 +101,7 @@ def test_safe_defaults():
     assert db.groupFilters.runsMin == 0
     assert db.convenience.autoKeystone is True
     for key in ("autoQuests", "summon", "resurrection", "sellJunk", "repair", "whisperInvite"):
-        assert db.convenience[key] is False
+        assert db.convenience[key] is True
     assert db.minimalUI is True and db.minimalUIOptions.minimap is True
     assert db.minimalUIOptions.hideStanceBar is False
     assert db.unitFrames.enabled is True and db.unitFrames.hideBlizzard is True
@@ -115,9 +115,26 @@ def test_safe_defaults():
     assert (db.unitFrames.resourceHeight, db.unitFrames.resourceGap, db.unitFrames.resourceOpacity) == (10, 2, 1)
     assert db.castBar.enabled is True
     assert db.lootUI.enabled is True
-    assert db.smartClick.buff is False and db.smartClick.res is False
-    assert db.rcLoot.enabled is False and db.errorGuard.enabled is False
+    assert db.smartClick.buff is True and db.smartClick.res is True
+    assert db.rcLoot.enabled is True and db.errorGuard.enabled is True
     assert db.errorGuard.stabilityPrunedRevision == 4
+    for section in ("interruptAssist", "positiveAuraTracker", "controlAssist", "healerMana",
+                    "templeHealer", "avoidableDamage", "auctionMarket", "playerNetwork"):
+        assert db[section].enabled is True
+    # Reloads preserve explicit OFF choices; ON is a default, not a forced reset.
+    for section in ("unitFrames", "castBar", "lootUI", "rcLoot", "errorGuard", "interruptAssist",
+                    "positiveAuraTracker", "controlAssist", "healerMana", "templeHealer",
+                    "avoidableDamage", "auctionMarket", "playerNetwork"):
+        db[section].enabled = False
+    db.convenience.autoQuests = False
+    db.smartClick.buff = False
+    lua.execute("coreEvents(nil,'ADDON_LOADED','MythicBoost')")
+    for section in ("unitFrames", "castBar", "lootUI", "rcLoot", "errorGuard", "interruptAssist",
+                    "positiveAuraTracker", "controlAssist", "healerMana", "templeHealer",
+                    "avoidableDamage", "auctionMarket", "playerNetwork"):
+        assert db[section].enabled is False
+    assert db.convenience.autoQuests is False and db.smartClick.buff is False
+
 
     # A non-empty legacy profile with no HUD keys must not be taken over by an
     # update. The same visual defaults above are reserved for genuinely fresh

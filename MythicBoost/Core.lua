@@ -358,24 +358,23 @@ local function InitializeDatabase()
     db.layoutOnboardingRevision = nil
     db.bottomDockSafetyRevision = nil
     db.convenience = type(db.convenience) == "table" and db.convenience or {}
-    -- Actions that accept dialogs, spend money, alter quests or invite other
-    -- people are explicit opt-ins. Keystone insertion runs only after opening
-    -- the pedestal. The optional courtesy greeting runs once on party join.
+    -- Ready-to-play defaults. Individual saved switches remain authoritative;
+    -- the modules retain their combat, context and Shift-key guards.
     local convenienceDefaults = {
         autoHi = true,
         greetingText = "hi",
         warnDifferentInstance = true,
         autoKeystone = true,
-        autoQuests = false,
+        autoQuests = true,
         guildRepair = true,
         hideBags = false,
         merchantSummary = true,
-        repair = false,
-        resurrection = false,
+        repair = true,
+        resurrection = true,
         resNoCombat = true,
-        sellJunk = false,
-        summon = false,
-        whisperInvite = false,
+        sellJunk = true,
+        summon = true,
+        whisperInvite = true,
     }
     for key, value in pairs(convenienceDefaults) do Default(db.convenience, key, value) end
     db.unitFrames = type(db.unitFrames) == "table" and db.unitFrames or {}
@@ -420,6 +419,11 @@ local function InitializeDatabase()
     ClampFrameNumber("resourceHeight", 6, 16, 10)
     ClampFrameNumber("resourceGap", 0, 6, 2)
     ClampFrameNumber("resourceOpacity", .30, 1, 1)
+    for _, section in ipairs({"interruptAssist", "controlAssist", "healerMana", "templeHealer",
+        "avoidableDamage", "auctionMarket", "playerNetwork"}) do
+        db[section] = type(db[section]) == "table" and db[section] or {}
+        Default(db[section], "enabled", true)
+    end
     db.castBar = type(db.castBar) == "table" and db.castBar or {}
     Default(db.castBar, "enabled", freshProfile)
     db.lootUI = type(db.lootUI) == "table" and db.lootUI or {}
@@ -428,10 +432,10 @@ local function InitializeDatabase()
     Default(db.lootUI, "showRolls", true)
     Default(db.lootUI, "showHistory", true)
     db.smartClick = type(db.smartClick) == "table" and db.smartClick or {}
-    Default(db.smartClick, "buff", false)
-    Default(db.smartClick, "res", false)
+    Default(db.smartClick, "buff", true)
+    Default(db.smartClick, "res", true)
     db.positiveAuraTracker = type(db.positiveAuraTracker) == "table" and db.positiveAuraTracker or {}
-    Default(db.positiveAuraTracker, "enabled", false)
+    Default(db.positiveAuraTracker, "enabled", true)
     db.positiveAuraTracker.spellIDs = type(db.positiveAuraTracker.spellIDs) == "table"
         and db.positiveAuraTracker.spellIDs or {}
     Default(db.positiveAuraTracker, "showWhenMissing", false)
@@ -481,9 +485,9 @@ local function InitializeDatabase()
     db.positiveAuraTracker.fontSize = math.max(12, math.min(48, tonumber(db.positiveAuraTracker.fontSize) or 24))
     db.positiveAuraTracker.pulseSpeed = math.max(.3, math.min(2, tonumber(db.positiveAuraTracker.pulseSpeed) or .8))
     db.rcLoot = type(db.rcLoot) == "table" and db.rcLoot or {}
-    Default(db.rcLoot, "enabled", false)
+    Default(db.rcLoot, "enabled", true)
     db.errorGuard = type(db.errorGuard) == "table" and db.errorGuard or {}
-    Default(db.errorGuard, "enabled", false)
+    Default(db.errorGuard, "enabled", true)
     Default(db.errorGuard, "keepBetweenSessions", true)
     -- Remove only signatures produced by fixed MythicBoost integration bugs.
     -- Other third-party and current errors remain available for support.
