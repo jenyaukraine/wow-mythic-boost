@@ -145,7 +145,7 @@ function Assist:Enable()
         self.frame = f
         f:SetSize(640, 64); f:SetFrameStrata("HIGH"); f:SetMovable(true)
         f:SetClampedToScreen(true); f:RegisterForDrag("LeftButton")
-        f.text = f:CreateFontString(nil, "OVERLAY")
+        f.text = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         f.text:SetAllPoints(); f.text:SetTextColor(.95, .98, 1)
         f:SetScript("OnDragStart", function() if self.preview and not InCombatLockdown() then f:StartMoving() end end)
         f:SetScript("OnDragStop", function()

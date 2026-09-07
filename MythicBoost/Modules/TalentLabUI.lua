@@ -154,7 +154,7 @@ function Lab:CreateUI()
     f:SetBackdropColor(.018, .026, .034, .98)
     f:SetBackdropBorderColor(.30, .32, .34, .92)
     self.uiFrame = f; self.rows = {}; self.page = 0; self.metric = self.metric or "healing"
-    self.view = self.view or (self.CompareTalents and "comparison" or "sources")
+    self.view = self.view or "talents"
 
     self.uiTitle = Label(f, L("ЛАБОРАТОРИЯ ТАЛАНТОВ"), 16, -16, 580, C.accent)
     self.uiSubtitle = Label(f, "", 16, -43, 450, C.text)
@@ -247,6 +247,12 @@ function Lab:CreateUI()
         row.share = Label(row, "", 500, -5, 62, C.green); row.share:SetJustifyH("RIGHT")
         row.meta = Label(row,"",38,-24,520,C.muted); row.meta:Hide()
         row:SetScript("OnEnter", function() PublicTooltip(row) end)
+        row:SetScript("OnClick", function()
+            if self.view=="talents" and row.spellID and self.latestRun and self.ShowContribution then
+                local sample=self:ResolveSample(self.latestRun.talentSample,self.sampleRuns)
+                self:ShowContribution(row.spellID,row.talentRank,sample.specID,sample.gameBuild,self.metric)
+            end
+        end)
         row:SetScript("OnLeave", HideTooltip)
         row:SetScript("OnMouseWheel", function(_, delta) Scroll(delta) end)
         return row
@@ -466,6 +472,7 @@ end
 
 function Lab:Render()
     local runs = ReadRuns()
+    if self.view=="contribution" then self:RenderContribution(runs); return end
     if self.view=="comparison" and self.CompareTalents then self:RenderComparison(runs); return end
     self.comparisonContexts=nil
     local sampleRuns = {}
@@ -534,11 +541,17 @@ function Lab:Render()
             row.nameText:SetText(row.spellName)
             row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             local amount = Number(data.amount)
+            row.talentRank=data.rank
+            if self.view=="talents" and self.ContributionText then
+                row.comparisonDetail=self:ContributionText({amount=amount,total=total,sources=data.sources,
+                    partial=sample.complete~=true},self.metric)
+            end
             row.amount:SetWidth(amount~=nil and 86 or 242)
             row.amount:SetTextColor(UI.Unpack(amount~=nil and C.text or C.muted))
             row.amount:SetText(amount~=nil and Compact(amount) or L("Нет привязанных данных"))
             row.rate:SetText(amount==nil and "" or (duration and duration > 0 and Compact(amount / duration) or "—"))
             row.share:SetText(amount==nil and "" or (total and total > 0 and (("%.1f%%"):format(amount / total * 100)) or "—"))
+            row.share:SetTextColor(UI.Unpack(C.green))
         else
             row.spellID, row.spellName, row.kind = nil, nil, nil
             row.icon:SetTexture(nil); row.nameText:SetText(""); row.amount:SetText(""); row.rate:SetText(""); row.share:SetText("")
@@ -551,6 +564,11 @@ function Lab:Render()
     local measured = total and duration and duration > 0
         and (unit .. ": " .. Compact(total / duration) .. " | " .. Compact(total) .. " | " .. FormatDuration(duration)) or ""
     self.empty:SetText(measured ~= "" and (measured .. "\n" .. state) or state)
+    if self.view=="talents" then
+        self.compare:SetText(L("Доля = сумма связанных заклинаний / общий результат тех же замеров x 100%.")
+            .."\n"..L("Нажми на талант: его доля в каждом прохождении и связанные заклинания."))
+        return
+    end
     local observed = Lab.ObservedComparison and Lab:ObservedComparison(runs, latest, self.metric)
     if observed then
         local delta = observed.percent and ("%+.1f%%"):format(observed.percent) or "—"
@@ -600,8 +618,7 @@ function Lab:AttachTalentButton()
         self.talentButtonLauncher = button
         button:SetScript("OnClick", function()
             if not self.launcherRunning or not CanUseUI() then return end
-            if self.CompareTalents then self:ShowComparison(self.comparisonKey,self.metric)
-            else self.view="sources"; self:Show() end
+            self.view="talents"; self:Show()
             -- A custom UI may raise the talent window to DIALOG as well.
             self.uiFrame:SetFrameStrata("DIALOG")
             self.uiFrame:SetFrameLevel(button:GetFrameLevel() + 10)

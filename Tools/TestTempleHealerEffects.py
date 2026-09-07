@@ -18,6 +18,11 @@ def fixture():
         C_Timer=setmetatable({}, {__index=function() error('no per-heal timers') end})
         C_UnitAuras=setmetatable({}, {__index=function() error('no addon-side aura reads') end})
         local methods=getmetatable(UIParent).__index
+        function SecureHandlerSetFrameRef(frame,key,value)
+            assert(not combat, 'secure references are configured out of combat')
+            frame.refs=frame.refs or {}; frame.refs[key]=value
+        end
+        function methods:SetFrameRef() error('use the public SecureHandlerSetFrameRef bridge') end
         local originalSetText=methods.SetText
         function methods:SetText(value)
             -- Native SetText replaces the text created by SetFormattedText.

@@ -425,17 +425,26 @@ function Lab:TalentRows(sample,metric)
             seen[id]=true
             local mapping=mappings and mappings[id]
             local sources=mapping and mapping[metric]
+            local measuredSources={}
             local amount=PlainNumber(amounts[id],1e15)
+            if amount~=nil then measuredSources[id]=amount end
             local kind=amount~=nil and "direct" or "unattributed"
             if sources then
                 local sum,found=0,false
+                amount=nil; kind="unattributed"
+                measuredSources={}
                 for _,spellID in ipairs(sources) do
                     local observed=PlainNumber(amounts[spellID],1e15)
-                    if observed then sum=sum+observed; found=true end
+                    if observed and measuredSources[spellID]==nil then
+                        sum=sum+observed; found=true; measuredSources[spellID]=observed
+                    elseif observed==nil and JP.SafeOptionalBoolean(sample.complete)==true then
+                        measuredSources[spellID]=0
+                    end
                 end
                 if found or JP.SafeOptionalBoolean(sample.complete)==true then amount=sum; kind="direct" end
             end
-            rows[#rows+1]={spellID=id,talentSpellID=id,rank=rank,amount=amount,kind=kind,sourceSpellIDs=sources}
+            rows[#rows+1]={spellID=id,talentSpellID=id,rank=rank,amount=amount,kind=kind,
+                sourceSpellIDs=sources,sources=measuredSources}
         end
     end
     table.sort(rows,function(a,b)
@@ -512,33 +521,45 @@ end
 -- Missing attribution is never treated as zero; these are not causal DPS gains.
 function Lab:HistoricalShares(runs, metric, specID, gameBuild, includePartial)
     runs = Table(runs) or {}
-    local groups, partialGroups = {}, {}
+    local groups, seen = {}, {}
     for i = 1, math.min(#(runs or {}), MAX_RUNS) do
         local run = Table(runs[i])
         local sample = run and Table(run.talentSample)
+        if sample then sample=self:ResolveSample(sample,runs) end
         local total = sample and PlainNumber(metric == "healing" and sample.overallHealing or sample.overallDamage)
         local complete = sample and JP.SafeOptionalBoolean(sample.complete) == true
         local partialOK = false
         if includePartial and sample and not complete and total and total > 0 then
             local sum = 0
             for _, row in ipairs(self:Rows(sample, metric)) do sum = sum + row.amount end
-            partialOK = math.abs(sum-total) <= math.max(1,total*.00001)
+            partialOK = sum > 0 and sum <= total + math.max(1,total*.00001)
         end
+        local fingerprint=sample and table.concat({tostring(PlainNumber(run.completedAt or run.startedAt) or i),
+            tostring(PlainNumber(sample.mapID or run.mapID) or 0),tostring(PlainNumber(sample.level or run.level) or 0),
+            PlainString(sample.buildKey) or "",tostring(PlainNumber(sample.duration) or 0)},"|")
         if sample and PlainNumber(sample.specID) == specID and PlainString(sample.gameBuild) == gameBuild
             and (complete or partialOK)
-            and JP.SafeOptionalBoolean(sample.mixed) == false and total and total > 0 then
-            local destination = complete and groups or partialGroups
+            and JP.SafeOptionalBoolean(sample.mixed) == false and total and total > 0 and not seen[fingerprint] then
+            seen[fingerprint]=true
             for _, row in ipairs(self:TalentRows(sample, metric)) do
-                if row.amount ~= nil then
+                if row.amount ~= nil and row.amount <= total + math.max(1,total*.00001) then
                     local key = row.spellID .. ":" .. row.rank
-                    local g = destination[key] or {amount=0,total=0,runs=0,spellID=row.spellID,rank=row.rank,partial=not complete}
+                    local g = groups[key] or {amount=0,total=0,runs=0,spellID=row.spellID,rank=row.rank,
+                        partial=false,sources={},samples={}}
                     g.amount = g.amount + row.amount; g.total = g.total + total; g.runs = g.runs + 1
+                    g.partial=g.partial or not complete
                     g.percent = g.amount / g.total * 100
-                    destination[key] = g
+                    local percent=row.amount/total*100
+                    g.min=math.min(g.min or percent,percent); g.max=math.max(g.max or percent,percent)
+                    for id,amount in pairs(row.sources) do g.sources[id]=(g.sources[id] or 0)+amount end
+                    g.samples[#g.samples+1]={amount=row.amount,total=total,percent=percent,sources=row.sources,
+                        partial=not complete,rank=row.rank,spellID=row.spellID,
+                        mapName=PlainString(run.mapName),level=PlainNumber(sample.level or run.level),
+                        stamp=PlainNumber(run.completedAt or run.startedAt),duration=PlainNumber(sample.duration)}
+                    groups[key] = g
                 end
             end
         end
     end
-    for key, group in pairs(partialGroups) do if not groups[key] then groups[key] = group end end
     return groups
 end

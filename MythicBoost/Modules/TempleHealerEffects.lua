@@ -56,7 +56,7 @@ function Effects:ConfigureAuras(frame, enabled)
             frame.healAuras[i] = holder
             -- Fixed tokens avoid retargeting a restricted aura display mid-pull.
             -- Only the secure heal-target driver changes these holders' visibility.
-            frame:SetFrameRef("healAuras" .. i, holder)
+            SecureHandlerSetFrameRef(frame, "healAuras" .. i, holder)
         end
     end
     for _, holder in ipairs(frame.healAuras or {}) do

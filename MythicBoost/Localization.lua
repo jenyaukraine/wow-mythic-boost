@@ -13,9 +13,7 @@ if locale == "deDE" then
         ["В строке чата уже есть текст. Отправь его или закрой строку и повтори Alt-клик."] = "Die Chatzeile enthält bereits Text. Senden oder schließen, dann erneut Alt-klicken.",
         ["Сообщение подготовлено в чате. Нажми Enter для отправки."] = "Nachricht im Chat vorbereitet. Zum Senden Enter drücken.",
         ["Чат ограничен: отправляй по одной карточке через Alt-клик и Enter."] = "Chat beschränkt: einzelne Karten mit Alt-Klick und Enter senden.",
-        ["Без подписи: нет пары. Нажми на число для сравнения и условий."] = "Keine Zahl: kein Vergleich. Zahl anklicken für Messungen und Bedingungen.",
         ["Без разницы"] = "Kein Unterschied",
-        ["Вклад: доля измеренного лечения или урона, не оценка пользы таланта."] = "Beitrag: Anteil gemessener Heilung oder Schaden, keine Talentbewertung.",
         ["Выше %s"] = "Höherer %s",
         ["Ещё талантов: %d - %d"] = "Weitere Talente: %d - %d",
         ["Зелёный: %s сборок выше. Красный: ниже. ~ Предварительная оценка."] = "Grün: höherer Build-%s. Rot: niedriger. ~ Vorläufige Schätzung.",
@@ -768,9 +766,7 @@ elseif locale ~= "ruRU" then
         ["В строке чата уже есть текст. Отправь его или закрой строку и повтори Alt-клик."] = "The chat input already contains text. Send or close it, then Alt-click again.",
         ["Сообщение подготовлено в чате. Нажми Enter для отправки."] = "Message prepared in chat. Press Enter to send.",
         ["Чат ограничен: отправляй по одной карточке через Alt-клик и Enter."] = "Chat restricted: share individual cards with Alt-click and Enter.",
-        ["Без подписи: нет пары. Нажми на число для сравнения и условий."] = "No label: no comparison. Click a number for samples and conditions.",
         ["Без разницы"] = "No difference",
-        ["Вклад: доля измеренного лечения или урона, не оценка пользы таланта."] = "Contribution: share of measured healing or damage, not a talent rating.",
         ["Выше %s"] = "Higher %s",
         ["Ещё талантов: %d - %d"] = "Other talents: %d - %d",
         ["Зелёный: %s сборок выше. Красный: ниже. ~ Предварительная оценка."] = "Green: higher build %s. Red: lower. ~ Preliminary estimate.",
@@ -2323,14 +2319,10 @@ end
 if translations then
     local extra = locale == "deDE" and {
         ["История таланта"] = "Talentverlauf",
-        ["Доля измеренного исцеления/урона в ключах с этим талантом. Это не прирост от очка. Состав группы и подземелье влияют на результат."] = "Anteil der gemessenen Heilung/des Schadens in Schlüsselsteinen mit diesem Talent. Kein Zugewinn pro Punkt. Gruppe und Dungeon beeinflussen das Ergebnis.",
         ["Ключей: %d | Ранг: %d"] = "Schlüsselsteine: %d | Rang: %d",
-        ["Нет полных измерений для этого таланта и ранга."] = "Keine vollständigen Messungen für dieses Talent und diesen Rang.",
     } or {
         ["История таланта"] = "Talent history",
-        ["Доля измеренного исцеления/урона в ключах с этим талантом. Это не прирост от очка. Состав группы и подземелье влияют на результат."] = "Share of measured healing/damage in keys with this talent. This is not the gain from a point. Group composition and dungeon affect the result.",
         ["Ключей: %d | Ранг: %d"] = "Keys: %d | Rank: %d",
-        ["Нет полных измерений для этого таланта и ранга."] = "No complete measurements for this talent and rank.",
     }
     for key, value in pairs(extra) do translations[key] = value end
 end
@@ -2346,9 +2338,7 @@ end
 
 if translations then
     local extra = locale == "deDE" and {
-        ["Вклад"] = "Beitrag",
     } or {
-        ["Вклад"] = "Contribution",
     }
     for key, value in pairs(extra) do translations[key] = value end
 end
@@ -2376,10 +2366,8 @@ end
 if translations then
     local extra = locale == "deDE" and {
         ["~ Жёлтый: измеренный вклад, неполный замер"] = "~ Gelb: gemessener Beitrag, unvollständige Messung",
-        ["Неполный замер: доля сохранённых данных, не оценка всей сборки."] = "Unvollständige Messung: Anteil gespeicherter Daten, keine Bewertung des gesamten Builds.",
     } or {
         ["~ Жёлтый: измеренный вклад, неполный замер"] = "~ Yellow: measured contribution, incomplete sample",
-        ["Неполный замер: доля сохранённых данных, не оценка всей сборки."] = "Incomplete sample: share of recorded data, not a rating of the entire build.",
     }
     for key, value in pairs(extra) do translations[key] = value end
 end
@@ -2391,6 +2379,37 @@ if translations then
     } or {
         ["Замеры %s: выбранный %s (%s), другой %s (%s). Разница: %s."] = "%s samples: selected %s (%s), other %s (%s). Difference: %s.",
         ["Есть неполные или смешанные данные. Это разница записанных отрезков, не эффект смены талантов."] = "Includes incomplete or mixed data. Difference between recorded segments, not the effect of changing talents.",
+    }
+    for key, value in pairs(extra) do translations[key] = value end
+end
+
+if translations then
+    local extra = locale == "deDE" and {
+        ["Все замеры"] = "Alle Messungen",
+        ["Доля = сумма связанных заклинаний / общий результат тех же замеров x 100%."] = "Anteil = Summe zugeordneter Zauber / Gesamtergebnis derselben Messungen x 100%.",
+        ["Доля по прохождениям: %.2f%% - %.2f%%"] = "Anteil je Durchlauf: %.2f%% - %.2f%%",
+        ["Доля таланта от общего"] = "Talentanteil am Gesamtergebnis",
+        ["Итого: %s / %s = %.2f%%"] = "Gesamt: %s / %s = %.2f%%",
+        ["Наведи: заклинания и расчёт доли."] = "Für Zauber und Anteilsberechnung mit der Maus zeigen.",
+        ["Нажми на процент: отдельные прохождения и заклинания. Без подписи: источник не выделен."] = "Prozent anklicken: einzelne Durchläufe und Zauber. Ohne Beschriftung: keine eigene Quelle.",
+        ["Нажми на талант: его доля в каждом прохождении и связанные заклинания."] = "Talent anklicken: Anteil je Durchlauf und zugeordnete Zauber.",
+        ["Неполный замер: показана только записанная часть вклада."] = "Unvollständige Messung: nur der aufgezeichnete Anteil wird angezeigt.",
+        ["Общий итог"] = "Gesamtergebnis",
+        ["Пассивное усиление без отдельного источника: вклад не выделен."] = "Passive Verstärkung ohne eigene Quelle: Beitrag nicht getrennt messbar.",
+        ["Прохождение"] = "Durchlauf",
+    } or {
+        ["Все замеры"] = "All samples",
+        ["Доля = сумма связанных заклинаний / общий результат тех же замеров x 100%."] = "Share = linked spell totals / overall total of the same samples x 100%.",
+        ["Доля по прохождениям: %.2f%% - %.2f%%"] = "Share across runs: %.2f%% - %.2f%%",
+        ["Доля таланта от общего"] = "Talent share of overall",
+        ["Итого: %s / %s = %.2f%%"] = "Total: %s / %s = %.2f%%",
+        ["Наведи: заклинания и расчёт доли."] = "Hover for spells and share calculation.",
+        ["Нажми на процент: отдельные прохождения и заклинания. Без подписи: источник не выделен."] = "Click a percentage for individual runs and spells. No label: no separate source.",
+        ["Нажми на талант: его доля в каждом прохождении и связанные заклинания."] = "Click a talent for its share in each run and the linked spells.",
+        ["Неполный замер: показана только записанная часть вклада."] = "Incomplete sample: only the recorded contribution is shown.",
+        ["Общий итог"] = "Overall total",
+        ["Пассивное усиление без отдельного источника: вклад не выделен."] = "Passive modifier without a separate source: contribution not isolated.",
+        ["Прохождение"] = "Run",
     }
     for key, value in pairs(extra) do translations[key] = value end
 end

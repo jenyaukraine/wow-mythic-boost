@@ -19,6 +19,7 @@ def fixture():
         function UI.HUDPanel(parent,name,w,h)
             local f=CreateFrame('Frame',name,parent); f:SetSize(w,h); return f
         end
+        function methods:SetEnabled(value) self.enabled=value end
         function methods:EnableMouseWheel(value) self.mouseWheel=value end
         function methods:SetScrollChild(child) self.child=child end
         function methods:GetVerticalScrollRange()
@@ -120,7 +121,7 @@ def test_rows_pagination_tooltip_and_reuse():
 def test_compare_is_build_comparison_and_unknown_is_explicit():
     lua = fixture()
     lua.execute(r'''
-        lab:Show()
+        lab.view='sources'; lab:Show()
         assert(lab.compare.text:find('Сравнение сборок',1,true))
         assert(lab.compare.text:find('Условия и состав группы влияют на результат.',1,true))
         assert(lab.compare.text:find('ключей',1,true))
@@ -192,7 +193,7 @@ def test_scroll_pool_limits_and_bad_durations():
         local run=db.runHistory.runs[1]
         run.talentSample.spells.healing={}
         for i=1,400 do run.talentSample.spells.healing[i]=i end
-        lab:Show(); assert(#lab.rows==256)
+        lab.view='sources'; lab:Show(); assert(#lab.rows==256)
         lab.rowScroll.scripts.OnMouseWheel(nil,-100000)
         assert(lab.rowScroll.offset==256*34-270)
         local created=allocations

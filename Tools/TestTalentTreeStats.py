@@ -7,6 +7,7 @@ def fixture():
     load(lua, 'Modules/TalentLab.lua')
     load(lua, 'Modules/TalentComparison.lua')
     load(lua, 'Modules/TalentLabUI.lua')
+    load(lua, 'Modules/TalentContributionUI.lua')
     load(lua, 'Modules/TalentTreeStats.lua')
     lua.execute('''
         lab=JP.TalentLab; tree=JP.TalentTreeStats
@@ -69,9 +70,9 @@ def test_partial_observations_are_not_recommendations():
         tree:Refresh()
         assert(tree.cards[2].text.text=='~60.0%' and tree.cards[2].border[1]==1)
         nodes[2].activeRank=0
-        tree:Refresh(); assert(tree.cards[2].text.text=='—', 'partial data cannot recommend an unselected talent')
+        tree:Refresh(); assert(tree.cards[2].text.text=='~60.0%', 'recorded contribution is descriptive even if currently unselected')
         sample.overallHealing=60000; tree:ReleaseHistory(); tree:Refresh()
-        assert(tree.cards[3].text.text=='—','mismatched totals are not usable shares')
+        assert(tree.cards[3].text.text=='~33.3%','partial source amount uses the recorded overall denominator')
         sample.overallHealing=50000; sample.mixed=true
         tree:ReleaseHistory(); tree:Refresh(); assert(tree.cards[3].text.text=='—')
     ''')
@@ -144,68 +145,71 @@ def test_tree_reuses_driver_and_releases_cached_history():
     ''')
 
 
-def test_default_tree_compares_runs_and_opens_the_same_context():
+def test_default_tree_shows_individual_contributions():
     lua=fixture()
-    lua.execute('''
-        db.runHistory.runs[1].talentSample.overallHealing=60000
-        local comparisons=0; local original=lab.CompareTalents
-        lab.CompareTalents=function(...) comparisons=comparisons+1; return original(...) end
+    lua.execute("""
+        lab.CompareTalents=function() error('cohort HPS must not decorate individual talents') end
         tree:Refresh()
-        assert(tree.context.runs==3 and tree.context.pairs==2)
-        assert(tree.cards[1].text.text=='~-17%' and tree.cards[1].border[1]==1,
-            'negative with/without difference, not measured share or try recommendation')
-        assert(tree.cards[2].text.text=='~+20%' and tree.cards[2].border[2]==.95)
-        assert(not tree.cards[3].shown,'always selected has no fabricated zero or recommendation')
-        assert(tree.note.text:find('Без подписи: нет пары',1,true))
-        tree.cards[2].badge.scripts.OnEnter()
-        assert(tooltip.lines[1]:find('Выше HPS',1,true) and tooltip.lines[1]:find('замеров: 1',1,true))
-        assert(tooltip.lines[1]:find('Других различий',1,true) and tooltip.lines[1]:find('не доказанный прирост',1,true))
-        for i=1,100 do tree:Refresh() end
-        assert(comparisons==1,'comparison is cached across tree ticks')
-        tree.cards[2].badge.scripts.OnClick()
-        assert(lab.view=='comparison' and lab.comparisonKey==tree.context.key)
-        assert(lab.rows[1].share.text=='~+20.0%' and lab.rows[1].meta.text:find('Выше HPS',1,true))
+        assert(tree.cards[1].text.text=='56.0%' and tree.cards[2].text.text=='60.0%')
+        assert(tree.cards[3].text.text=='40.0%', 'always selected still has its own measured contribution')
+        tree.cards[1].badge.scripts.OnEnter()
+        assert(tooltip.lines[1]:find('56.0k / 100.0k',1,true))
+        assert(tooltip.lines[1]:find('Spell 1001 [1001]',1,true))
+        tree.cards[1].badge.scripts.OnClick()
+        assert(lab.view=='contribution' and lab.contribution.spellID==1001)
+        assert(lab.rows[1].share.text=='60.0%' and lab.rows[2].share.text=='50.0%')
+        assert(lab.rows[1].amount.text=='36.0k' and lab.rows[1].rate.text=='60.0k')
+        assert(lab.empty.text:find('56.00%',1,true))
+        lab.rows[1].scripts.OnEnter()
+        assert(tooltip.lines[1]:find('Spell 1001 [1001]: 36.0k / 60.0k = 60.00%',1,true))
+        local built=allocations
+        for i=1,1000 do tree:Refresh(); lab:Render() end
+        assert(allocations==built)
+        tree.openButton.scripts.OnClick()
+        assert(lab.view=='talents' and lab.rows[1].share.text=='60.0%')
+        lab.rows[1].scripts.OnClick()
+        assert(lab.view=='contribution' and lab.contribution.spellID==1002)
         tree.metricButtons.damage.scripts.OnClick()
         tree.openButton.scripts.OnClick()
-        assert(lab.metric=='damage' and lab.view=='comparison')
-        tree.modeButtons.shares.scripts.OnClick()
-        assert(tree.mode=='shares' and tree.contextText.text:find('не оценка пользы',1,true))
-        tree.modeButtons.comparison.scripts.OnClick()
-        assert(tree.mode=='comparison')
-        inspecting=true; tree:Refresh(); assert(not tree.legend.shown and not tree.cards[2].shown)
-        inspecting=false; combat=true; tree:Refresh(); assert(not tree.legend.shown)
-        combat=false; tree:Disable(); assert(not tree.context and not tree.contexts and not tree.contextRows)
-    ''')
+        assert(lab.metric=='damage' and lab.view=='talents')
+    """)
 
 
-def test_comparison_context_rank_family_and_unknowns():
+def test_source_breakdown_weights_and_partial_history():
     lua=fixture()
-    lua.execute('''
-        JP.TalentSources={[1]={[1002]={family=999}}}
-        db.runHistory.runs[1].talentSample.selected[1].rank=4
-        nodes[2].activeRank=4
-        tree:Refresh()
-        assert(tree.cards[2].shown and tree.cards[2].detail:find('Ранг: 4',1,true),
-            'apex spell variants use the comparison family at the actual rank')
-        nodes[2].activeRank=3
-        tree:Refresh(); assert(not tree.cards[2].shown,'different selected rank cannot borrow a result')
-        nodes[2].activeRank=0
-        tree:Refresh(); assert(tree.cards[2].shown,'unselected talent can display a measured higher rank')
-        local sample=db.runHistory.runs[1].talentSample
-        sample.gameBuild='other'; tree:ReleaseHistory(); tree:Refresh()
-        assert(tree.context.runs==2 and tree.context.pairs==0 and not tree.cards[2].shown,
-            'a paired context from another game build cannot decorate the current tree')
-        assert(tree.note.text:find('Нет пары:',1,true))
-        sample.gameBuild='12.0:123'; sample.specID=2
-        tree:ReleaseHistory(); tree:Refresh(); assert(tree.context.runs==2)
-        db.runHistory.runs={}; tree:ReleaseHistory(); tree:Refresh()
-        assert(not tree.context and not tree.cards[1].shown and tree.legend.shown)
-        assert(tree.contextText.text=='Нет замеров с известной неизменной сборкой')
-    ''')
+    lua.execute("""
+        JP.TalentSources={[1]={[1001]={healing={11,12}}}}
+        local a=db.runHistory.runs[2].talentSample
+        local b=db.runHistory.runs[3].talentSample
+        a.spells.healing={[11]=6000,[12]=6000,[99]=48000}
+        b.spells.healing={[11]=4000,[12]=0,[99]=16000}; b.complete=false
+        local group=lab:HistoricalShares(db.runHistory.runs,'healing',1,'12.0:123',true)['1001:1']
+        assert(group.runs==2 and group.partial and group.amount==16000 and group.total==100000)
+        assert(group.percent==16 and group.min==10 and group.max==20)
+        assert(group.sources[11]==10000 and group.sources[12]==6000)
+        assert(group.samples[1].percent==20 and group.samples[2].percent==10)
+        for _,r in ipairs(group.samples) do
+            local sum=0; for _,amount in pairs(r.sources) do sum=sum+amount end
+            assert(sum==r.amount)
+        end
+        table.insert(db.runHistory.runs,db.runHistory.runs[2])
+        assert(lab:HistoricalShares(db.runHistory.runs,'healing',1,'12.0:123',true)['1001:1'].runs==2)
+        tree:Refresh(); assert(tree.cards[1].text.text=='~16.0%')
+        a.selected[1].rank=2; tree:ReleaseHistory(); tree:Refresh()
+        assert(tree.cards[1].text.text=='~10.0%', 'ranks have separate measurements')
+        a.spells.healing={[99]=60000}; a.selected[1].rank=1; b.mixed=true
+        group=lab:HistoricalShares(db.runHistory.runs,'healing',1,'12.0:123',true)['1001:1']
+        assert(group.amount==0 and group.percent==0 and group.runs==1,'confirmed zero is preserved')
+        a.complete=false
+        assert(not lab:HistoricalShares(db.runHistory.runs,'healing',1,'12.0:123',true)['1001:1'],
+            'missing partial sources do not turn into zero')
+        assert(not lab:HistoricalShares(db.runHistory.runs,'healing',2,'12.0:123',true)['1001:1'])
+        assert(not lab:HistoricalShares(db.runHistory.runs,'healing',1,'other',true)['1001:1'])
+    """)
 
 
 if __name__=='__main__':
-    for test in (test_default_tree_compares_runs_and_opens_the_same_context,test_comparison_context_rank_family_and_unknowns,
+    for test in (test_default_tree_shows_individual_contributions,test_source_breakdown_weights_and_partial_history,
                  test_partial_observations_are_not_recommendations,test_weighting_and_unknowns,test_tree_colors_preview_and_lifecycle,
                  test_tree_reuses_driver_and_releases_cached_history):
         test(); print(test.__name__+': OK')

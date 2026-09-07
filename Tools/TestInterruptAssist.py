@@ -49,7 +49,12 @@ function MakeFrame(name)
  function f:SetAttribute(k,v) assert(not combat, 'protected attribute changed in combat'); self.attrs[k]=v end
  function f:RegisterForClicks(...) self.clicks={...} end
  function f:GetName() return self.name end
- function f:CreateFontString() return MakeFrame() end
+ function f:CreateFontString(_,_,template)
+  local text=MakeFrame(); local initialized=template=='GameFontNormal'
+  function text:SetFont(font) initialized=type(font)=='string' and font~='' end
+  function text:SetText(value) assert(initialized,'FontString:SetText(): Font not set'); self.value=value end
+  return text
+ end
  return f
 end
 function CreateFrame(_,name) frames=frames+1; return MakeFrame(name) end
