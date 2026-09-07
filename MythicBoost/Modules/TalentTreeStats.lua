@@ -28,6 +28,8 @@ end
 
 function Tree:ReleaseHistory()
     self.shares, self.sampleRefs, self.history = nil, nil, nil
+    self.pointContext,self.pointContextCached=nil,nil
+    self.pointShares=nil
 end
 
 function Tree:GetShares(runs, spec, gameBuild)
@@ -41,6 +43,8 @@ function Tree:GetShares(runs, spec, gameBuild)
         if not same or self.sampleRefs[i] ~= (run and run.talentSample or false) then same = false; break end
     end
     if not same then
+        self.pointContext,self.pointContextCached=nil,nil
+        self.pointShares=nil
         self.shares = Lab:HistoricalShares(runs, self.metric or "healing", spec, gameBuild, true)
         self.sampleRefs = {}
         for i = 1, count do
@@ -67,11 +71,16 @@ function Tree:CreateLegend()
         button:SetScript("OnClick", function() self.metric = metric; self:Refresh() end)
         self.metricButtons[metric] = button
     end
-    local title=UI.Text(panel,"GameFontHighlightSmall",L("Доля таланта от общего"))
-    title:SetPoint("TOPLEFT",120,-14); title:SetWidth(270)
+    self.pointMode=UI.Button(panel,L("Ценность очка"),130,26)
+    self.pointMode:SetPoint("TOPLEFT",116,-7)
+    self.pointMode:SetScript("OnClick",function() self.mode="points"; self:Refresh() end)
+    self.shareMode=UI.Button(panel,L("Доля таланта от общего"),168,26)
+    self.shareMode:SetPoint("TOPLEFT",252,-7)
+    self.shareMode:SetScript("OnClick",function() self.mode="shares"; self:Refresh() end)
     local open=UI.Button(panel,L("Подробнее"),168,26)
     open:SetPoint("TOPRIGHT",-8,-7)
     open:SetScript("OnClick",function()
+        if self.mode~="shares" and Lab.ShowPoints then Lab:ShowPoints(self.metric); return end
         Lab:CreateUI(); Lab.view="talents"; Lab.metric=self.metric or "healing"; Lab:Show()
     end)
     self.openButton=open
@@ -104,6 +113,15 @@ function Tree:Refresh()
     local gameBuild = version and build and (version .. ":" .. build) or version or build
     local settings = JP.Settings("runHistory", {runs={}})
     local shares = self:GetShares(settings.runs, spec, gameBuild)
+    local pointMode=self.mode~="shares" and JP.TalentPointValue~=nil
+    if pointMode and not self.pointContextCached then
+        self.pointContext=JP.TalentPointValue:Context(settings.runs,self.metric or "healing",spec,gameBuild,Lab.CurrentBuild())
+        local cohort={}
+        for _,record in ipairs(self.pointContext and self.pointContext.records or {}) do cohort[#cohort+1]=record.run end
+        self.pointShares=Lab:HistoricalShares(cohort,self.metric or "healing",spec,gameBuild,true)
+        self.pointContextCached=true
+    end
+    local context=self.pointContext
     local info = JP.SafeTable(Call(C_Traits.GetConfigInfo, config))
     local treeIDs = info and JP.SafeTable(info.treeIDs)
     if not treeIDs then self:Clear(); return end
@@ -122,6 +140,15 @@ function Tree:Refresh()
     self.contextText:SetText(L("Доля = сумма связанных заклинаний / общий результат тех же замеров x 100%."))
     self.note:SetText(L("Нажми на процент: отдельные прохождения и заклинания. Без подписи: источник не выделен.")
         .."\n"..L("~ Жёлтый: измеренный вклад, неполный замер"))
+    if pointMode then
+        self.contextText:SetText(context and (L("База: +%d %s")):format(context.level,context.run.mapName or L("Подземелье"))
+            .." | "..(L("Замеров: %d")):format(#context.records) or L("Нет замеров"))
+        self.note:SetText(context and not context.current
+            and L("Расчёт относится к сохранённой сборке; текущая сборка отличается или не проверена.")
+            or L("~ Цена одного очка по модели. = Доля источника. ? Условия не измерены. Подробнее: рейтинг и причины."))
+    end
+    self.pointMode:SetBackdropBorderColor(pointMode and .2 or .3,pointMode and .8 or .3,pointMode and 1 or .3,1)
+    self.shareMode:SetBackdropBorderColor(not pointMode and .2 or .3,not pointMode and .8 or .3,not pointMode and 1 or .3,1)
     self.legend:Show()
     local count, visited = 0, 0
     for treeIndex = 1, math.min(#treeIDs, 32) do
@@ -159,6 +186,7 @@ function Tree:Refresh()
                             UI.Tooltip(card.badge, L("История таланта"), card.detail)
                         end)
                         card.badge:SetScript("OnClick",function()
+                            if self.mode~="shares" and Lab.ShowPoints then Lab:ShowPoints(self.metric); return end
                             Lab:ShowContribution(card.spellID,card.rank,self.shareSpec,self.shareBuild,self.metric)
                         end)
                         card.badge:SetScript("OnLeave", function() if GameTooltip_Hide then GameTooltip_Hide() end end)
@@ -178,7 +206,20 @@ function Tree:Refresh()
                     card.text:SetText(observed and ((observed.partial and "~" or "") .. ("%.1f%%"):format(observed.percent)) or "—")
                     card.spellID,card.rank=spellID,selected and rank or 1
                     card.detail=observed and Lab:ContributionText(observed,self.metric) or nil
-                    if observed then card:Show() else HideCard(card) end
+                    if pointMode then
+                        -- Keep source shares from the reference cohort distinct
+                        -- from modeled point values and unknown conditions.
+                        local referenceRank=1
+                        for _,e in pairs(context and context.sample.selected or {}) do
+                            if e.spellID==spellID then referenceRank=e.rank; break end
+                        end
+                        local referenceShare=self.pointShares and self.pointShares[spellID..":"..referenceRank]
+                        local p=JP.TalentPointValue:Presentation(context,spellID,self.metric or "healing",referenceShare)
+                        card.text:SetText(p.badge); card.text:SetTextColor(p.r,p.g,p.b,1)
+                        card:SetBackdropBorderColor(p.r,p.g,p.b,p.data and .85 or 0)
+                        card.detail=p.detail
+                        card:Show()
+                    elseif observed then card:Show() else HideCard(card) end
                 end
             end
         end
@@ -192,7 +233,11 @@ function Tree:Enable()
     self.events:RegisterEvent("ADDON_LOADED")
     self.events:RegisterEvent("PLAYER_REGEN_DISABLED")
     self.events:RegisterEvent("PLAYER_REGEN_ENABLED")
+    self.events:RegisterEvent("TRAIT_CONFIG_UPDATED")
+    self.events:RegisterEvent("TRAIT_NODE_CHANGED")
+    self.events:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     self.events:SetScript("OnEvent", function(_, event, addon)
+        if event=="TRAIT_CONFIG_UPDATED" or event=="TRAIT_NODE_CHANGED" or event=="PLAYER_SPECIALIZATION_CHANGED" then self:ReleaseHistory() end
         if event == "PLAYER_REGEN_DISABLED" then self:Clear()
         elseif event ~= "ADDON_LOADED" or addon == "Blizzard_PlayerSpells" then self:Attach() end
     end)

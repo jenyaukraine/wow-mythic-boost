@@ -27,6 +27,11 @@ JP.TalentSources = {
         [1244331] = { healing = { 1244341 }, family = 1244331 }, -- Everbloom's earlier tier
         [1244470] = { healing = { 1244341 }, family = 1244331 }, -- Same node, retains earlier tiers
         [1263879] = { healing = { 1264376 } }, -- Child spell description references 1263879
+        [145108] = { healing = { 145109, 145110 } }, -- Ysera's Gift: self and other target
+        [392124] = { healing = { 392147 } }, -- Embrace of the Dream: child description
+        [392325] = { healing = { 392329 } }, -- Verdancy: talent text -> triggered heal
+        [433831] = { healing = { 434141 } }, -- Dream Surge -> Dream Bloom
+        [1264899] = { healing = { 1264905 } }, -- Spirit of the Thicket: talent text -> beam
 
         -- Keeper of the Grove hero talents are intentionally omitted here.
         -- Blooming Infusion's 429438/429474 records are buff definitions that

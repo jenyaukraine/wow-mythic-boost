@@ -113,6 +113,8 @@ local function Build()
         buildKey = buildKey, buildName = buildName, selected = selected }
 end
 
+Lab.CurrentBuild = Build
+
 local function PlayerGUID()
     return type(UnitGUID) == "function" and PlainString(Call(UnitGUID, "player"))
 end

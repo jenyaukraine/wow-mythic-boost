@@ -5,7 +5,7 @@
 ## Notes-enGB: Mythic+ group finder, player analysis and progression dashboard for Midnight
 ## Notes-deDE: Mythic+-Gruppensuche, Spieleranalyse und Saisonfortschritt für Midnight
 ## Author: Jenya
-## Version: 2.4.102
+## Version: 2.4.103
 ## SavedVariables: MythicBoostDB
 ## SavedVariablesPerCharacter: MythicBoostMarketDB
 ## OptionalDeps: RaiderIO, RaiderIO_DB_EU_M, Blizzard_AuraContainer
@@ -45,10 +45,13 @@ Modules/GuildBoard.lua
 Modules/ApplicantBoard.lua
 Modules/ApplicantCards.lua
 Data/TalentSources.lua
+Data/TalentPointModels.lua
 Modules/TalentLab.lua
 Modules/TalentComparison.lua
+Modules/TalentPointValue.lua
 Modules/TalentLabUI.lua
 Modules/TalentContributionUI.lua
+Modules/TalentPointUI.lua
 Modules/TalentTreeStats.lua
 Modules/RunStats.lua
 Modules/RunHistory.lua

@@ -36,7 +36,7 @@ for spec, rows in pairs(sources) do
         end
     end
 end
-assert(rowCount == 14, "verified class and hero source rows")
+assert(rowCount == 19, "verified class and hero source rows")
 
 assert(#resto[155675].healing == 1 and resto[155675].healing[1] == 155777, "Germination mapping changed")
 assert(#resto[200390].healing == 1 and resto[200390].healing[1] == 200389, "Cultivation mapping changed")

@@ -160,12 +160,17 @@ function Lab:CreateUI()
     self.uiSubtitle = Label(f, "", 16, -43, 450, C.text)
     self.uiSubtitle:SetWordWrap(true); self.uiSubtitle:SetMaxLines(1); self.uiSubtitle:SetHeight(18)
     self.uiDate = Label(f, "", 16, -65, 450, C.muted)
-    self.uiBuild = Label(f, "", 16, -87, 445, C.muted)
+    self.uiBuild = Label(f, "", 16, -87, 302, C.muted)
     self.uiBuild:SetWordWrap(true); self.uiBuild:SetMaxLines(1); self.uiBuild:SetHeight(18)
     self.comparisonButton = UI.Button(f,L("Сравнить сборки"),140,25)
     self.comparisonButton:SetPoint("TOPLEFT",476,-83)
     self.comparisonButton:SetScript("OnClick",function()
         self.view="comparison"; self.keyPickerMenu:Hide(); self:Render()
+    end)
+    self.pointButton=UI.Button(f,L("Ценность очка"),140,25)
+    self.pointButton:SetPoint("TOPLEFT",326,-83)
+    self.pointButton:SetScript("OnClick",function()
+        self.view="points"; self.keyPickerMenu:Hide(); self:Render()
     end)
     self.keyPicker = UI.Button(f, L("Выбрать ключ"), 136, 28)
     self.keyPicker:SetPoint("TOPRIGHT", -16, -39)
@@ -201,7 +206,8 @@ function Lab:CreateUI()
     self.allTalentsButton = UI.Button(f, L("Все таланты"), 140, 25)
     self.allTalentsButton:SetPoint("TOPLEFT", 476, -120)
     self.allTalentsButton:SetScript("OnClick", function()
-        if self.view=="comparison" then self.showComparisonAll=not self.showComparisonAll
+        if self.view=="points" then self.pointFilter=(self.pointFilter or 1)%3+1
+        elseif self.view=="comparison" then self.showComparisonAll=not self.showComparisonAll
         else self.showUnknown = not self.showUnknown end
         self:Render()
     end)
@@ -472,6 +478,7 @@ end
 
 function Lab:Render()
     local runs = ReadRuns()
+    if self.view=="points" and self.RenderPoints then self:RenderPoints(runs); return end
     if self.view=="contribution" then self:RenderContribution(runs); return end
     if self.view=="comparison" and self.CompareTalents then self:RenderComparison(runs); return end
     self.comparisonContexts=nil
