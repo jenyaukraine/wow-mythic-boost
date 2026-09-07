@@ -9,6 +9,12 @@ local translations
 
 if locale == "deDE" then
     translations = {
+        ["Все ключи сборки"] = "Alle Build-Durchläufe",
+        ["Все ключи этой сборки"] = "Alle Durchläufe mit diesem Build",
+        ["Карта и уровень"] = "Dungeon und Stufe",
+        ["Замеров сборки: %d | Всего ключей в истории: %d"] = "Build-Messungen: %d | Gespeicherte Durchläufe: %d",
+        ["~ Оценка очка. = Доля источника. Без подписи: цена очка не измерена. Причины — в подробностях."] = "~ Punktschätzung. = Quellenanteil. Ohne Beschriftung: Punktwert nicht gemessen. Gründe unter Details.",
+
         ["Ценность очка"] = "Punktwert",
         ["Вложенные очки"] = "Vergebene Punkte",
         ["Кандидаты"] = "Kandidaten",
@@ -17,7 +23,6 @@ if locale == "deDE" then
         ["Снять 1"] = "1 entfernen",
         ["Очко"] = "Punkt",
         ["Оценка"] = "Schätzung",
-        ["Текущая сборка"] = "Aktueller Build",
         ["Сохранённая сборка"] = "Gespeicherter Build",
         ["Выдано бесплатно"] = "Kostenlos gewährt",
         ["Часть эффекта"] = "Teilwirkung",
@@ -49,7 +54,6 @@ if locale == "deDE" then
         ["Это доля отдельного источника. Цена снятого очка и ценность замены не измерены."] = "Dies ist der Anteil einer separaten Quelle. Der Wert eines entfernten oder ersetzten Punktes wurde nicht gemessen.",
         ["Выше в списке: больше расчётный эффект одного очка. Кнопка справа переключает вложенные очки, кандидатов и таланты без оценки."] = "Höhere Zeilen haben mehr modellierte Wirkung je Punkt. Rechts zwischen vergebenen Punkten, Kandidaten und unbewerteten Talenten wechseln.",
         ["~ Оценка постоянного усиления. Наведи для формулы. Контроль, защита и зависимости дерева требуют отдельной проверки."] = "~ Geschätzter konstanter Bonus. Formel per Mauszeiger. Kontrolle, Schutz und Baumabhängigkeiten separat prüfen.",
-        ["~ Цена одного очка по модели. = Доля источника. ? Условия не измерены. Подробнее: рейтинг и причины."] = "~ Modellierter Punktwert. = Quellenanteil. ? Bedingungen nicht gemessen. Details: Rangliste und Gründe.",
 
         ["При ограничениях чата: сообщение появится в строке ввода, Enter отправит его."] = "Bei Chatbeschränkungen wird die Nachricht vorbereitet. Enter sendet sie.",
         ["В строке чата уже есть текст. Отправь его или закрой строку и повтори Alt-клик."] = "Die Chatzeile enthält bereits Text. Senden oder schließen, dann erneut Alt-klicken.",
@@ -804,6 +808,12 @@ if locale == "deDE" then
     }
 elseif locale ~= "ruRU" then
     translations = {
+        ["Все ключи сборки"] = "All build runs",
+        ["Все ключи этой сборки"] = "All runs with this build",
+        ["Карта и уровень"] = "Dungeon and level",
+        ["Замеров сборки: %d | Всего ключей в истории: %d"] = "Build samples: %d | Total saved runs: %d",
+        ["~ Оценка очка. = Доля источника. Без подписи: цена очка не измерена. Причины — в подробностях."] = "~ Point estimate. = Source share. No label: point value unmeasured. Reasons in Details.",
+
         ["Ценность очка"] = "Point value",
         ["Вложенные очки"] = "Invested points",
         ["Кандидаты"] = "Candidates",
@@ -812,7 +822,6 @@ elseif locale ~= "ruRU" then
         ["Снять 1"] = "Remove 1",
         ["Очко"] = "Point",
         ["Оценка"] = "Estimate",
-        ["Текущая сборка"] = "Current build",
         ["Сохранённая сборка"] = "Recorded build",
         ["Выдано бесплатно"] = "Granted for free",
         ["Часть эффекта"] = "Partial effect",
@@ -844,7 +853,6 @@ elseif locale ~= "ruRU" then
         ["Это доля отдельного источника. Цена снятого очка и ценность замены не измерены."] = "This is a separate source share. The cost of removing or replacing the point is not measured.",
         ["Выше в списке: больше расчётный эффект одного очка. Кнопка справа переключает вложенные очки, кандидатов и таланты без оценки."] = "Higher rows have greater modeled impact per point. The right button cycles invested points, candidates and unrated talents.",
         ["~ Оценка постоянного усиления. Наведи для формулы. Контроль, защита и зависимости дерева требуют отдельной проверки."] = "~ Estimated constant bonus. Hover for the formula. Control, defense and tree dependencies need separate review.",
-        ["~ Цена одного очка по модели. = Доля источника. ? Условия не измерены. Подробнее: рейтинг и причины."] = "~ Modeled point value. = Source share. ? Conditions unmeasured. Details: ranking and reasons.",
 
         ["При ограничениях чата: сообщение появится в строке ввода, Enter отправит его."] = "When chat is restricted, the message is prepared in the chat input. Enter sends it.",
         ["В строке чата уже есть текст. Отправь его или закрой строку и повтори Alt-клик."] = "The chat input already contains text. Send or close it, then Alt-click again.",

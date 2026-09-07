@@ -175,6 +175,11 @@ function Lab:CreateUI()
     self.keyPicker = UI.Button(f, L("Выбрать ключ"), 136, 28)
     self.keyPicker:SetPoint("TOPRIGHT", -16, -39)
     self.keyPicker:SetScript("OnClick", function()
+        if self.view=="points" and JP.TalentPointValue then
+            local points=JP.TalentPointValue
+            points.scope=points.scope=="key" and "build" or "key"
+            self:Render(); return
+        end
         self.keyPickerMenu:SetShown(not self.keyPickerMenu:IsShown())
         if self.keyPickerMenu:IsShown() then self:RefreshKeyPicker() end
     end)

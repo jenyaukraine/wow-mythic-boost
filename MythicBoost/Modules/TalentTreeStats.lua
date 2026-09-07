@@ -8,11 +8,39 @@ local function Call(fn, ...)
 end
 local function Number(v)
     v = JP.SafeNumber(v)
-    return v and v == v and v >= 0 and v < math.huge and v or nil
+    return type(v)=="number" and v == v and v >= 0 and v < math.huge and v or nil
 end
 local function OOC()
     local ok, locked = pcall(InCombatLockdown)
     return ok and not JP.IsSecret(locked) and (locked == nil or locked == false)
+end
+
+function Tree:LayoutLegend(frame)
+    local panel=self.legend
+    panel:SetParent(frame)
+    local frameScale=Number(Call(frame.GetEffectiveScale,frame)) or 1
+    local rootScale=Number(Call(UIParent.GetEffectiveScale,UIParent)) or 1
+    if frameScale<=0 then frameScale=1 end
+    local rootWidth=Number(Call(UIParent.GetWidth,UIParent))
+    local frameWidth=Number(Call(frame.GetWidth,frame))
+    local width=math.min(frameWidth and frameWidth>0 and frameWidth or 600,
+        rootWidth and rootWidth>0 and rootWidth*rootScale/frameScale or 600)
+    local scale=math.min(1,math.max(.3,(width-16)/600))
+    panel:SetScale(scale)
+    local bottom=Number(Call(frame.GetBottom,frame))
+    local rootBottom=Number(Call(UIParent.GetBottom,UIParent)) or 0
+    local below=bottom and bottom-rootBottom*rootScale/frameScale or 0
+    panel:ClearAllPoints()
+    if below>=(96*scale+12) then
+        panel:SetPoint("TOP",frame,"BOTTOM",0,-6/scale)
+        self.legendDock="outside"
+    else
+        -- A maximized talent window has no room underneath. Dock in the
+        -- empty lower center, above the native loadout/apply controls.
+        panel:SetPoint("BOTTOM",frame,"BOTTOM",0,60/scale)
+        self.legendDock="inside"
+    end
+    panel:SetFrameStrata(frame:GetFrameStrata()); panel:SetFrameLevel(frame:GetFrameLevel()+2)
 end
 
 local function HideCard(card)
@@ -114,23 +142,20 @@ function Tree:Refresh()
     local settings = JP.Settings("runHistory", {runs={}})
     local shares = self:GetShares(settings.runs, spec, gameBuild)
     local pointMode=self.mode~="shares" and JP.TalentPointValue~=nil
-    if pointMode and not self.pointContextCached then
+    if pointMode and (not self.pointContextCached or self.pointScope~=JP.TalentPointValue.scope) then
         self.pointContext=JP.TalentPointValue:Context(settings.runs,self.metric or "healing",spec,gameBuild,Lab.CurrentBuild())
         local cohort={}
         for _,record in ipairs(self.pointContext and self.pointContext.records or {}) do cohort[#cohort+1]=record.run end
         self.pointShares=Lab:HistoricalShares(cohort,self.metric or "healing",spec,gameBuild,true)
         self.pointContextCached=true
+        self.pointScope=JP.TalentPointValue.scope
     end
     local context=self.pointContext
     local info = JP.SafeTable(Call(C_Traits.GetConfigInfo, config))
     local treeIDs = info and JP.SafeTable(info.treeIDs)
     if not treeIDs then self:Clear(); return end
     self:CreateLegend()
-    self.legend:SetParent(frame)
-    self.legend:ClearAllPoints()
-    self.legend:SetPoint("TOP", frame, "BOTTOM", 0, -6)
-    self.legend:SetFrameStrata(frame:GetFrameStrata())
-    self.legend:SetFrameLevel(frame:GetFrameLevel()+2)
+    self:LayoutLegend(frame)
     for metric, button in pairs(self.metricButtons) do
         local active = metric == (self.metric or "healing")
         button:SetBackdropColor(active and .08 or .035, active and .20 or .045, active and .25 or .055, 1)
@@ -141,11 +166,12 @@ function Tree:Refresh()
     self.note:SetText(L("Нажми на процент: отдельные прохождения и заклинания. Без подписи: источник не выделен.")
         .."\n"..L("~ Жёлтый: измеренный вклад, неполный замер"))
     if pointMode then
-        self.contextText:SetText(context and (L("База: +%d %s")):format(context.level,context.run.mapName or L("Подземелье"))
+        self.contextText:SetText(context and (context.scope=="build" and L("Все ключи этой сборки")
+            or (L("База: +%d %s")):format(context.level,context.run.mapName or L("Подземелье")))
             .." | "..(L("Замеров: %d")):format(#context.records) or L("Нет замеров"))
         self.note:SetText(context and not context.current
             and L("Расчёт относится к сохранённой сборке; текущая сборка отличается или не проверена.")
-            or L("~ Цена одного очка по модели. = Доля источника. ? Условия не измерены. Подробнее: рейтинг и причины."))
+            or L("~ Оценка очка. = Доля источника. Без подписи: цена очка не измерена. Причины — в подробностях."))
     end
     self.pointMode:SetBackdropBorderColor(pointMode and .2 or .3,pointMode and .8 or .3,pointMode and 1 or .3,1)
     self.shareMode:SetBackdropBorderColor(not pointMode and .2 or .3,not pointMode and .8 or .3,not pointMode and 1 or .3,1)
@@ -218,7 +244,7 @@ function Tree:Refresh()
                         card.text:SetText(p.badge); card.text:SetTextColor(p.r,p.g,p.b,1)
                         card:SetBackdropBorderColor(p.r,p.g,p.b,p.data and .85 or 0)
                         card.detail=p.detail
-                        card:Show()
+                        if p.data or p.share then card:Show() else HideCard(card) end
                     elseif observed then card:Show() else HideCard(card) end
                 end
             end

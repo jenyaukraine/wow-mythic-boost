@@ -44,8 +44,9 @@ function Lab:RenderPoints(runs)
     local filters={L("Вложенные очки"),L("Кандидаты"),L("Без оценки очка")}
     local filter=self.pointFilter or 1
     self.allTalentsButton:Show(); self.allTalentsButton:SetText(filters[filter])
-    self.keyPicker:SetText(L("Текущая сборка")); self.keyPicker:SetEnabled(false)
-    self.uiSubtitle:SetText(context and (L("База: +%d %s")):format(context.level,context.run.mapName or L("Подземелье")) or L("Нет замеров"))
+    self.keyPicker:SetText(Points.scope=="key" and L("Карта и уровень") or L("Все ключи сборки")); self.keyPicker:SetEnabled(true)
+    self.uiSubtitle:SetText(context and (context.scope=="build" and L("Все ключи этой сборки")
+        or (L("База: +%d %s")):format(context.level,context.run.mapName or L("Подземелье"))) or L("Нет замеров"))
     self.uiDate:SetText(context and ((L("Замеров: %d")):format(#context.records).." | "..date("%d.%m %H:%M",context.stamp)) or "")
     self.uiBuild:SetWidth(302)
     self.uiBuild:SetText(context and (JP.SafeString(context.sample.buildName) or L("Сборка без названия")) or "")
@@ -117,7 +118,8 @@ function Lab:RenderPoints(runs)
     end
     self.empty:SetText(context and L("Выше в списке: больше расчётный эффект одного очка. Кнопка справа переключает вложенные очки, кандидатов и таланты без оценки.")
         or L("Нужен сохранённый замер с заклинаниями и неизменной сборкой."))
-    self.coverage:SetText((L("Моделей с данными: %d | Без оценки: %d")):format(known,unknown))
+    self.coverage:SetText(context and (L("Замеров сборки: %d | Всего ключей в истории: %d")):format(#context.records,context.historyCount)
+        or (L("Моделей с данными: %d | Без оценки: %d")):format(known,unknown))
     self.compare:SetText(context and not context.current
         and L("Расчёт относится к сохранённой сборке; текущая сборка отличается или не проверена.")
         or L("~ Оценка постоянного усиления. Наведи для формулы. Контроль, защита и зависимости дерева требуют отдельной проверки."))

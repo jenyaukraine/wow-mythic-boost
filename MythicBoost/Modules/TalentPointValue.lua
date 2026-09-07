@@ -23,10 +23,11 @@ local function Rank(sample,spellID)
     if not unknown then return 0 end
 end
 
--- One unchanged build, same map and key level. Never copy a whole-build HPS
+-- One unchanged build, all recorded keys by default. Never copy a whole-build HPS
 -- difference to its individual talents. Prefer the applied build; if it has
 -- no recorded runs, present the last recorded build explicitly as a reference.
-function Points:Context(runs,metric,spec,gameBuild,current)
+function Points:Context(runs,metric,spec,gameBuild,current,scope)
+    scope=(scope or self.scope)=="key" and "key" or "build"
     local candidates,seen={},{}
     for i=1,math.min(#(JP.SafeTable(runs) or {}),30) do
         local run=JP.SafeTable(runs[i])
@@ -76,11 +77,12 @@ function Points:Context(runs,metric,spec,gameBuild,current)
         end
     end
     if not reference then return end
-    local context={sample=reference.sample,run=reference.run,records={},total=0,duration=0,
+    local context={sample=reference.sample,run=reference.run,records={},total=0,duration=0,scope=scope,
+        historyCount=math.min(#runs,30),
         partial=false,stamp=reference.stamp,map=reference.map,level=reference.level,
         current=current and reference.key==current.buildKey or false}
     for _,record in ipairs(candidates) do
-        if record.key==reference.key and record.map==reference.map and record.level==reference.level then
+        if record.key==reference.key and (scope=="build" or record.map==reference.map and record.level==reference.level) then
             context.records[#context.records+1]=record
             context.total=context.total+record.total; context.duration=context.duration+record.duration
             context.partial=context.partial or not record.complete

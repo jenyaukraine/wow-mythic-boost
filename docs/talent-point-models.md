@@ -1,10 +1,11 @@
-# Talent point scenarios (2.4.103)
+# Talent point scenarios (2.4.104)
 
 The default tree mode distinguishes three quantities:
 
 - `~2.4%`: modeled effect of changing **one rank** of a verified constant healing multiplier.
 - `=10.2%`: measured share of a linked source; **not** the benefit of removing or replacing a point.
-- `?`: no defensible marginal estimate. Hover explains the missing inputs.
+- No badge: no defensible marginal estimate or measured share. The unscored list
+  in Details explains the missing inputs without filling the tree with questions.
 
 The Details window ranks modeled points and cycles through invested points,
 unselected modeled candidates, and talents without a marginal estimate. It shows
@@ -28,8 +29,11 @@ procs, targets or overheal change. The displayed run range is an observed range
 of model estimates, not a confidence interval. Independent point estimates must
 not be summed, especially when their affected sources overlap.
 
-The reference is the newest measured cohort for the applied build, same map,
-key level, specialization and exact game build. If the applied build has no
+By default all recorded keys for the applied build, specialization and exact game
+build are included, across maps and levels. The Details scope button can narrow
+this to the latest map and key level. Both modes weight spell amounts by the
+matching overalls, never compare overall HPS between unlike keys. The window
+shows the included sample count and total saved history count. If the applied build has no
 measurements, the latest recorded build is explicitly labeled as the reference;
 its rank is used in the formula, never the current or staged rank. Duplicated
 runs and mixed builds are excluded. Numerators and denominators are summed before

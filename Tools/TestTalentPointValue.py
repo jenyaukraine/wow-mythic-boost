@@ -81,6 +81,41 @@ def test_partial_zero_malformed_and_version():
     ''')
 
 
+def test_all_keys_scope_and_clean_maximized_tree():
+    lua=fixture()
+    lua.execute('''
+        local extra=sample('A',picked,{[18562]=260,[8936]=140,[48438]=200,[774]=1400},2000,true)
+        extra.mapID=2; extra.level=5
+        db.runHistory.runs[#db.runHistory.runs+1]={completedAt=50,talentSample=extra}
+        local c=ctx()
+        assert(#c.records==3 and c.total==7000 and c.scope=='build', 'all maps/levels of the unchanged build contribute')
+        assert(c.historyCount==4,'denominator shows every saved key including other builds')
+        assert(math.abs(points:Evaluate(c,470549,'healing').percent-180/7000*100)<1e-9)
+        points.scope='key'; c=ctx(); assert(#c.records==2 and c.scope=='key')
+        points.scope=nil
+        lab:ShowPoints('healing'); assert(#lab.pointContext.records==3)
+        lab.keyPicker.scripts.OnClick(); assert(points.scope=='key' and #lab.pointContext.records==2)
+        lab.keyPicker.scripts.OnClick(); assert(points.scope=='build' and #lab.pointContext.records==3)
+        C_Traits.GetDefinitionInfo=function(id) return {spellID=id==3 and 207383 or 470549} end
+        function frame:GetBottom() return 20 end
+        function frame:GetWidth() return 1200 end
+        function frame:GetEffectiveScale() return .8 end
+        function UIParent:GetEffectiveScale() return .8 end
+        function UIParent:GetWidth() return 1600 end
+        tree:Refresh()
+        assert(not tree.cards[3].shown,'no question-mark carpet for unmodeled talents')
+        assert(tree.legendDock=='inside')
+        assert(tree.legend.points[1][1]=='BOTTOM' and tree.legend.points[1][5]==60,
+            'maximized legend is above native controls, never below the screen')
+        frame.GetBottom=function() return 250 end
+        tree:Refresh(); assert(tree.legendDock=='outside' and tree.legend.points[1][1]=='TOP')
+        frame.GetWidth=function() return 420 end
+        tree:Refresh(); assert(tree.legend.scale<1 and tree.legend.width*tree.legend.scale<=420)
+        assert(tree.contextText.text:find('3',1,true))
+        points.scope='key'; tree:Refresh(); assert(#tree.pointContext.records==2,'scope changes invalidate tree cohort')
+    ''')
+
+
 def test_point_ui_tree_navigation_and_lifecycle():
     lua=fixture()
     lua.execute('''
@@ -116,6 +151,7 @@ def main():
     test_marginal_math_cohort_and_range()
     test_partial_zero_malformed_and_version()
     test_point_ui_tree_navigation_and_lifecycle()
+    test_all_keys_scope_and_clean_maximized_tree()
     print('Talent point model tests OK: marginal math, same cohort, patch/rank gates, zero/unknown and UI')
 
 
