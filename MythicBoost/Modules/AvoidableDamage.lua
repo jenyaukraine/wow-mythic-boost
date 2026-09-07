@@ -489,6 +489,7 @@ end
 
 function Monitor:OnEvent(event, meterType)
     if not self.running then return end
+    if event == "MODIFIER_STATE_CHANGED" then self:UpdateRowClicks(); return end
     if event == "PLAYER_ENTERING_WORLD" then self:CheckZone()
     elseif event == "CHALLENGE_MODE_START" then self:CheckZone(true, "key")
     elseif event == "CHALLENGE_MODE_RESET" then self:CheckZone(true, "joined")
@@ -583,7 +584,8 @@ function Monitor:Enable()
     self:Create(); self.running = true
     self:SetUnlocked(MythicBoostDB.interfaceUnlocked == true)
     for _, event in ipairs({"PLAYER_ENTERING_WORLD", "GROUP_ROSTER_UPDATE", "CHALLENGE_MODE_START",
-        "CHALLENGE_MODE_RESET", "CHALLENGE_MODE_COMPLETED", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED"}) do
+        "CHALLENGE_MODE_RESET", "CHALLENGE_MODE_COMPLETED", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
+        "MODIFIER_STATE_CHANGED"}) do
         self.events:RegisterEvent(event)
     end
     if C_DamageMeter then

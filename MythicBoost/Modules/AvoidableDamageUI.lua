@@ -44,7 +44,20 @@ local function ShowSpellTip(row)
     GameTooltip:AddLine(L("Избегаемый урон")..": "..(record.known==false and "—" or Amount(record.amount)),1,.78,.22)
     if record.name then GameTooltip:AddLine(record.name,.7,.75,.8) end
     if record.healthRatio then GameTooltip:AddLine((L("За бой: %.0f%% максимального HP от этой способности")):format(record.healthRatio*100),1,.65,.2) end
+    if not Monitor.preview then GameTooltip:AddLine(L("Alt + левый клик: отправить в группу"),.4,.8,1) end
     GameTooltip:Show()
+end
+local function ShareRow(row,button)
+    if button~="LeftButton" or not IsAltKeyDown or not IsAltKeyDown() or not row.record then return end
+    local ok,message=Monitor:ShareReport("PARTY",nil,row.record)
+    if not ok and message then JP:Print(message) end
+end
+function Monitor:UpdateRowClicks()
+    local enabled=not self.preview and not self:IsCombatLocked() and IsAltKeyDown and IsAltKeyDown() or false
+    for _,row in ipairs(self.rows or {}) do row:SetMouseClickEnabled(enabled) end
+    if self.playerTip then
+        for _,row in ipairs(self.playerTip.rows) do row:SetMouseClickEnabled(enabled) end
+    end
 end
 function Monitor:HidePlayerSpells()
     if self.playerTip then self.playerTip:Hide() end
@@ -69,6 +82,7 @@ function Monitor:ShowPlayerSpells(owner,offset)
             row.name=Text(row,"GameFontHighlightSmall","",C.text,35,-9,218)
             row.amount=Text(row,"GameFontHighlightSmall","",C.amber,256,-9,70); row.amount:SetJustifyH("RIGHT")
             row:SetMouseClickEnabled(false); row:SetMouseMotionEnabled(true)
+            row:SetScript("OnMouseUp",ShareRow)
             row:SetScript("OnEnter",ShowSpellTip); row:SetScript("OnLeave",HideTip)
             row:SetScript("OnHide",HideTip); tip.rows[i]=row
         end
@@ -110,6 +124,7 @@ function Monitor:ShowPlayerSpells(owner,offset)
     tip.footer:SetText((report.complete and "" or L("Неполная сводка").."  ")..
         (math.floor(tip.offset/5)+1).."/"..math.max(1,math.ceil(#entries/5)))
     tip.previous:SetShown(tip.offset>0); tip.next:SetShown(tip.offset+5<#entries)
+    self:UpdateRowClicks()
     tip:SetScript("OnUpdate",tip.tick); tip:Show()
 end
 function Monitor:ShowHelp()
@@ -130,6 +145,7 @@ function Monitor:Layout()
     else self.frame:SetPoint("TOPLEFT",UIParent,"TOPLEFT",UIParent:GetWidth()*.04,-UIParent:GetHeight()*.42) end
     self.frame:SetMouseClickEnabled(self.preview==true)
     self.frame:SetMouseMotionEnabled(true)
+    self:UpdateRowClicks()
 end
 function Monitor:SetUnlocked(value)
     if self.dragging and not InCombatLockdown() then
@@ -169,7 +185,7 @@ function Monitor:OpenKeyReport()
 end
 -- Sharing requires a hardware click. No automatic chat, discovery whisper,
 -- retry queue or timer is permitted on this path.
-function Monitor:ShareReport(channel,target)
+function Monitor:ShareReport(channel,target,selectedRecord)
     if self.preview or not self.lastReport then return false end
     if InCombatLockdown() then return false,L("Недоступно в бою") end
     if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown then
@@ -190,8 +206,8 @@ function Monitor:ShareReport(channel,target)
     if self.lastShare and now-self.lastShare<5 then return false,L("Повтори через 5 секунд") end
     local send=C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
     if not send then return false,L("Чат недоступен") end
-    local rows,report=self:ReportRows(),self.lastReport
-    local offset=self.reportOffset or 0
+    local rows,report=selectedRecord and {selectedRecord} or self:ReportRows(),self.lastReport
+    local offset=not selectedRecord and self.reportOffset or 0
     local readable=false
     for i=offset+1,math.min(offset+5,#rows) do
         local row=rows[i]
@@ -203,15 +219,25 @@ function Monitor:ShareReport(channel,target)
     local lines={"[MythicBoost] "..(report.key and "Keystone" or "Combat").." avoidable damage"..
         (report.complete and "" or " (partial data)").." - "..(self.reportView=="players" and "players" or "spells")..
         " ["..(#rows>0 and offset+1 or 0).."-"..math.min(offset+5,#rows).."/"..#rows.."]"}
+    if selectedRecord then lines={} end
     for i=offset+1,math.min(offset+5,#rows) do
         local row=rows[i]
         if row.known~=false or (row.fatal or 0)>0 then
-        local name=(row.name or "?"):gsub("|"," "):gsub("[%c]"," ")
+        local name=(row.name or "?"):gsub("[|%z\1-\31\127]"," ")
         -- Unit names are short; reject corrupted data rather than truncating UTF-8.
         if #name>100 then name="?" end
-        local label=row.spellID and (" - |Hspell:"..row.spellID.."|h[Spell "..row.spellID.."]|h") or ""
-        lines[#lines+1]="[MythicBoost] "..name..label..": "..(row.known==false and "unknown" or Amount(row.amount))..
+        local spellName=selectedRecord and row.spellID and Spell(row.spellID) or ("Spell "..tostring(row.spellID or ""))
+        spellName=spellName:gsub("[|%z\1-\31\127]"," ")
+        local label=row.spellID and (" - |Hspell:"..row.spellID.."|h["..spellName.."]|h") or ""
+        local suffix=(selectedRecord and (" - "..L("Избегаемый урон")) or "")..": "..(row.known==false and "unknown" or Amount(row.amount))..
             (not row.spellID and ("; confirmed fatal: "..tostring(row.fatal or 0)..(row.deathUnknown and "+?" or "")) or "")
+        local line="[MythicBoost] "..name..label..suffix
+        if #line>255 then
+            label=row.spellID and (" - |Hspell:"..row.spellID.."|h[Spell "..row.spellID.."]|h") or ""
+            line="[MythicBoost] "..name..label..suffix
+        end
+        if #line>255 then return false,L("Нет доступных данных") end
+        lines[#lines+1]=line
         end
     end
     if #rows==0 then lines[#lines+1]="[MythicBoost] "..(report.complete and "No avoidable damage recorded." or "No readable data.") end
@@ -411,6 +437,7 @@ function Monitor:Create()
         row.amount=Text(row,"GameFontNormalLarge","",C.amber,254,-10,82); row.amount:SetJustifyH("RIGHT")
         row.amount:ClearAllPoints(); row.amount:SetPoint("RIGHT",row,"RIGHT",-8,0)
         row:SetMouseClickEnabled(false); row:SetMouseMotionEnabled(true)
+        row:SetScript("OnMouseUp",ShareRow)
         row:SetScript("OnEnter",function()
             local record=row.record
             if not record then return end

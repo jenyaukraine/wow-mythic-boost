@@ -366,6 +366,57 @@ local function UnitBarColor(unit)
     return C.green[1], C.green[2], C.green[3]
 end
 
+local function BuildAbsorbBars(display)
+    -- Fixed, display-only bars. Native StatusBar handles secret amounts and
+    -- clamps shields larger than maximum health without addon arithmetic.
+    local shield=CreateFrame("StatusBar",nil,display.health)
+    shield:SetAllPoints(display.health)
+    shield:SetFrameLevel(display.health:GetFrameLevel()+1)
+    shield:SetStatusBarTexture(XPERL_BAR)
+    shield:SetStatusBarColor(.55,.88,1,.62)
+    shield:SetReverseFill(true); shield:SetMinMaxValues(0,1); shield:SetValue(0)
+    shield:EnableMouse(false)
+    display.absorb=shield
+
+    local healAbsorb=CreateFrame("StatusBar",nil,display.health)
+    healAbsorb:SetPoint("BOTTOMLEFT"); healAbsorb:SetPoint("BOTTOMRIGHT"); healAbsorb:SetHeight(4)
+    healAbsorb:SetFrameLevel(shield:GetFrameLevel()+1)
+    healAbsorb:SetStatusBarTexture(XPERL_BAR)
+    healAbsorb:SetStatusBarColor(1,.26,.18,.95)
+    healAbsorb:SetReverseFill(true); healAbsorb:SetMinMaxValues(0,1); healAbsorb:SetValue(0)
+    healAbsorb:EnableMouse(false)
+    display.healAbsorb=healAbsorb
+
+    display.healthTextLayer=CreateFrame("Frame",nil,display.health)
+    display.healthTextLayer:SetAllPoints(display.health)
+    display.healthTextLayer:SetFrameLevel(healAbsorb:GetFrameLevel()+1)
+    display.healthTextLayer:EnableMouse(false)
+end
+
+local function ResetAbsorbs(display)
+    if display.absorb then display.absorb:SetValue(0); display.healAbsorb:SetValue(0) end
+end
+
+local function AbsorbValue(api,unit)
+    if type(api)~="function" then return 0 end
+    local ok,value=pcall(api,unit)
+    if ok and (issecretvalue(value) or (UI.UsableNumber(value) and value>=0)) then return value end
+    return 0
+end
+
+local function UpdateAbsorbs(display)
+    if not display.absorb then return end
+    if IsBoolean(UnitExists(display.unit),false) then ResetAbsorbs(display); return end
+    local maximum=UnitHealthMax(display.unit)
+    if not issecretvalue(maximum) and (not UI.UsableNumber(maximum) or maximum<=0) then
+        ResetAbsorbs(display); return
+    end
+    display.absorb:SetMinMaxValues(0,maximum)
+    display.healAbsorb:SetMinMaxValues(0,maximum)
+    display.absorb:SetValue(AbsorbValue(UnitGetTotalAbsorbs,display.unit))
+    display.healAbsorb:SetValue(AbsorbValue(UnitGetTotalHealAbsorbs,display.unit))
+end
+
 local function UpdateHealth(display)
     if IsBoolean(UnitExists(display.unit), false) then return end
     local current, maximum = UnitHealth(display.unit), UnitHealthMax(display.unit)
@@ -396,6 +447,7 @@ local function UpdateHealth(display)
     if currentOK and maximumOK then display.healthValue:SetFormattedText("%s/%s", currentText, maximumText)
     else display.healthValue:SetText("") end
     MatteBarColor(display.health, UnitBarColor(display.unit))
+    UpdateAbsorbs(display)
 end
 
 local function LayoutStats(display, hasPower)
@@ -1289,7 +1341,8 @@ function UnitFrames:BuildDisplay(unit, mirror, showAuras, ownBuffsOnly, options)
     display.highlight = highlightFrame
 
     display.health = XPerlStatusBar(statsPanel, C.green)
-    display.healthValue = UI.Text(display.health, "GameFontNormalSmall", "")
+    BuildAbsorbBars(display)
+    display.healthValue = UI.Text(display.healthTextLayer, "GameFontNormalSmall", "")
     display.healthValue:SetPoint("TOPLEFT", 0, 0)
     display.healthValue:SetPoint("BOTTOMRIGHT", 0, 1)
 
@@ -1588,6 +1641,7 @@ local function ShowTargetPlaceholder(display, moving)
     display.health:SetAlpha(.46)
     MatteBarColor(display.health, .16, .18, .21)
     display.healthValue:SetText("")
+    ResetAbsorbs(display)
     display.power:SetMinMaxValues(0, 1)
     display.power:SetValue(1)
     display.power:SetAlpha(.40)
@@ -1650,6 +1704,7 @@ function UnitFrames:RefreshDisplay(display, full)
         -- всегда подготовлен заранее, а отсутствие юнита обозначаем alpha=0;
         -- RegisterUnitWatch отдельно отключает защищённую область клика.
         display.holder:SetAlpha(0)
+        ResetAbsorbs(display)
         if display.resourceRow and not InCombatLockdown() then display.resourceRow:Hide() end
         wipe(display.cache)
         if display.debuffRow and not InCombatLockdown() then
@@ -1903,6 +1958,7 @@ local function DemoDisplay(display, data, settings)
 
     display.health:SetMinMaxValues(0, data.healthMax)
     display.health:SetValue(data.health)
+    ResetAbsorbs(display)
     display.healthValue:SetText(data.healthText)
     display.healthValue:SetShown(settings.showHealthText ~= false)
     MatteBarColor(display.health, data.healthColor[1], data.healthColor[2], data.healthColor[3])
@@ -2096,6 +2152,7 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         if not display then return end
         if event:find("^UNIT_SPELLCAST") then self:UpdateCast(display, event)
         elseif event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then UpdateHealth(display); UpdateState(display)
+        elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then UpdateAbsorbs(display)
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER"
             or event == "UNIT_POWER_POINT_CHARGE" then
             UpdatePower(display)
@@ -2123,6 +2180,7 @@ function UnitFrames:Enable()
         "UNIT_HEALTH", "UNIT_MAXHEALTH", "UNIT_POWER_UPDATE", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER",
         "UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_NAME_UPDATE",
         "UNIT_FACTION", "UNIT_CONNECTION",
+        "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED",
     }) do events:RegisterUnitEvent(event, "player", "target") end
     for _, event in ipairs({
         "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",

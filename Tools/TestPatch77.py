@@ -321,9 +321,70 @@ def test_empty_share_is_local_only():
     ''')
 
 
+def test_alt_click_group_card():
+    lua=fixture()
+    lua.execute(r'''
+        local m=JP.AvoidableDamage
+        alt=false; function IsAltKeyDown() return alt end
+        sent={}; printed={}; function JP:Print(message) printed[#printed+1]=message end
+        grouped=true; raid=false; instance=false; LE_PARTY_CATEGORY_INSTANCE=2
+        function IsInGroup(category) return category==2 and instance or category==nil and grouped end
+        function IsInRaid() return raid end
+        C_ChatInfo.InChatMessagingLockdown=function() return chatLocked or false end
+        C_ChatInfo.SendChatMessage=function(text,channel)
+            assert(#text<=255); sent[#sent+1]={text,channel}
+        end
+        C_Spell.GetSpellInfo=function(id) return {name='Надрез',iconID=id} end
+        m:Enable()
+        local entries={}
+        for i=1,7 do entries[i]={guid='P1',name='Voodoobeatz',spellID=100+i,amount=556700+i} end
+        m.keyReport={key=true,complete=true,entries=entries,players={{guid='P1',name='Voodoobeatz',amount=800000}}}
+        m:OpenKeyReport(); m.view.scripts.OnClick(); m:SetReportOffset(2)
+        local row=m.rows[2]
+        assert(row.record.spellID==104 and not row.mouseClicks)
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==0)
+        alt=true; local beforeReads=reads
+        Fire('MODIFIER_STATE_CHANGED','LALT',1)
+        assert(row.mouseClicks and reads==beforeReads,'modifier must not rescan combat data')
+        row.scripts.OnMouseUp(row,'RightButton'); assert(#sent==0)
+        row.scripts.OnMouseUp(row,'LeftButton')
+        assert(#sent==1 and sent[1][2]=='PARTY')
+        assert(sent[1][1]:find('|Hspell:104|h[Надрез]|h',1,true))
+        assert(sent[1][1]:find('Voodoobeatz',1,true) and sent[1][1]:find('556.7k',1,true))
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==1 and #printed==1)
+        now=6; raid=true; row.scripts.OnMouseUp(row,'LeftButton'); assert(sent[2][2]=='RAID')
+        now=12; instance=true; row.scripts.OnMouseUp(row,'LeftButton'); assert(sent[3][2]=='INSTANCE_CHAT')
+        now=18; grouped=false; instance=false; raid=false
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==3 and m.lastShare==12)
+        grouped=true; chatLocked=true
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==3)
+        chatLocked=false; combat=true
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==3)
+        combat=false; row.record.known=false
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==3)
+        row.record.known=true; row.record.amount=0
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==4 and sent[4][1]:sub(-3)==': 0')
+        -- Releasing Alt restores click-through; preview never sends test players.
+        alt=false; Fire('MODIFIER_STATE_CHANGED','LALT',0); assert(not row.mouseClicks)
+        alt=true; m:SetUnlocked(true); assert(not row.mouseClicks)
+        now=24; row.scripts.OnMouseUp(row,'LeftButton'); assert(#sent==4)
+        m:SetUnlocked(false); m.reportView='players'; m:Render()
+        m:ShowPlayerSpells(m.rows[1],5)
+        local detail=m.playerTip.rows[2]
+        assert(detail.mouseClicks and detail.record.spellID==107)
+        detail.scripts.OnMouseUp(detail,'LeftButton')
+        assert(#sent==5 and sent[5][1]:find('|Hspell:107',1,true))
+        -- Oversized localized spell names fall back to a valid link, not broken UTF-8.
+        now=30; C_Spell.GetSpellInfo=function(id) return {name=string.rep('Я',180),iconID=id} end
+        detail.scripts.OnMouseUp(detail,'LeftButton')
+        assert(#sent==6 and sent[6][1]:find('|Hspell:107|h[Spell 107]|h',1,true))
+        m:Disable(); assert(not m.frame.shown)
+    ''')
+
+
 if __name__=='__main__':
     for test in (test_combat_reports,test_report_secrets_and_cancellation,test_loot_actions_and_timers,
                  test_guild_real_profile_path,test_center_recovery,test_headerless_feed_and_severity,
                  test_severity_uses_only_public_matching_health,test_continuous_key_report_scroll,
-                 test_empty_share_is_local_only):
+                 test_empty_share_is_local_only,test_alt_click_group_card):
         test(); print(test.__name__+': OK')

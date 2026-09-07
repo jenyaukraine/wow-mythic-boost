@@ -224,11 +224,61 @@ def test_empty_target_editor_drag():
     assert 'moveOverlay:EnableMouse(true)' in frames
 
 
+def test_unit_shield_rendering():
+    from TestDungeonHUD import runtime
+    lua=runtime()
+    frames=source('Modules/UnitFrames.lua')
+    helpers='local function BuildAbsorbBars'+frames.split('local function BuildAbsorbBars',1)[1].split('local function UpdateHealth',1)[0]
+    lua.execute('''
+        local methods=getmetatable(UIParent).__index
+        function methods:SetReverseFill(v) self.reverseFill=v end
+        function IsBoolean(v,expected) return not issecretvalue(v) and v==expected end
+        XPERL_BAR='texture'
+    '''+helpers+'''
+        BuildShieldBars=BuildAbsorbBars; UpdateShieldBars=UpdateAbsorbs
+    ''')
+    lua.execute('''
+        units.player={}; units.target={}
+        maximum=1000; absorbs={player=200,target=400}; healAbsorbs={player=100,target=50}
+        function UnitHealthMax() return maximum end
+        function UnitGetTotalAbsorbs(u) return absorbs[u] end
+        function UnitGetTotalHealAbsorbs(u) return healAbsorbs[u] end
+        local player={unit='player',health=CreateFrame('StatusBar',nil,UIParent)}
+        local target={unit='target',health=CreateFrame('StatusBar',nil,UIParent)}
+        BuildShieldBars(player); BuildShieldBars(target)
+        UpdateShieldBars(player); UpdateShieldBars(target)
+        assert(player.absorb.value==200 and target.absorb.value==400)
+        assert(player.healAbsorb.value==100 and target.healAbsorb.value==50)
+        assert(target.absorb.high==1000 and target.absorb.reverseFill)
+        assert(target.healthTextLayer.level>target.healAbsorb.level and target.healAbsorb.level>target.absorb.level)
+        local built=allocations
+        -- Opaque values reach native rendering unchanged, including over-max shields.
+        combat=true; maximum=Secret(1000)
+        absorbs.target=Secret(1500); healAbsorbs.target=Secret(300)
+        for i=1,1000 do UpdateShieldBars(target) end
+        assert(rawequal(target.absorb.value,absorbs.target) and rawequal(target.absorb.high,maximum))
+        assert(rawequal(target.healAbsorb.value,healAbsorbs.target) and allocations==built)
+        -- Shield expiry / target switch cannot leave the previous shield painted.
+        absorbs.target=0; healAbsorbs.target=0; UpdateShieldBars(target)
+        assert(target.absorb.value==0 and target.healAbsorb.value==0)
+        absorbs.target=300; UpdateShieldBars(target); assert(target.absorb.value==300)
+        units.target=nil; UpdateShieldBars(target)
+        assert(target.absorb.value==0 and target.healAbsorb.value==0)
+        units.target={}; maximum=0; UpdateShieldBars(target); assert(target.absorb.value==0)
+        maximum=1000; UnitGetTotalAbsorbs=function() error('unavailable') end
+        UnitGetTotalHealAbsorbs=nil; UpdateShieldBars(target)
+        assert(target.absorb.value==0 and target.healAbsorb.value==0 and allocations==built)
+    ''')
+    assert '"UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED"' in frames
+    assert 'then UpdateAbsorbs(display)' in frames
+
+
 if __name__ == '__main__':
     for test in (test_default_positions_and_saved_layout,
                  test_native_filtered_spell_source_and_late_details,
                  test_player_spell_hover_and_cleanup,
-                 test_auction_button_layer_and_reopen, test_empty_target_editor_drag):
+                 test_auction_button_layer_and_reopen, test_empty_target_editor_drag,
+                 test_unit_shield_rendering):
         test()
         print(test.__name__ + ': OK')
     preset=source('Modules/LayoutPresets.lua').split('Presets.Main = [=[',1)[1].split(']=]',1)[0]
