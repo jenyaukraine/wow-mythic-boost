@@ -13,6 +13,7 @@ function IsSpellKnown() return false end
 function InCombatLockdown() return combat end
 function UnitExists() return focusExists end
 function UnitCanAttack() return true end
+function UnitIsDeadOrGhost() return false end
 secret=setmetatable({}, {__eq=function() error('restricted comparison') end})
 function issecretvalue(value) return rawequal(value,secret) end
 function UnitCastingInfo() if casting then return secret,nil,nil,nil,nil,nil,nil,secret end end
@@ -54,6 +55,7 @@ JP={L=function(x) return x end, UI={}, RegisterModule=function() end,
 ''')
 loader = lua.eval("function(code) assert(load(code))('MythicBoost',JP) end")
 loader((root / 'MythicBoost/Modules/InterruptAssist.lua').read_text(encoding='utf-8'))
+loader((root / 'MythicBoost/Modules/InterruptBindings.lua').read_text(encoding='utf-8'))
 lua.execute(r'''
 A=JP.InterruptAssist; A:Enable(); db.enabled=true; A:Update()
 assert(A.frame.shown and A.frame.alphaArg==secret)
@@ -87,7 +89,9 @@ assert(A.actionsDirty and A.actions[true].attrs.macrotext==old)
 combat=false; A.frame.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED'); assert(A.actions[true].attrs.macrotext:find('~3',1,true))
 db.fallback='none'; assert(not A:ActionBody(false):find('[]',1,true))
 db.fallback='nearby'; assert(A:ActionBody(false):find('/targetenemy',1,true))
-known=0; assert(A:ActionBody(false)==nil); known=57994
+known=0; assert(A:ActionBody(false)==nil)
+assert(A:ActionBody('shared'):find('/focus',1,true) and not A:ActionBody('shared'):find('/cast',1,true))
+known=57994
 -- A learned Mighty Bash must produce a real focus action without a kick talent.
 local oldClass, oldInfo, oldPlayer, oldKnown = UnitClass, C_Spell.GetSpellInfo, IsPlayerSpell, IsSpellKnown
 function UnitClass() return 'Druid','DRUID' end
@@ -164,7 +168,7 @@ A:ReceiveMark('MBFocus1','S:2','PARTY',secret); A:SetMarker(secret)
 assert(db.marker==6 and sends==sent)
 members.party1=nil; A:SyncMarks()
 for i=1,1000 do A:Disable(); A:Enable() end
-assert(frames==3, 'frame leak on re-enable')
+assert(frames==4, 'frame leak on re-enable')
 A:Disable(); assert(next(A.frame.events)==nil and A.marks==nil and not A.frame.shown)
 A:Enable(); collectgarbage('collect'); local baseline=collectgarbage('count')
 for i=1,10000 do A:Update() end
@@ -191,11 +195,18 @@ function IsShiftKeyDown() return false end
 function IsControlKeyDown() return false end
 function IsAltKeyDown() return false end
 function GetBindingAction(key) return key=='X' and 'JUMP' or bound[key] or '' end
-function GetBindingKey(action) for key,value in pairs(bound) do if value==action then return key end end end
+function GetBindingKey(action)
+ local keys={}; for key,value in pairs(bound) do if value==action then keys[#keys+1]=key end end
+ table.sort(keys); return table.unpack(keys)
+end
 function SetBindingClick(k,name,mouse) assert(not combat); bound[k]='CLICK '..name..':'..mouse; return true end
-function SetBinding(k) assert(not combat); bound[k]=nil; return true end
+function SetBinding(k,action)
+ assert(not combat)
+ if failBinding==k then failBinding=nil; return false end
+ bound[k]=action; return true
+end
 function GetCurrentBindingSet() return 2 end
-function SaveBindings() end
+savedBindings=0; function SaveBindings() savedBindings=savedBindings+1 end
 ''')
 loader((root / 'MythicBoost/Modules/InterruptAssistUI.lua').read_text(encoding='utf-8'))
 lua.execute('A:Build(MakeFrame())')
@@ -213,6 +224,121 @@ lua.execute("buttons['Назначить клавишу фокуса: Нет'].s
 lua.execute("combat=true; capture.scripts.OnKeyDown(capture,'H'); assert(bound.H==nil); combat=false")
 lua.execute("db.interruptKey='OEM1'; bound[';']='CLICK MythicBoostInterruptAction:LeftButton'; capture.scripts.OnEvent(capture,'UPDATE_BINDINGS'); assert(buttons['Назначить клавишу прерывания: Нет'].label.value=='Назначить клавишу прерывания: ;')")
 lua.execute("bound[';']=nil; capture.scripts.OnEvent(capture,'UPDATE_BINDINGS'); assert(buttons['Назначить клавишу прерывания: Нет'].label.value=='Назначить клавишу прерывания: Нет')")
+lua.execute(r'''
+local focusCommand='CLICK MythicBoostFocusAction:LeftButton'
+local kickCommand='CLICK MythicBoostInterruptAction:LeftButton'
+local sharedCommand='CLICK MythicBoostFocusInterruptAction:LeftButton'
+bound={}; assert(A:BindAction(false,'R')); assert(A:BindAction(true,'ALT-R'))
+buttons['Назначить клавишу фокуса: Нет'].scripts.OnClick(); capture.scripts.OnKeyDown(capture,'R')
+assert(bound.R==sharedCommand and bound['ALT-R']==nil)
+assert(A:BindingKey(true)=='R' and A:BindingKey(false)=='R' and db.focusKey=='R' and db.interruptKey=='R')
+assert(buttons['Назначить клавишу фокуса: Нет'].label.value=='Назначить клавишу фокуса: R')
+assert(buttons['Назначить клавишу прерывания: Нет'].label.value=='Назначить клавишу прерывания: R')
+assert(A.actions.shared.attrs.type=='macro' and A.actions.shared.attrs.macrotext:find('/focus [@mouseover,harm,nodead]',1,true))
+assert(not A.actions.shared.attrs.macrotext:find('clearfocus',1,true), 'Alt may be part of the shared key')
+assert(A:BindAction(true,'F')); assert(bound.R==kickCommand and bound.F==focusCommand)
+assert(A:BindAction(false,'F')); assert(bound.R==nil and bound.F==sharedCommand)
+assert(A:BindAction(false,'R')); assert(bound.R==kickCommand and bound.F==focusCommand)
+assert(A:BindAction(true,'R')); assert(bound.R==sharedCommand and bound.F==nil)
+local saves=savedBindings
+failBinding='R'; assert(not A:BindAction(true,'F'))
+assert(bound.F==nil and bound.R==sharedCommand and savedBindings==saves, 'failed split must restore bindings')
+assert(not A:BindAction('control','R')); assert(bound.R==sharedCommand)
+assert(not A:BindAction(true,'X')); assert(GetBindingAction('X')=='JUMP')
+combat=true; assert(not A:BindAction(true,'F')); combat=false
+assert(savedBindings==saves and bound.R==sharedCommand and bound.F==nil)
+-- External edits remain authoritative, including secondary bindings.
+bound.R='ACTIONBUTTON1'; assert(A:BindingKey(true)==nil and A:BindingKey(false)==nil)
+assert(A:BindAction(true,'F')); assert(bound.R=='ACTIONBUTTON1')
+bound.Q=focusCommand; bound.T=kickCommand
+assert(A:BindAction(false,'F')); assert(bound.F==sharedCommand and bound.Q==nil and bound.T==nil)
+assert(bound.R=='ACTIONBUTTON1')
+bound={}; assert(A:BindAction(true,'ALT-R')); assert(A:BindAction(false,'ALT-R'))
+assert(bound['ALT-R']==sharedCommand)
+-- Bindings reload from Blizzard; stale addon settings never rebind anything.
+db.focusKey='STALE'; db.interruptKey='STALE'
+A:Disable(); A:Enable(); assert(A:BindingKey(true)=='ALT-R' and A:BindingKey(false)=='ALT-R')
+collectgarbage('collect'); local bindingMemory=collectgarbage('count')
+for i=1,1000 do assert(A:BindAction(true,'F')); assert(A:BindAction(true,'ALT-R')) end
+collectgarbage('collect'); assert(collectgarbage('count')-bindingMemory<24)
+bound={}; db.fallback='target'
+''')
+# Interpret the documented subset of native conditionals in the generated action.
+# This checks the actual macro's ordering and target choice, without pretending
+# to execute protected Blizzard actions in the offline test environment.
+import re
+macro = lua.eval("A:ActionBody('shared')")
+enemy = {'harm': True, 'dead': False}
+friend = {'harm': False, 'dead': False}
+corpse = {'harm': True, 'dead': True}
+
+
+def simulate_shared(mouseover, focus, target, raid=False):
+    units = {'mouseover': mouseover, 'focus': focus, 'target': target}
+    casts, marks = [], []
+    for line in macro.splitlines():
+        if not line or line.startswith('#') or line == '/stopcasting':
+            continue
+        command, options = line.split(' ', 1)
+        matched = False
+        for group in re.findall(r'\[([^]]*)\]', options):
+            tokens = group.split(',') if group else []
+            unit = next((t[1:] for t in tokens if t.startswith('@')), 'target')
+            value = units.get(unit)
+            if 'harm' in tokens and (value is None or not value['harm']):
+                continue
+            if 'nodead' in tokens and (value is None or value['dead']):
+                continue
+            if 'nogroup:raid' in tokens and raid:
+                continue
+            matched = True
+            break
+        if not matched:
+            continue
+        if command == '/focus':
+            units['focus'] = value
+        elif command == '/cast':
+            casts.append(value)
+        elif command == '/tm':
+            marks.append(value)
+        else:
+            raise AssertionError(f'unexpected macro command {command}')
+    return units['focus'], casts, marks
+
+
+old_focus, hovered, target = dict(enemy), dict(enemy), dict(enemy)
+new_focus, casts, marks = simulate_shared(hovered, old_focus, target)
+assert new_focus is hovered and casts[0] is hovered and len(casts) == 1
+for ignored in (None, friend, corpse):
+    new_focus, casts, _ = simulate_shared(ignored, old_focus, target)
+    assert new_focus is old_focus and casts[0] is old_focus and len(casts) == 1
+assert simulate_shared(None, None, target)[1][0] is target
+assert len(simulate_shared(hovered, old_focus, target, raid=True)[1]) == 1
+assert not simulate_shared(hovered, old_focus, target, raid=True)[2]
+
+lua.execute(r'''
+local oldExists, oldAttack, oldDead, oldCast, oldSound = UnitExists, UnitCanAttack, UnitIsDeadOrGhost, UnitCastingInfo, PlaySound
+bound={R='CLICK MythicBoostFocusInterruptAction:LeftButton'}
+local units={mouseover={harm=true,casting=false},focus={harm=true,casting=true},target={harm=true,casting=true}}
+function UnitExists(unit) return units[unit]~=nil end
+function UnitCanAttack(_,unit) return units[unit] and units[unit].harm or false end
+function UnitIsDeadOrGhost(unit) return units[unit] and units[unit].dead or false end
+function UnitCastingInfo(unit) if units[unit] and units[unit].casting then return secret,nil,nil,nil,nil,nil,nil,secret end end
+local sounds=0; function PlaySound() sounds=sounds+1 end
+local body=A.actions.shared.attrs.macrotext
+A:Update(); assert(A:HintUnit()=='mouseover' and not A.frame.shown, 'idle mouseover must not show casting focus alert')
+assert(A.actions.shared.attrs.macrotext==body and A.actions.shared.attrs.type=='macro', 'cast events cannot gate protected actions')
+A.frame.scripts.OnEvent(nil,'UNIT_SPELLCAST_START','focus'); assert(sounds==0)
+units.mouseover.casting=true; A.frame.scripts.OnEvent(nil,'UNIT_SPELLCAST_START','mouseover')
+assert(sounds==1 and A.frame.shown)
+units.mouseover.dead=true; A:Update(); assert(A:HintUnit()=='focus' and A.frame.shown)
+units.mouseover=nil; units.focus=nil; A:Update(); assert(A:HintUnit()=='target' and A.frame.shown)
+db.fallback='none'; A:Update(); assert(A:HintUnit()==nil and not A.frame.shown)
+db.fallback='nearby'; A:Update(); assert(A:HintUnit()==nil, 'unknown nearby caster is not inferred')
+bound={}; units.focus={harm=true,casting=false}; db.fallback='target'
+A:Update(); assert(not A.frame.shown)
+UnitExists, UnitCanAttack, UnitIsDeadOrGhost, UnitCastingInfo, PlaySound = oldExists, oldAttack, oldDead, oldCast, oldSound
+''')
 lua.execute("members.player=nil; A:Roster(); A:SyncMarks()")
 lua.execute("members.player='Me'; function UnitFullName(u) return members[u],nil end; function GetNormalizedRealmName() end; A:Roster(); A:SyncMarks()")
 print('InterruptAssist: pre-login missing player/realm, runtime, secure actions, direct binding protection,')
@@ -260,3 +386,5 @@ for reverse in (False, True):
 print('Marker conflicts: portrait cycling, combat deferral, no reply loop, five-client convergence passed')
 print('Mighty Bash fallback: learned talent, focus/target macros, kick priority, modern/pet spellbook,')
 print('secret cooldowns, combat deferral, unlearning and live status refresh passed')
+print('Shared key: merge/split, rollback, external bindings, reload, modifier support,')
+print('macro target order, mouseover alerts, no protected cast gating and bounded state passed')

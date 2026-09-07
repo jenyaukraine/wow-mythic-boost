@@ -58,15 +58,24 @@ end
 function Assist:ActionBody(focus)
     self:CacheSpell()
     local info = self.spell and C_Spell.GetSpellInfo(self.spell)
-    if not focus and not info then return nil end
     local s = Settings()
-    if focus then
+    if focus == true then
         local body = "/clearfocus [mod:alt]\n/stopmacro [mod:alt]\n/focus [@mouseover,harm,nodead][harm,nodead]"
         if s.skipRaid then body = body .. "\n/stopmacro [group:raid]" end
         if s.marker > 0 then body = body .. "\n/tm [@focus,harm,nodead] " .. (s.preserveMark and "~" or "") .. s.marker end
         return body
     end
-    local body = "#showtooltip " .. info.name
+    local body = info and ("#showtooltip " .. info.name) or ""
+    if focus == "shared" then
+        -- Both protected operations run on the same hardware click. Friendly,
+        -- dead or absent mouseover units leave the current focus unchanged.
+        body = body .. "\n/focus [@mouseover,harm,nodead]"
+        if s.marker > 0 then
+            body = body .. "\n/tm [@focus,harm,nodead" .. (s.skipRaid and ",nogroup:raid" or "")
+                .. "] " .. (s.preserveMark and "~" or "") .. s.marker
+        end
+    end
+    if not info then return focus == "shared" and body or nil end
     if s.stopCasting then body = body .. "\n/stopcasting" end
     if s.fallback == "nearby" then
         return body .. "\n/cast [@focus,harm,nodead] " .. info.name
@@ -86,16 +95,25 @@ function Assist:UpdateActions()
     if self.frame then self.frame.text:SetText(self:AlertText()) end
     if self.status then self.status:SetText(self:SpellStatus()) end
 end
+function Assist:HintUnit()
+    local shared = GetBindingKey and GetBindingKey("CLICK MythicBoostFocusInterruptAction:LeftButton")
+    if shared and UnitExists("mouseover") and UnitCanAttack("player", "mouseover")
+        and not Known(UnitIsDeadOrGhost("mouseover")) then return "mouseover" end
+    if UnitExists("focus") and UnitCanAttack("player", "focus")
+        and not Known(UnitIsDeadOrGhost("focus")) then return "focus" end
+    if shared and Settings().fallback == "target" and UnitExists("target") and UnitCanAttack("player", "target")
+        and not Known(UnitIsDeadOrGhost("target")) then return "target" end
+end
 function Assist:Update()
     local f = self.frame
     if not f then return end
     if not self.running then f:Hide(); return end
     if self.preview then f:SetAlpha(1); f.text:SetAlpha(1); f:Show(); return end
-    if not Settings().enabled or not self.spell or not UnitExists("focus")
-        or not UnitCanAttack("player", "focus") then f:Hide(); return end
-    local name, _, _, _, _, _, _, locked = UnitCastingInfo("focus")
+    local unit = self:HintUnit()
+    if not Settings().enabled or not self.spell or not unit then f:Hide(); return end
+    local name, _, _, _, _, _, _, locked = UnitCastingInfo(unit)
     if not name then
-        name, _, _, _, _, _, locked = UnitChannelInfo("focus")
+        name, _, _, _, _, _, locked = UnitChannelInfo(unit)
     end
     if not name then f:Hide(); return end
     local duration = C_Spell.GetSpellCooldownDuration(self.spell, true)
@@ -139,7 +157,8 @@ function Assist:Enable()
     end
     if not self.actions then
         self.actions={}
-        for focus,name in pairs({[true]="MythicBoostFocusAction",[false]="MythicBoostInterruptAction"}) do
+        for focus,name in pairs({[true]="MythicBoostFocusAction",[false]="MythicBoostInterruptAction",
+            shared="MythicBoostFocusInterruptAction"}) do
             local button=CreateFrame("Button",name,UIParent,"SecureActionButtonTemplate")
             -- SecureActionButton selects the active phase using ActionButtonUseKeyDown.
             button:RegisterForClicks("AnyDown","AnyUp")
@@ -150,11 +169,12 @@ function Assist:Enable()
     end
     local f = self.frame
     for _, event in ipairs({"PLAYER_ENTERING_WORLD", "PLAYER_SPECIALIZATION_CHANGED", "SPELLS_CHANGED",
-        "PLAYER_FOCUS_CHANGED", "SPELL_UPDATE_COOLDOWN", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
+        "PLAYER_FOCUS_CHANGED", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "UPDATE_BINDINGS",
+        "SPELL_UPDATE_COOLDOWN", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED",
         "GROUP_ROSTER_UPDATE", "CHAT_MSG_ADDON", "READY_CHECK"}) do f:RegisterEvent(event) end
     for _, event in ipairs({"UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_CHANNEL_START",
         "UNIT_SPELLCAST_CHANNEL_STOP", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED",
-        "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE"}) do f:RegisterUnitEvent(event, "focus") end
+        "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE"}) do f:RegisterUnitEvent(event, "focus", "mouseover", "target") end
     f:RegisterUnitEvent("UNIT_PET", "player")
     C_ChatInfo.RegisterAddonMessagePrefix("MBFocus1")
     f:SetScript("OnEvent", function(_, event, ...)
@@ -177,7 +197,7 @@ function Assist:Enable()
         if event == "CHAT_MSG_ADDON" then self:ReceiveMark(...) end
         if event == "READY_CHECK" and Settings().enabled and Settings().announceReady then self:Announce() end
         if (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START")
-            and Settings().enabled and Settings().sound and UnitCanAttack("player", "focus") then
+            and Settings().enabled and Settings().sound and (...) == self:HintUnit() then
             -- Same limitation as ItruliaQoL: audio announces cast START, not
             -- interrupt readiness, because the latter can be a secret value.
             PlaySound(8959, "Master")

@@ -5,9 +5,7 @@ function A:Build(parent)
     local s = self.Settings()
     local bindingButtons = {}
     local function CurrentKey(focus)
-        local name = focus == "control" and "MythicBoostControlSequence"
-            or (focus and "MythicBoostFocusAction" or "MythicBoostInterruptAction")
-        return GetBindingKey("CLICK "..name..":LeftButton")
+        return self:BindingKey(focus)
     end
     local function RefreshBindings()
         for focus, entry in pairs(bindingButtons) do
@@ -18,7 +16,7 @@ function A:Build(parent)
     local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 24, -124); scroll:SetPoint("BOTTOMRIGHT", -32, 56)
     local page = CreateFrame("Frame", nil, scroll)
-    page:SetSize(560, 430); scroll:SetScrollChild(page)
+    page:SetSize(560, 520); scroll:SetScrollChild(page)
     scroll:SetScript("OnSizeChanged", function(_,w) page:SetWidth(math.max(200,w)) end)
     local status = UI.Text(parent,"GameFontHighlightSmall","",UI.colors.accent)
     status:SetPoint("BOTTOMLEFT",24,14); status:SetPoint("BOTTOMRIGHT",-24,14); status:SetHeight(36)
@@ -32,18 +30,14 @@ function A:Build(parent)
         if IsShiftKeyDown() then key="SHIFT-"..key end
         if IsControlKeyDown() then key="CTRL-"..key end
         if IsAltKeyDown() then key="ALT-"..key end
-        local action=GetBindingAction(key)
-        local clickAction="CLICK "..f.button:GetName()..":LeftButton"
-        if action and action~="" and action~=clickAction then
-            status:SetText(L("Клавиша занята: ")..key.." — "..action); f:Hide(); return
-        end
-        local old=CurrentKey(f.focusAction)
-        if old and old~=key and GetBindingAction(old)==clickAction then SetBinding(old) end
-        if SetBindingClick(key,f.button:GetName(),"LeftButton") then
-            SaveBindings(GetCurrentBindingSet())
-            s[f.keySetting]=key
-            status:SetText(f.label..": "..key)
+        local ok, mode, conflict=self:BindAction(f.focusAction,key)
+        if ok then
+            status:SetText((mode=="shared" and L("Общая клавиша фокуса и прерывания") or f.label)..": "..key)
             RefreshBindings()
+        elseif mode=="busy" then
+            status:SetText(L("Клавиша занята: ")..key.." — "..conflict)
+        else
+            status:SetText(L("Не удалось назначить клавишу"))
         end
         f:Hide()
     end)
@@ -134,12 +128,14 @@ function A:Build(parent)
             capture.keySetting=keySetting
             capture.label=label
             capture.uiButton=bindButton
-            capture:Show(); status:SetText(L("Нажми сочетание клавиш. Esc — отмена. Занятые клавиши сохраняются."))
+            capture:Show(); status:SetText(L("Одинаковая клавиша объединит фокус и прерывание. Esc — отмена."))
         end)
         bindingButtons[focus]={button=bindButton,label=label}
     end
+    Text(L("Общая клавиша: враг под мышью становится фокусом и сразу прерывается. Без наведения — прерывание по фокусу."), -657)
+    Text(L("Клавиша не блокируется, если враг не кастует. Нажимай по подсказке."), -713)
     local controlLabel = L("Назначить клавишу цепочки контроля")
-    local controlBind = Button(controlLabel, -686, function()
+    local controlBind = Button(controlLabel, -776, function()
         local controls = JP.ControlAssist
         if not controls or not controls.sequence then return end
         capture.button = controls.sequence; capture.focusAction = "control"
@@ -147,7 +143,7 @@ function A:Build(parent)
         capture:Show(); status:SetText(L("Нажми сочетание клавиш. Esc — отмена. Занятые клавиши сохраняются."))
     end)
     bindingButtons.control = {button=controlBind, label=controlLabel}
-    Text(L("Контроль своего класса и расы. Один успешный каст на шаг; КД не пропускаются. Сброс через 60 сек. Вихрь друида — у ног; остальные области — вручную."), -728)
+    Text(L("Контроль своего класса и расы. Один успешный каст на шаг; КД не пропускаются. Сброс через 60 сек. Вихрь друида — у ног; остальные области — вручную."), -818)
     RefreshBindings()
     activeSection, origin = 3, 810
     Text(L("3. Метки группы"),-810)
