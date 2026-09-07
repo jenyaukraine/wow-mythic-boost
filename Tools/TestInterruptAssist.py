@@ -15,9 +15,10 @@ function UnitExists() return focusExists end
 function UnitCanAttack() return true end
 function UnitIsDeadOrGhost() return false end
 secret=setmetatable({}, {__eq=function() error('restricted comparison') end})
+castLocked=secret; channeling=false
 function issecretvalue(value) return rawequal(value,secret) end
-function UnitCastingInfo() if casting then return secret,nil,nil,nil,nil,nil,nil,secret end end
-function UnitChannelInfo() end
+function UnitCastingInfo() if casting then return secret,nil,nil,nil,nil,nil,nil,castLocked end end
+function UnitChannelInfo() if channeling then return secret,nil,nil,nil,nil,nil,castLocked end end
 C_Spell={GetSpellInfo=function(id) return {name='Wind Shear'} end,
  GetSpellCooldownDuration=function() return {IsZero=function() return ready end} end}
 function GetTime() return now end
@@ -41,7 +42,10 @@ function MakeFrame(name)
  function f:SetEnabled(value) self.enabled=value end
  function f:SetAlpha(value) self.alpha=value end
  function f:SetText(value) self.value=value end
- function f:SetAlphaFromBoolean(v,a,b) self.alphaArg=v end
+ function f:SetAlphaFromBoolean(v,a,b)
+  self.alphaArg=v
+  if rawequal(v,secret) then self.alpha=nil else self.alpha=v and a or b end
+ end
  function f:SetAttribute(k,v) assert(not combat, 'protected attribute changed in combat'); self.attrs[k]=v end
  function f:RegisterForClicks(...) self.clicks={...} end
  function f:GetName() return self.name end
@@ -101,10 +105,33 @@ assert(A.spell==5211 and A.spellKind=='stun')
 assert(A.actions[false].attrs.macrotext=='#showtooltip Mighty Bash\n/stopcasting\n/cast [@focus,harm,nodead][] Mighty Bash')
 assert(A:AlertText()=='ОГЛУШЕНИЕ ПО ФОКУСУ' and A.frame.text.value==A:AlertText())
 assert(A:SpellStatus():find('Mighty Bash',1,true) and A:SpellStatus():find('иммунитет',1,true))
-assert(A.frame.shown and A.frame.alpha==1, 'interrupt shield must not hide a stun option')
+assert(A.frame.shown and rawequal(A.frame.alphaArg,secret), 'stun hints must pass the interrupt shield to native rendering')
 A:SetAlertText(A:AlertText()); assert(db.text==nil, 'stun default must not become a custom caption')
 A:SetAlertText('My stun'); assert(A:AlertText()=='My stun'); A:SetAlertText('')
 ready=secret; A:Update(); assert(rawequal(A.frame.text.alphaArg,secret)); ready=true
+-- Cast/channel shields suppress both stop types without inspecting secret
+-- booleans in addon code, while cooldown rendering stays independent.
+for _, id in ipairs({5211,106839}) do
+ known=id; A:UpdateActions()
+ local macro=A.actions[false].attrs.macrotext
+ for _, channel in ipairs({false,true}) do
+  casting=not channel; channeling=channel; ready=true; castLocked=true
+  A:Update(); assert(A.frame.alpha==0 and A.frame.text.alpha==1, 'shielded cast/channel must hide the stop hint')
+  castLocked=false; A.frame.scripts.OnEvent(nil,'UNIT_SPELLCAST_INTERRUPTIBLE','focus')
+  assert(A.frame.alpha==1 and A.frame.text.alpha==1, 'unshielded ready hint must return')
+  ready=false; A:Update(); assert(A.frame.alpha==1 and A.frame.text.alpha==0)
+  castLocked=secret; ready=secret; A:Update()
+  assert(rawequal(A.frame.alphaArg,secret) and rawequal(A.frame.text.alphaArg,secret))
+  assert(A.actions[false].attrs.macrotext==macro, 'display filtering must not change protected actions')
+ end
+end
+known=5211; A:UpdateActions(); casting=true; channeling=false; ready=true; castLocked=secret
+local oldSound, stunSounds=PlaySound,0
+PlaySound=function() stunSounds=stunSounds+1 end
+A.frame.scripts.OnEvent(nil,'UNIT_SPELLCAST_START','focus')
+A.frame.scripts.OnEvent(nil,'UNIT_SPELLCAST_CHANNEL_START','focus')
+assert(stunSounds==0, 'unfiltered cast-start sound must not urge a stun on shielded casts')
+PlaySound=oldSound
 db.fallback='none'; assert(A:ActionBody(false):find('/cast [@focus,harm,nodead] Mighty Bash',1,true))
 db.fallback='nearby'; assert(A:ActionBody(false):find('/targetenemy\n/cast Mighty Bash',1,true))
 -- Modern spellbook API is authoritative and independent of action bars/forms.
@@ -388,3 +415,5 @@ print('Mighty Bash fallback: learned talent, focus/target macros, kick priority,
 print('secret cooldowns, combat deferral, unlearning and live status refresh passed')
 print('Shared key: merge/split, rollback, external bindings, reload, modifier support,')
 print('macro target order, mouseover alerts, no protected cast gating and bounded state passed')
+print('Shielded stops: kick/stun cast and channel filtering, cooldowns, secret booleans,')
+print('interruptibility transitions, stun sound suppression and unchanged protected macros passed')

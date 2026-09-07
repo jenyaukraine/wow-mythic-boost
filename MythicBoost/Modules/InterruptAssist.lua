@@ -121,10 +121,9 @@ function Assist:Update()
     -- Pass restricted booleans directly to Blizzard's rendering API.
     -- Never branch on cooldown/interruptibility or derive sound from alpha.
     f:Show()
-    -- A cast's interrupt shield does not describe stun immunity. The stun
-    -- caption announces a manual option, not a guarantee it will stop this cast.
-    if self.spellKind == "stun" then f:SetAlpha(1)
-    else f:SetAlphaFromBoolean(locked, 0, 1) end
+    -- Conservatively suppress every stop hint on shielded casts, including
+    -- stuns: we cannot establish that this particular enemy can be stunned.
+    f:SetAlphaFromBoolean(locked, 0, 1)
     f.text:SetAlphaFromBoolean(duration:IsZero(), 1, 0)
 end
 function Assist:Style()
@@ -197,9 +196,10 @@ function Assist:Enable()
         if event == "CHAT_MSG_ADDON" then self:ReceiveMark(...) end
         if event == "READY_CHECK" and Settings().enabled and Settings().announceReady then self:Announce() end
         if (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START")
-            and Settings().enabled and Settings().sound and (...) == self:HintUnit() then
+            and Settings().enabled and Settings().sound and self.spellKind ~= "stun" and (...) == self:HintUnit() then
             -- Same limitation as ItruliaQoL: audio announces cast START, not
             -- interrupt readiness, because the latter can be a secret value.
+            -- Do not emit this unfiltered sound for stun hints hidden by a shield.
             PlaySound(8959, "Master")
         end
         self:Update()
