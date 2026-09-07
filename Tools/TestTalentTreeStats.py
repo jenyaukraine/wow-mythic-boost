@@ -5,13 +5,19 @@ from TestSocialWorkflows import load
 def fixture():
     lua = ui_fixture()
     load(lua, 'Modules/TalentLab.lua')
+    load(lua, 'Modules/TalentComparison.lua')
+    load(lua, 'Modules/TalentLabUI.lua')
     load(lua, 'Modules/TalentTreeStats.lua')
     lua.execute('''
         lab=JP.TalentLab; tree=JP.TalentTreeStats
         function GetSpecialization() return 1 end
         function GetSpecializationInfo() return 1 end
         function GetBuildInfo() return '12.0','123' end
-        for _,run in ipairs(db.runHistory.runs) do run.talentSample.gameBuild='12.0:123' end
+        for _,run in ipairs(db.runHistory.runs) do
+            local sample=run.talentSample
+            sample.gameBuild='12.0:123'; sample.mapID=run.mapID; sample.level=run.level
+            for id,entry in pairs(sample.selected) do entry.entryID=id end
+        end
         PlayerSpellsFrame=NewWidget(UIParent)
         frame=NewWidget(PlayerSpellsFrame); PlayerSpellsFrame.TalentsFrame=frame
         frame:Show(); frame:SetFrameLevel(100)
@@ -55,6 +61,7 @@ def test_weighting_and_unknowns():
 def test_partial_observations_are_not_recommendations():
     lua=fixture()
     lua.execute('''
+        tree.mode='shares'
         db.runHistory.runs={db.runHistory.runs[1]}
         local sample=db.runHistory.runs[1].talentSample
         sample.complete=false
@@ -73,9 +80,10 @@ def test_partial_observations_are_not_recommendations():
 def test_tree_colors_preview_and_lifecycle():
     lua=fixture()
     lua.execute('''
+        tree.mode='shares'
         tree:Refresh()
         assert(#tree.cards==3)
-        assert(tree.cards[1].text.text=='56.0%' and tree.cards[1].border[1]==1)
+        assert(tree.cards[1].text.text=='56.0%' and tree.cards[1].border[3]==1)
         assert(tree.cards[2].text.text=='60.0%' and tree.cards[2].border[2]==.95)
         assert(tree.cards[2].parent==buttons[2])
         assert(tree.cards[2].strata==buttons[2].strata and tree.cards[2].level==buttons[2].level+1,
@@ -98,6 +106,7 @@ def test_tree_colors_preview_and_lifecycle():
 def test_tree_reuses_driver_and_releases_cached_history():
     lua=fixture()
     lua.execute('''
+        tree.mode='shares'
         local histories=0
         local original=lab.HistoricalShares
         lab.HistoricalShares=function(...) histories=histories+1; return original(...) end
@@ -135,7 +144,68 @@ def test_tree_reuses_driver_and_releases_cached_history():
     ''')
 
 
+def test_default_tree_compares_runs_and_opens_the_same_context():
+    lua=fixture()
+    lua.execute('''
+        db.runHistory.runs[1].talentSample.overallHealing=60000
+        local comparisons=0; local original=lab.CompareTalents
+        lab.CompareTalents=function(...) comparisons=comparisons+1; return original(...) end
+        tree:Refresh()
+        assert(tree.context.runs==3 and tree.context.pairs==2)
+        assert(tree.cards[1].text.text=='~-17%' and tree.cards[1].border[1]==1,
+            'negative with/without difference, not measured share or try recommendation')
+        assert(tree.cards[2].text.text=='~+20%' and tree.cards[2].border[2]==.95)
+        assert(not tree.cards[3].shown,'always selected has no fabricated zero or recommendation')
+        assert(tree.note.text:find('Без подписи: нет пары',1,true))
+        tree.cards[2].badge.scripts.OnEnter()
+        assert(tooltip.lines[1]:find('Выше HPS',1,true) and tooltip.lines[1]:find('замеров: 1',1,true))
+        assert(tooltip.lines[1]:find('Других различий',1,true) and tooltip.lines[1]:find('не доказанный прирост',1,true))
+        for i=1,100 do tree:Refresh() end
+        assert(comparisons==1,'comparison is cached across tree ticks')
+        tree.cards[2].badge.scripts.OnClick()
+        assert(lab.view=='comparison' and lab.comparisonKey==tree.context.key)
+        assert(lab.rows[1].share.text=='~+20.0%' and lab.rows[1].meta.text:find('Выше HPS',1,true))
+        tree.metricButtons.damage.scripts.OnClick()
+        tree.openButton.scripts.OnClick()
+        assert(lab.metric=='damage' and lab.view=='comparison')
+        tree.modeButtons.shares.scripts.OnClick()
+        assert(tree.mode=='shares' and tree.contextText.text:find('не оценка пользы',1,true))
+        tree.modeButtons.comparison.scripts.OnClick()
+        assert(tree.mode=='comparison')
+        inspecting=true; tree:Refresh(); assert(not tree.legend.shown and not tree.cards[2].shown)
+        inspecting=false; combat=true; tree:Refresh(); assert(not tree.legend.shown)
+        combat=false; tree:Disable(); assert(not tree.context and not tree.contexts and not tree.contextRows)
+    ''')
+
+
+def test_comparison_context_rank_family_and_unknowns():
+    lua=fixture()
+    lua.execute('''
+        JP.TalentSources={[1]={[1002]={family=999}}}
+        db.runHistory.runs[1].talentSample.selected[1].rank=4
+        nodes[2].activeRank=4
+        tree:Refresh()
+        assert(tree.cards[2].shown and tree.cards[2].detail:find('Ранг: 4',1,true),
+            'apex spell variants use the comparison family at the actual rank')
+        nodes[2].activeRank=3
+        tree:Refresh(); assert(not tree.cards[2].shown,'different selected rank cannot borrow a result')
+        nodes[2].activeRank=0
+        tree:Refresh(); assert(tree.cards[2].shown,'unselected talent can display a measured higher rank')
+        local sample=db.runHistory.runs[1].talentSample
+        sample.gameBuild='other'; tree:ReleaseHistory(); tree:Refresh()
+        assert(tree.context.runs==2 and tree.context.pairs==0 and not tree.cards[2].shown,
+            'a paired context from another game build cannot decorate the current tree')
+        assert(tree.note.text:find('Нет пары:',1,true))
+        sample.gameBuild='12.0:123'; sample.specID=2
+        tree:ReleaseHistory(); tree:Refresh(); assert(tree.context.runs==2)
+        db.runHistory.runs={}; tree:ReleaseHistory(); tree:Refresh()
+        assert(not tree.context and not tree.cards[1].shown and tree.legend.shown)
+        assert(tree.contextText.text=='Нет замеров с известной неизменной сборкой')
+    ''')
+
+
 if __name__=='__main__':
-    for test in (test_partial_observations_are_not_recommendations,test_weighting_and_unknowns,test_tree_colors_preview_and_lifecycle,
+    for test in (test_default_tree_compares_runs_and_opens_the_same_context,test_comparison_context_rank_family_and_unknowns,
+                 test_partial_observations_are_not_recommendations,test_weighting_and_unknowns,test_tree_colors_preview_and_lifecycle,
                  test_tree_reuses_driver_and_releases_cached_history):
         test(); print(test.__name__+': OK')

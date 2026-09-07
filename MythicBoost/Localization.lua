@@ -9,6 +9,18 @@ local translations
 
 if locale == "deDE" then
     translations = {
+        ["Без подписи: нет пары. Нажми на число для сравнения и условий."] = "Keine Zahl: kein Vergleich. Zahl anklicken für Messungen und Bedingungen.",
+        ["Без разницы"] = "Kein Unterschied",
+        ["Вклад: доля измеренного лечения или урона, не оценка пользы таланта."] = "Beitrag: Anteil gemessener Heilung oder Schaden, keine Talentbewertung.",
+        ["Выше %s"] = "Höherer %s",
+        ["Ещё талантов: %d - %d"] = "Weitere Talente: %d - %d",
+        ["Зелёный: %s сборок выше. Красный: ниже. ~ Предварительная оценка."] = "Grün: höherer Build-%s. Rot: niedriger. ~ Vorläufige Schätzung.",
+        ["Нет замеров для этого таланта и ранга в выбранных условиях."] = "Keine Messungen für dieses Talent und diesen Rang unter den gewählten Bedingungen.",
+        ["Нет пары: нужны прохождения с талантом и без него в том же подземелье и на том же уровне ключа."] = "Kein Vergleich: Durchläufe mit und ohne Talent im gleichen Dungeon auf gleicher Schlüsselsteinstufe nötig.",
+        ["Нет прохождений без этого таланта в выбранных условиях."] = "Keine Durchläufe ohne dieses Talent unter den gewählten Bedingungen.",
+        ["Нет прохождений с этим талантом и рангом в выбранных условиях."] = "Keine Durchläufe mit diesem Talent und Rang unter den gewählten Bedingungen.",
+        ["Ниже %s"] = "Niedrigerer %s",
+        ["Подробнее"] = "Details",
         ["%s: %s %s | замеров: %d"] = "%s: %s %s | Messungen: %d",
         ["Диапазон: %s"] = "Spanne: %s",
         ["Замерено: %s"] = "Gemessen: %s",
@@ -27,7 +39,6 @@ if locale == "deDE" then
         ["Нет пары"] = "Kein Vergleich",
         ["Нет привязанных данных"] = "Keine zugeordneten Daten",
         ["Нужны сохранённые прохождения с известными талантами и длительностью замера."] = "Gespeicherte Durchläufe mit bekannten Talenten und Messdauer sind erforderlich.",
-        ["При одном замере с каждой стороны разброс неизвестен."] = "Mit einer Messung je Seite ist die Streuung unbekannt.",
         ["Разница"] = "Differenz",
         ["С талантом"] = "Mit Talent",
         ["С цифрами: %d | Без привязанных данных: %d"] = "Gemessen: %d | Ohne zugeordnete Daten: %d",
@@ -749,6 +760,18 @@ if locale == "deDE" then
     }
 elseif locale ~= "ruRU" then
     translations = {
+        ["Без подписи: нет пары. Нажми на число для сравнения и условий."] = "No label: no comparison. Click a number for samples and conditions.",
+        ["Без разницы"] = "No difference",
+        ["Вклад: доля измеренного лечения или урона, не оценка пользы таланта."] = "Contribution: share of measured healing or damage, not a talent rating.",
+        ["Выше %s"] = "Higher %s",
+        ["Ещё талантов: %d - %d"] = "Other talents: %d - %d",
+        ["Зелёный: %s сборок выше. Красный: ниже. ~ Предварительная оценка."] = "Green: higher build %s. Red: lower. ~ Preliminary estimate.",
+        ["Нет замеров для этого таланта и ранга в выбранных условиях."] = "No samples for this talent and rank under the selected conditions.",
+        ["Нет пары: нужны прохождения с талантом и без него в том же подземелье и на том же уровне ключа."] = "No comparison: requires runs with and without the talent in the same dungeon at the same key level.",
+        ["Нет прохождений без этого таланта в выбранных условиях."] = "No runs without this talent under the selected conditions.",
+        ["Нет прохождений с этим талантом и рангом в выбранных условиях."] = "No runs with this talent and rank under the selected conditions.",
+        ["Ниже %s"] = "Lower %s",
+        ["Подробнее"] = "Details",
         ["%s: %s %s | замеров: %d"] = "%s: %s %s | runs: %d",
         ["Диапазон: %s"] = "Range: %s",
         ["Замерено: %s"] = "Captured: %s",
@@ -767,7 +790,6 @@ elseif locale ~= "ruRU" then
         ["Нет пары"] = "No counterpart",
         ["Нет привязанных данных"] = "No linked data",
         ["Нужны сохранённые прохождения с известными талантами и длительностью замера."] = "Saved runs with known talents and capture duration are required.",
-        ["При одном замере с каждой стороны разброс неизвестен."] = "One run on each side cannot establish variability.",
         ["Разница"] = "Difference",
         ["С талантом"] = "With talent",
         ["С цифрами: %d | Без привязанных данных: %d"] = "Measured: %d | No linked data: %d",
@@ -2317,10 +2339,8 @@ end
 if translations then
     local extra = locale == "deDE" and {
         ["Вклад"] = "Beitrag",
-        ["Попробовать"] = "Testen",
     } or {
         ["Вклад"] = "Contribution",
-        ["Попробовать"] = "Try",
     }
     for key, value in pairs(extra) do translations[key] = value end
 end

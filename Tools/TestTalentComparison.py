@@ -91,6 +91,18 @@ def test_unknown_nodes_and_no_mutation_or_source_dependency():
     ''')
 
 
+def test_zero_duration_saved_run_does_not_crash_comparison():
+    lua=fixture()
+    lua.execute('''
+        local zero,a,b=Run(3,0,true),Run(2,120,true),Run(1,80,false)
+        zero.talentSample.duration=0
+        local result=lab:CompareTalents({zero,a,b},'healing')
+        assert(result.excluded.invalid==1 and #result.contexts==1)
+        assert(result.contexts[1].runs==2 and Row(result.contexts[1],200).percent==50)
+        assert(lab:CompareTalents({zero},'damage').excluded.invalid==1)
+    ''')
+
+
 def test_ui_comparison_is_reachable_and_restores_source_rows():
     lua=ui_fixture()
     load(lua,'Modules/TalentLab.lua'); load(lua,'Modules/TalentComparison.lua'); load(lua,'Modules/TalentLabUI.lua')
@@ -119,7 +131,7 @@ def test_ui_comparison_is_reachable_and_restores_source_rows():
 
 
 if __name__=='__main__':
-    for test in (test_cohort_means_spread_counts_and_other_changes,
+    for test in (test_zero_duration_saved_run_does_not_crash_comparison,test_cohort_means_spread_counts_and_other_changes,
                  test_partial_mixed_rank_dedup_and_context_isolation,
                  test_unknown_nodes_and_no_mutation_or_source_dependency,
                  test_ui_comparison_is_reachable_and_restores_source_rows):

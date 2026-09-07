@@ -94,7 +94,8 @@ function Lab:CompareTalents(runs,metric)
             local game,key=Text(sample.gameBuild,128),Text(sample.buildKey)
             local duration=Number(sample.duration,86400)
             local total=Number(metric=="healing" and sample.overallHealing or sample.overallDamage)
-            local rate=duration and duration>0 and total and Number(total/duration)
+            local rate
+            if duration and duration>0 and total then rate=Number(total/duration) end
             local ranks,nodes,unknown=Ranks(sample)
             local mixed=JP.SafeOptionalBoolean(sample.mixed)
             if mixed==true then result.excluded.mixed=result.excluded.mixed+1

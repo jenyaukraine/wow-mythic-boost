@@ -5,7 +5,7 @@
 ## Notes-enGB: Mythic+ group finder, player analysis and progression dashboard for Midnight
 ## Notes-deDE: Mythic+-Gruppensuche, Spieleranalyse und Saisonfortschritt für Midnight
 ## Author: Jenya
-## Version: 2.4.99
+## Version: 2.4.100
 ## SavedVariables: MythicBoostDB
 ## SavedVariablesPerCharacter: MythicBoostMarketDB
 ## OptionalDeps: RaiderIO, RaiderIO_DB_EU_M, Blizzard_AuraContainer

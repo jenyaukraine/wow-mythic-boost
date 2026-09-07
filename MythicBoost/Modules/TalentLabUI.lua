@@ -153,7 +153,8 @@ function Lab:CreateUI()
     f:SetBackdrop({bgFile="Interface/Buttons/WHITE8X8", edgeFile="Interface/Buttons/WHITE8X8", edgeSize=1})
     f:SetBackdropColor(.018, .026, .034, .98)
     f:SetBackdropBorderColor(.30, .32, .34, .92)
-    self.uiFrame = f; self.rows = {}; self.page = 0; self.metric = "healing"; self.view = "sources"
+    self.uiFrame = f; self.rows = {}; self.page = 0; self.metric = self.metric or "healing"
+    self.view = self.view or (self.CompareTalents and "comparison" or "sources")
 
     self.uiTitle = Label(f, L("ЛАБОРАТОРИЯ ТАЛАНТОВ"), 16, -16, 580, C.accent)
     self.uiSubtitle = Label(f, "", 16, -43, 450, C.text)
@@ -355,6 +356,37 @@ local function CohortText(label,summary,unit)
         .."\n"..(L("Замерено: %s")):format(FormatDuration(summary.duration))
 end
 
+-- The tree and the table describe the same cohorts, never a causal talent score.
+function Lab:ComparisonPresentation(data,metric)
+    local unit=metric=="damage" and "DPS" or "HPS"
+    local p={label="—",badge="—",r=.55,g=.60,b=.65,outcome=L("Нет пары")}
+    if not data then
+        p.detail=L("Нет замеров для этого таланта и ранга в выбранных условиях.")
+        return p
+    end
+    p.detail=CohortText(L("С талантом"),data.with,unit).."\n"..CohortText(L("Без таланта"),data.without,unit)
+    if data.comparable then
+        if data.delta>0 then p.r,p.g,p.b=.2,.95,.45; p.outcome=(L("Выше %s")):format(unit)
+        elseif data.delta<0 then p.r,p.g,p.b=1,.35,.35; p.outcome=(L("Ниже %s")):format(unit)
+        else p.outcome=L("Без разницы") end
+        p.label=data.percent and ("%+.1f%%"):format(data.percent)
+            or ((data.delta>0 and "+" or data.delta<0 and "-" or "")..Compact(math.abs(data.delta)))
+        p.badge=data.percent and ((math.abs(data.percent)>=10 and "%+.0f%%" or "%+.1f%%"):format(data.percent)) or p.label
+        if data.smallSample or data.partial then p.label="~"..p.label; p.badge="~"..p.badge end
+        p.detail=p.outcome..": "..p.label.."\n"..p.detail
+            .."\n"..(L("Других различий в талантах: %d - %d")):format(data.otherChangesMin,data.otherChangesMax)
+        if data.smallSample then p.detail=p.detail.."\n"..L("Мало замеров") end
+        if data.partial then p.detail=p.detail.."\n"..L("Неполные данные") end
+        if data.rosterChanged then p.detail=p.detail.."\n"..L("Состав группы различается.") end
+        if data.rosterUnknown then p.detail=p.detail.."\n"..L("Состав группы неизвестен.") end
+    else
+        p.detail=p.detail.."\n"..(data.without.runs==0 and L("Нет прохождений без этого таланта в выбранных условиях.")
+            or L("Нет прохождений с этим талантом и рангом в выбранных условиях."))
+    end
+    p.detail=p.detail.."\n"..L("Это сравнение результатов сборок, не доказанный прирост от одного таланта.")
+    return p
+end
+
 function Lab:StyleButtons()
     for _,state in ipairs({{self.healButton,self.metric=="healing"},{self.damageButton,self.metric=="damage"},
         {self.sourceButton,self.view=="sources"},{self.talentButton,self.view=="talents"},
@@ -389,6 +421,12 @@ function Lab:RenderComparison(runs)
     for _,row in ipairs(context and context.rows or {}) do
         if row.comparable or self.showComparisonAll then rows[#rows+1]=row end
     end
+    table.sort(rows,function(a,b)
+        if a.comparable~=b.comparable then return a.comparable end
+        if a.comparable and a.delta~=b.delta then return a.delta>b.delta end
+        if a.spellID~=b.spellID then return a.spellID<b.spellID end
+        return a.rank<b.rank
+    end)
     while #self.rows<#rows do self.rows[#self.rows+1]=self.createRow(#self.rows+1) end
     self.rowCanvas:SetSize(568,math.max(ROW_VIEWPORT_HEIGHT,#rows*48)); self.rowScroll:SetVerticalScroll(0)
     for i,row in ipairs(self.rows) do
@@ -397,33 +435,33 @@ function Lab:RenderComparison(runs)
         if data then
             local id,name,icon=SpellInfo(data.spellID)
             row.spellID=id; row.spellName=name or (L("ID заклинания %d")):format(id)
+            row.comparisonRank=data.rank
             row.kind=nil
             row:SetHeight(44); row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(i-1)*48)
             row.nameText:SetText(row.spellName.." ("..data.rank..")")
             row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             row.amount:SetWidth(86); row.amount:SetText(Compact(data.with.mean)); row.rate:SetText(Compact(data.without.mean))
-            row.share:SetText(data.percent and ("%+.1f%%"):format(data.percent) or "—")
-            row.share:SetTextColor(UI.Unpack(C.amber)); row.amount:SetTextColor(UI.Unpack(C.text))
+            local presentation=self:ComparisonPresentation(data,self.metric)
+            row.share:SetText(presentation.label)
+            row.share:SetTextColor(presentation.r,presentation.g,presentation.b,1); row.amount:SetTextColor(UI.Unpack(C.text))
             row.meta:Show()
-            row.meta:SetText((L("Замеров с / без: %d / %d")):format(data.with.runs,data.without.runs)
-                ..(not data.comparable and (" | "..L("Нет пары")) or data.smallSample and (" | "..L("Мало замеров")) or "")
-                ..(data.partial and (" | "..L("Неполные данные")) or ""))
-            local detail=CohortText(L("С талантом"),data.with,unit).."\n"..CohortText(L("Без таланта"),data.without,unit)
+            local meta=presentation.outcome.." | "..(L("Замеров с / без: %d / %d")):format(data.with.runs,data.without.runs)
             if data.comparable then
-                detail=detail.."\n"..(L("Других различий в талантах: %d - %d")):format(data.otherChangesMin,data.otherChangesMax)
-                if data.rosterChanged then detail=detail.."\n"..L("Состав группы различается.") end
-                if data.rosterUnknown then detail=detail.."\n"..L("Состав группы неизвестен.") end
+                meta=meta.." | "..(L("Ещё талантов: %d - %d")):format(data.otherChangesMin,data.otherChangesMax)
             end
-            row.comparisonDetail=detail.."\n"..L("Это сравнение результатов сборок, не доказанный прирост от одного таланта.")
+            row.meta:SetText(meta)
+            row.comparisonDetail=presentation.detail
         else
             row.spellID=nil; row.comparisonDetail=nil; row.meta:Hide()
         end
     end
-    self.empty:SetText(context and (L("Талантов с замерами с обеих сторон: %d. Наведи на строку для диапазона и условий.")):format(context.pairs)
+    self.empty:SetText(context and (context.pairs>0
+        and (L("Талантов с замерами с обеих сторон: %d. Наведи на строку для диапазона и условий.")):format(context.pairs)
+        or L("Нет пары: нужны прохождения с талантом и без него в том же подземелье и на том же уровне ключа."))
         or L("Нужны сохранённые прохождения с известными талантами и длительностью замера."))
     self.coverage:SetText((L("Исключено: смешанная сборка %d | недоступные данные %d")):format(result.excluded.mixed,result.excluded.invalid))
-    self.compare:SetText(L("Это сравнение результатов сборок, не доказанный прирост от одного таланта.")
-        .."\n"..L("При одном замере с каждой стороны разброс неизвестен."))
+    self.compare:SetText((L("Зелёный: %s сборок выше. Красный: ниже. ~ Предварительная оценка.")):format(unit)
+        .."\n"..L("Это сравнение результатов сборок, не доказанный прирост от одного таланта."))
 end
 
 function Lab:Render()
@@ -530,6 +568,27 @@ function Lab:Show()
     self:CreateUI(); self.page = 0; self.sampleIndex = 1; self:Render(); self.uiFrame:Show()
 end
 
+function Lab:ShowComparison(contextKey,metric,spellID,rank)
+    if not CanUseUI() then return end
+    self:CreateUI()
+    self.view="comparison"; self.comparisonKey=contextKey
+    self.metric=metric=="damage" and "damage" or "healing"
+    self:Show()
+    if spellID then
+        for i,row in ipairs(self.rows) do
+            if row:IsShown() and row.spellID==spellID and row.comparisonRank==rank then
+                self.rowScroll:SetVerticalScroll(math.min(self.rowScroll:GetVerticalScrollRange(),(i-1)*48))
+                break
+            end
+        end
+    end
+    local owner=PlayerSpellsFrame
+    if owner and owner:IsShown() then
+        self.uiFrame:SetFrameStrata("DIALOG")
+        self.uiFrame:SetFrameLevel(owner:GetFrameLevel()+20)
+    end
+end
+
 -- Blizzard loads the talent window on demand. One event frame and one set of
 -- hooks survive module reloads; no polling, native reparenting or secure edits.
 function Lab:AttachTalentButton()
@@ -541,8 +600,8 @@ function Lab:AttachTalentButton()
         self.talentButtonLauncher = button
         button:SetScript("OnClick", function()
             if not self.launcherRunning or not CanUseUI() then return end
-            self.view = "sources"
-            self:Show()
+            if self.CompareTalents then self:ShowComparison(self.comparisonKey,self.metric)
+            else self.view="sources"; self:Show() end
             -- A custom UI may raise the talent window to DIALOG as well.
             self.uiFrame:SetFrameStrata("DIALOG")
             self.uiFrame:SetFrameLevel(button:GetFrameLevel() + 10)
