@@ -208,10 +208,34 @@ def test_scroll_pool_limits_and_bad_durations():
     ''')
 
 
+def test_measured_talents_default_zeros_and_unknown_filter():
+    lua=fixture()
+    lua.execute('''
+        local run=db.runHistory.runs[1]
+        run.duration=1843
+        run.talentSample.duration=18
+        run.talentSample.selected[3]={spellID=999,rank=1}
+        run.talentSample.selected[4]={spellID=888,rank=1}
+        run.talentSample.spells.healing[888]=0
+        lab:Show(); lab.talentButton.scripts.OnClick()
+        assert(lab.uiDate.text:find('Ключ 30:43 / замер 0:18',1,true))
+        assert(#lab.rows==3 and lab.rows[3].amount.text=='0')
+        assert(lab.rows[3].share.text=='0.0%')
+        assert(lab.coverage.text:find('С цифрами: 3',1,true))
+        lab.allTalentsButton.scripts.OnClick()
+        assert(lab.rows[4].kind=='unattributed')
+        assert(lab.rows[4].amount.text=='Нет отдельного источника' and lab.rows[4].rate.text=='')
+        lab.allTalentsButton.scripts.OnClick()
+        assert(not lab.rows[4].shown)
+        lab.sourceButton.scripts.OnClick(); assert(not lab.allTalentsButton.shown)
+    ''')
+
+
 if __name__ == "__main__":
     for test in (test_rows_pagination_tooltip_and_reuse,
                  test_compare_is_build_comparison_and_unknown_is_explicit,
                  test_talent_launcher_layering_combat_and_lifecycle,
-                 test_scroll_pool_limits_and_bad_durations):
+                 test_scroll_pool_limits_and_bad_durations,
+                 test_measured_talents_default_zeros_and_unknown_filter):
         test()
         print(test.__name__ + ": OK")

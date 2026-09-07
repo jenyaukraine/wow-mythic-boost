@@ -8,7 +8,7 @@ local MAX_TEAMMATES = JP.Limits.HISTORY_TEAMMATES
 local MAX_RUNS = JP.Limits.HISTORY_RUNS
 local MAX_ROWS = 14
 local ROW_HEIGHT = 32
-local BASE_EVENTS = { "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED", "CHALLENGE_MODE_RESET" }
+local BASE_EVENTS = { "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED", "CHALLENGE_MODE_RESET", "PLAYER_ENTERING_WORLD" }
 -- Retail does not permit addon subscriptions to the raw combat log.
 -- pcall cannot make a restricted registration safe: it still flags the addon.
 local TRACKING_EVENTS = { "ENCOUNTER_END" }
@@ -108,6 +108,7 @@ function RunHistory:StartRun(resumed)
     self.current = {
         mapID = mapID, mapName = MapName(mapID), level = SafeNumber(level) or 0,
         startedAt = startedAt, startedEpoch = time() - math.max(0, math.floor(now - startedAt)),
+        nativeStart = SafeNumber(apiStartedAt),
         members = members, byGUID = byGUID, encounters = {}, trackingPartial = resumed == true,
     }
     if JP.RunStats then JP.RunStats:Start(self.current) end
@@ -508,6 +509,9 @@ function RunHistory:Create()
         if event == "CHALLENGE_MODE_START" then self:StartRun()
         elseif event == "CHALLENGE_MODE_COMPLETED" then self:FinishRun()
         elseif event == "CHALLENGE_MODE_RESET" then self:DiscardRun()
+        elseif event == "PLAYER_ENTERING_WORLD" and not self.current then
+            local active=JP.API.GetActiveChallenge()
+            if active and active.active then self:StartRun(true) end
         elseif event == "ENCOUNTER_END" then self:OnEncounterEnd(...) end
     end)
 end
@@ -516,6 +520,9 @@ function RunHistory:Enable()
     Settings()
     if not self.events then return end
     for _, event in ipairs(BASE_EVENTS) do pcall(self.events.RegisterEvent, self.events, event) end
+    -- ADDON_LOADED is too early for a stable roster/spec on login or /reload.
+    -- World entry starts collection once those player APIs are initialized.
+    if type(IsLoggedIn)=="function" and JP.SafeOptionalBoolean(IsLoggedIn())~=true then return end
     local active = JP.API.GetActiveChallenge()
     if active and active.active then self:StartRun(true) end
 end

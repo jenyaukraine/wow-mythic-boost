@@ -9,6 +9,12 @@ local translations
 
 if locale == "deDE" then
     translations = {
+        ["Все таланты"] = "Alle Talente",
+        ["Только с цифрами"] = "Nur gemessene",
+        ["Замер %s"] = "Messung %s",
+        ["Ключ %s / замер %s"] = "Schlüssel %s / Messung %s",
+        ["Нет отдельного источника"] = "Keine eigene Quelle",
+        ["С цифрами: %d | Без отдельного источника: %d"] = "Gemessen: %d | Ohne eigene Quelle: %d",
         ["    бафф: "] = "polieren:",
         ["    воскрешение: "] = "Auferstehung:",
         ["  %s: id %d, изучено: %s, имя: %s"] = "%s: ID %d, untersucht: %s, Name: %s",
@@ -713,6 +719,12 @@ if locale == "deDE" then
     }
 elseif locale ~= "ruRU" then
     translations = {
+        ["Все таланты"] = "All talents",
+        ["Только с цифрами"] = "Measured only",
+        ["Замер %s"] = "Capture %s",
+        ["Ключ %s / замер %s"] = "Key %s / capture %s",
+        ["Нет отдельного источника"] = "No separate source",
+        ["С цифрами: %d | Без отдельного источника: %d"] = "Measured: %d | No separate source: %d",
         ["    бафф: "] = "buff:",
         ["    воскрешение: "] = "resurrection:",
         ["  %s: id %d, изучено: %s, имя: %s"] = "%s: id %d, studied: %s, name: %s",

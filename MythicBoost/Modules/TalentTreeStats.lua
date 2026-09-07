@@ -99,7 +99,7 @@ function Tree:Refresh()
     if not frame or not frame:IsShown() or Call(frame.IsInspecting, frame) ~= false then self:Clear(); return end
     local config = Number(Call(frame.GetConfigID, frame))
     local spec = Number(Call(frame.GetSpecID, frame))
-    local currentSpec = Number(Call(GetSpecializationInfo, Call(GetSpecialization)))
+    local currentSpec = Lab.SpecID and Lab.SpecID() or Number(Call(GetSpecializationInfo, Call(GetSpecialization)))
     if not config or spec ~= currentSpec then self:Clear(); return end
     local version, build = GetBuildInfo()
     version, build = JP.SafeString(version), JP.SafeString(build)
@@ -110,9 +110,11 @@ function Tree:Refresh()
     local treeIDs = info and JP.SafeTable(info.treeIDs)
     if not treeIDs then self:Clear(); return end
     self:CreateLegend()
+    self.legend:SetParent(frame)
     self.legend:ClearAllPoints()
     self.legend:SetPoint("TOP", frame, "BOTTOM", 0, -6)
-    self.legend:SetFrameStrata("DIALOG")
+    self.legend:SetFrameStrata(frame:GetFrameStrata())
+    self.legend:SetFrameLevel(frame:GetFrameLevel()+2)
     for metric, button in pairs(self.metricButtons) do
         local active = metric == (self.metric or "healing")
         button:SetBackdropColor(active and .08 or .035, active and .20 or .045, active and .25 or .055, 1)
@@ -144,9 +146,9 @@ function Tree:Refresh()
                     count = count + 1
                     local card = self.cards[count]
                     if not card then
-                        card = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+                        card = CreateFrame("Frame", nil, button, "BackdropTemplate")
                         card:EnableMouse(false)
-                        card:SetBackdrop({edgeFile="Interface\\Buttons\\WHITE8X8",edgeSize=2})
+                        card:SetBackdrop({edgeFile="Interface\\Buttons\\WHITE8X8",edgeSize=1})
                         card.badge = CreateFrame("Button", nil, card, "BackdropTemplate")
                         card.badge:SetSize(48, 15); card.badge:SetPoint("TOP", card, "BOTTOM", 0, 2)
                         card.badge:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8"})
@@ -166,9 +168,10 @@ function Tree:Refresh()
                         elseif selected then r,g,b=.2,.95,.45
                         elseif observed.percent > 0 then r,g,b=1,.22,.22 end
                     end
+                    card:SetParent(button)
                     card:ClearAllPoints(); card:SetPoint("TOPLEFT", button, "TOPLEFT", -3, 3)
                     card:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 3, -3)
-                    card:SetFrameStrata("DIALOG"); card:SetFrameLevel(frame:GetFrameLevel()+200)
+                    card:SetFrameStrata(button:GetFrameStrata()); card:SetFrameLevel(button:GetFrameLevel()+1)
                     card:SetBackdropBorderColor(r,g,b,.95); card.text:SetTextColor(r,g,b,1)
                     card.text:SetText(observed and ((observed.partial and "~" or "") .. ("%.1f%%"):format(observed.percent)) or "—")
                     card.detail = observed and (L("Ключей: %d | Ранг: %d")):format(observed.runs, observed.rank)
@@ -176,7 +179,7 @@ function Tree:Refresh()
                     if observed and observed.partial then
                         card.detail = card.detail .. "\n" .. L("Неполный замер: доля сохранённых данных, не оценка всей сборки.")
                     end
-                    card:Show()
+                    if observed then card:Show() else HideCard(card) end
                 end
             end
         end

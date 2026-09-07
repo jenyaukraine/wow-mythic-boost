@@ -202,9 +202,129 @@ def test_observed_run_comparison():
     ''')
 
 
+def test_loading_specialization_does_not_create_zero_or_mixed_build():
+    lua=fixture()
+    lua.execute('''
+        local ready=false
+        C_SpecializationInfo={IsInitialized=function() return ready end,
+            GetSpecialization=function() return 1 end,
+            GetSpecializationInfo=function() return 105 end}
+        GetSpecialization=nil; GetSpecializationInfo=nil
+        NativeSample(0,0,0); run=NewRun(); s:Start(run)
+        assert(not lab.build)
+        ready=true; NativeSample(500,100,10); s:Snapshot()
+        assert(lab.build.specID==105 and not lab.mixed and lab.values.healing[155777]==500)
+        lab:BuildChanged(); s:Snapshot(); assert(not lab.mixed)
+        C_SpecializationInfo.GetSpecializationInfo=function() return 0 end
+        lab:BuildChanged(); s:Snapshot()
+        assert(lab.build.specID==105 and not lab.mixed)
+        C_SpecializationInfo.GetSpecializationInfo=function() return 105 end
+        nodes[1].activeEntry.entryID=4; lab:BuildChanged(); s:Snapshot()
+        assert(lab.mixed,'an actual applied change remains mixed')
+    ''')
+
+
+def test_reload_keeps_totals_sources_and_boundaries():
+    lua=fixture()
+    lua.execute('''
+        function Key(resumed)
+            local run=NewRun(resumed)
+            run.nativeStart=100; run.mapID=399; run.level=12
+            return run
+        end
+        NativeSample(1000,2000,40); run=Key(); s:Start(run)
+        NativeSample(1500,2200,50); s:Snapshot()
+        saved=db.runHistory.activeStats
+        assert(saved.talent.values.healing[155777]==500 and saved.duration==10)
+        assert(saved.talent.values.healing~=lab.values.healing,'no mutable collector references')
+        assert(saved.players['Player-Alice'].name==nil,'private checkpoint does not store names')
+    ''')
+    # Recreate the collectors against the same SavedVariables, as /reload does.
+    load(lua,'Modules/RunStats.lua'); load(lua,'Modules/TalentLab.lua')
+    lua.execute('''
+        s=JP.RunStats; lab=JP.TalentLab
+        NativeSample(1800,2600,60); run=Key(true); s:Start(run)
+        assert(s.restored and s.duration==20)
+        assert(lab.values.healing[155777]==800 and s.players['Player-Alice'].healing==800)
+        for i=1,10 do s:Snapshot() end
+        assert(s.duration==20 and lab.values.healing[155777]==800,'no duplicate post-reload totals')
+        assert(not lab.mixed,'same tree does not become mixed after reload')
+        NativeSample(2000,2800,70); result=Result(); s:Finish(run,result)
+        assert(result.talentSample.overallHealing==800,'finish publishes the current sample immediately')
+        Tick(.5)
+        assert(result.talentSample.overallHealing==1000 and result.talentSample.duration==30)
+        assert(result.talentSample.spells.healing[155777]==1000 and not result.talentSample.complete)
+        assert(db.runHistory.activeStats==nil,'completion consumes checkpoint')
+        s:Stop(); db.runHistory.activeStats=saved
+        NativeSample(5000,6000,10); run=Key(true); s:Start(run)
+        assert(s.restored and lab.values.healing[155777]==5500)
+        assert(s.players['Player-Alice'].healing==5500,'a meter reset during reload resets both baselines')
+        s:Stop(); db.runHistory.activeStats=saved
+        local nextRun=Key(true); nextRun.nativeStart=101
+        s:Start(nextRun); assert(not s.restored and s.duration==0 and (lab.values.healing[155777] or 0)==0)
+        s:Stop(); db.runHistory.activeStats=saved; saved.guid='Player-Other'
+        s:Start(Key(true)); assert(not s.restored,'do not restore another character')
+        s:Stop(); saved.guid='Player-Alice'; db.runHistory.activeStats=saved
+        saved.talent.values.healing[155777]=Secret(1000)
+        s:Start(Key(true)); assert(not s.restored and s.duration==0,'invalid checkpoint fails atomically')
+        s:Stop(); saved.talent.values.healing[155777]=500; db.runHistory.activeStats=saved
+        saved.at=time()-50000
+        s:Start(Key(true)); assert(not s.restored,'expired checkpoint is discarded')
+    ''')
+
+
+def test_legacy_spec_recovery_requires_same_recorded_tree():
+    lua=fixture()
+    lua.execute('''
+        local run=NewRun(); lab:Begin(run)
+        local good=Result(); lab:Finish(run,good,Stats(0,0,10))
+        local broken={}; for k,v in pairs(good.talentSample) do broken[k]=v end
+        broken.specID=0; broken.buildKey=broken.buildKey:gsub('^105|','0|')
+        broken.spells={healing={[81269]=162612},damage={}}
+        broken.mixed=true; broken.complete=false; broken.duration=18
+        local fixed=lab:ResolveSample(broken,{good})
+        assert(fixed~=broken and fixed.specID==105 and broken.specID==0)
+        assert(fixed.mixed and not fixed.complete and fixed.duration==18,'never rewrite recorded uncertainty/time')
+        assert(lab:TalentRows(fixed,'healing')[1].amount==162612)
+        assert(lab:ResolveSample(broken,{})==broken)
+        good.talentSample.gameBuild='other'; assert(lab:ResolveSample(broken,{good})==broken)
+        good.talentSample.gameBuild=broken.gameBuild
+        good.talentSample.buildKey=good.talentSample.buildKey..';4:4:1'
+        assert(lab:ResolveSample(broken,{good})==broken,'a different tree cannot infer specialization')
+    ''')
+
+
+def test_world_entry_waits_for_player_and_checkpoint_stays_bounded():
+    lua=fixture()
+    load(lua,'Modules/RunHistory.lua')
+    lua.execute('''
+        IsLoggedIn=function() return false end
+        UnitClass=function() return 'Druid','DRUID' end
+        JP.API.GetActiveChallenge=function() return {active=true,mapID=399,level=12,startedAt=100} end
+        local history=JP.RunHistory
+        history:Create(); history:Enable()
+        assert(history.current==nil and history.events.events.PLAYER_ENTERING_WORLD)
+        history.events.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD')
+        assert(history.current and s.run==history.current and history.current.nativeStart==100)
+        local current=history.current
+        history.events.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD')
+        assert(history.current==current,'zone loads do not restart the current key')
+        NativeSample(100,200,50); s:Snapshot()
+        collectgarbage('collect'); local before=collectgarbage('count')
+        for i=1,1000 do s:Snapshot() end
+        collectgarbage('collect')
+        assert(collectgarbage('count')-before<64,'only one bounded checkpoint survives')
+        history:DiscardRun(); assert(db.runHistory.activeStats==nil)
+    ''')
+
+
 if __name__=='__main__':
     test_observed_run_comparison()
     for test in [test_actual_collector_and_immutable_build,test_weighted_compare_and_compatibility,
                  test_missing_secret_reset_and_build_change,test_bounds_collectibility_and_integrity,
-                 test_applied_not_preview_and_active_hero_only]:
+                 test_applied_not_preview_and_active_hero_only,
+                 test_loading_specialization_does_not_create_zero_or_mixed_build,
+                 test_reload_keeps_totals_sources_and_boundaries,
+                 test_legacy_spec_recovery_requires_same_recorded_tree,
+                 test_world_entry_waits_for_player_and_checkpoint_stays_bounded]:
         test(); print(test.__name__+': OK')

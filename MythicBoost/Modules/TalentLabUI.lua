@@ -188,6 +188,11 @@ function Lab:CreateUI()
     self.sourceButton:SetPoint("TOPLEFT", 272, -120)
     self.talentButton = UI.Button(f, L("Таланты"), 92, 25)
     self.talentButton:SetPoint("TOPLEFT", 376, -120)
+    self.allTalentsButton = UI.Button(f, L("Все таланты"), 140, 25)
+    self.allTalentsButton:SetPoint("TOPLEFT", 476, -120)
+    self.allTalentsButton:SetScript("OnClick", function()
+        self.showUnknown = not self.showUnknown; self:Render()
+    end)
     self.healButton:SetScript("OnClick", function() self.metric = "healing"; self.page = 0; self:Render() end)
     self.damageButton:SetScript("OnClick", function() self.metric = "damage"; self.page = 0; self:Render() end)
     self.sourceButton:SetScript("OnClick", function() self.view = "sources"; self.page = 0; self:Render() end)
@@ -236,7 +241,8 @@ function Lab:CreateUI()
     self.createRow = CreateRow
 
     self.empty = Label(f, "", 16, -448, 568, C.muted); self.empty:SetWordWrap(true); self.empty:SetHeight(44)
-    self.compare = Label(f, "", 16, -500, 568, C.amber); self.compare:SetWordWrap(true); self.compare:SetHeight(64)
+    self.coverage = Label(f, "", 16, -489, 600, C.muted)
+    self.compare = Label(f, "", 16, -514, 600, C.amber); self.compare:SetWordWrap(true); self.compare:SetHeight(52)
     f:SetScript("OnHide", function()
         HideTooltip()
         self.latestRun, self.sampleRuns = nil, nil
@@ -277,7 +283,7 @@ function Lab:RefreshKeyPicker()
             local stamp = RunStamp(run)
             local completed = stamp > 0 and date("%d.%m %H:%M", stamp) or "—"
             option:SetText(("%s +%d\n%s | %s"):format(
-                map, level, completed, FormatDuration(sample.duration)))
+                map, level, completed, (L("Замер %s")):format(FormatDuration(sample.duration))))
         end
     end
 end
@@ -329,6 +335,7 @@ function Lab:Render()
     local latest = sampleRuns[self.sampleIndex]
     self.latestRun = latest
     local sample = latest and latest.talentSample
+    if self.ResolveSample then sample=self:ResolveSample(sample,runs) end
     local selectedMap = latest and (Text(latest.mapName) or L("Подземелье")) or L("Подземелье")
     local selectedLevel = latest and (Number(latest.level) or 0) or 0
     local selectedStamp = latest and RunStamp(latest) or 0
@@ -336,7 +343,10 @@ function Lab:Render()
     local selectedDuration = latest and latest.talentSample and latest.talentSample.duration
     self.keyPicker:SetText(L("Выбрать ключ"))
     SetButtonEnabled(self.keyPicker, #sampleRuns > 0)
-    self.uiDate:SetText(latest and (selectedDate .. " | " .. FormatDuration(selectedDuration)) or "")
+    self.uiDate:SetText(latest and (selectedDate .. " | " .. (L("Ключ %s / замер %s")):format(
+        FormatDuration(latest.duration), FormatDuration(selectedDuration))) or "")
+    self.allTalentsButton:SetShown(self.view=="talents")
+    self.allTalentsButton:SetText(self.showUnknown and L("Только с цифрами") or L("Все таланты"))
     for _, state in ipairs({{self.healButton, self.metric == "healing"},
         {self.damageButton, self.metric == "damage"}, {self.sourceButton, self.view == "sources"},
         {self.talentButton, self.view == "talents"}}) do
@@ -355,6 +365,17 @@ function Lab:Render()
     local rows = self.view == "talents" and type(Lab.TalentRows) == "function"
         and Call(Lab.TalentRows, Lab, sample, self.metric) or Lab.UIRows(sample, self.metric)
     if type(rows) ~= "table" then rows = {} end
+    local unknown,known=0,0
+    if self.view=="talents" then
+        local visible={}
+        for _,row in ipairs(rows) do
+            if Number(row.amount)~=nil then known=known+1
+            else unknown=unknown+1 end
+            if self.showUnknown or Number(row.amount)~=nil then visible[#visible+1]=row end
+        end
+        rows=visible
+    end
+    self.coverage:SetText(self.view=="talents" and (L("С цифрами: %d | Без отдельного источника: %d")):format(known,unknown) or "")
     local duration = sample and Number(sample.duration)
     local total = sample and Number(self.metric == "healing" and sample.overallHealing or sample.overallDamage)
     local rowCount = math.min(#rows, MAX_ROWS)
@@ -373,9 +394,11 @@ function Lab:Render()
             row.nameText:SetText(row.spellName)
             row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             local amount = Number(data.amount)
-            row.amount:SetText(Compact(amount))
-            row.rate:SetText(duration and duration > 0 and amount and Compact(amount / duration) or "—")
-            row.share:SetText(total and total > 0 and amount and (("%.1f%%"):format(amount / total * 100)) or "—")
+            row.amount:SetWidth(amount~=nil and 86 or 242)
+            row.amount:SetTextColor(UI.Unpack(amount~=nil and C.text or C.muted))
+            row.amount:SetText(amount~=nil and Compact(amount) or L("Нет отдельного источника"))
+            row.rate:SetText(amount==nil and "" or (duration and duration > 0 and Compact(amount / duration) or "—"))
+            row.share:SetText(amount==nil and "" or (total and total > 0 and (("%.1f%%"):format(amount / total * 100)) or "—"))
         else
             row.spellID, row.spellName, row.kind = nil, nil, nil
             row.icon:SetTexture(nil); row.nameText:SetText(""); row.amount:SetText(""); row.rate:SetText(""); row.share:SetText("")

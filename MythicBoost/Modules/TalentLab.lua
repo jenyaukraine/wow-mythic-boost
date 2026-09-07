@@ -35,13 +35,21 @@ local function Call(fn, ...)
 end
 
 local function SpecID()
-    if type(GetSpecialization) == "function" and type(GetSpecializationInfo) == "function" then
-        return PlainNumber(Call(GetSpecializationInfo, Call(GetSpecialization)), 100000)
+    local api = C_SpecializationInfo
+    if api and type(api.IsInitialized)=="function"
+        and JP.SafeOptionalBoolean(Call(api.IsInitialized))~=true then return end
+    local index = PlainNumber(Call(api and api.GetSpecialization or GetSpecialization), 10)
+    if index and index>0 then
+        local id = PlainNumber(Call(api and api.GetSpecializationInfo or GetSpecializationInfo, index), 100000)
+        if id and id>0 and id%1==0 then return id end
     end
 end
+Lab.SpecID = SpecID
 
 local function Build()
     if not OOC() then return end
+    local specID = SpecID()
+    if not specID then return end
     if not C_ClassTalents or type(C_ClassTalents.GetActiveConfigID) ~= "function"
         or not C_Traits or type(C_Traits.GetConfigInfo) ~= "function" then return end
     local configID = PlainNumber(Call(C_ClassTalents.GetActiveConfigID), 100000000)
@@ -92,7 +100,7 @@ local function Build()
         key[#key + 1] = ("%d:%d:%d"):format(nodeID, e.entryID, e.rank)
     end
     if JP.SafeOptionalBoolean(Call(C_Traits.ConfigHasStagedChanges,configID))~=false then return end
-    local buildKey = tostring(SpecID() or 0) .. "|" .. table.concat(key, ";")
+    local buildKey = tostring(specID) .. "|" .. table.concat(key, ";")
     local buildName = PlainString(config.name)
     if buildName and JP.Reviews then buildName=JP.Reviews.CleanText(buildName) end
     local gameBuild
@@ -101,7 +109,7 @@ local function Build()
         version,build=PlainString(version),PlainString(build)
         gameBuild = version and build and (version..":"..build) or version or build
     end
-    return { configID = configID, specID = SpecID(), gameBuild = gameBuild,
+    return { configID = configID, specID = specID, gameBuild = gameBuild,
         buildKey = buildKey, buildName = buildName, selected = selected }
 end
 
@@ -172,8 +180,8 @@ end
 function Lab:CheckBuild()
     if not OOC() then self.buildDirty=true; return end
     local current=Build()
-    if not current then self.partial=true
-    elseif not self.build then self.build=current; self.partial=true
+    if not current then self.partial=true; self.buildDirty=true; return end
+    if not self.build then self.build=current; self.partial=true
     elseif current.buildKey~=self.build.buildKey then self.mixed=true; self.partial=true end
     self.buildDirty=nil
 end
@@ -182,7 +190,7 @@ function Lab:Snapshot(run, result, runStats)
     if run and self.run ~= run then return end
     if not self.run or not self.guid then return end
     if not OOC() then return end
-    if self.buildDirty then self:CheckBuild() end
+    if not self.finished and (self.buildDirty or not self.build) then self:CheckBuild() end
     for field in pairs(TYPES) do
         local current, overflow = Meter(field, self.guid)
         if overflow then self.partial = true
@@ -260,6 +268,129 @@ function Lab:Reset()
     if not self.run then return end
     self.partial=true
     self.baseline={healing={total=0,spells={}},damage={total=0,spells={}}}
+end
+
+function Lab:ResetMeter(field)
+    if not self.run or not TYPES[field] then return end
+    self.partial=true
+    self.baseline[field]={total=0,spells={}}
+end
+
+-- One local checkpoint, copied from public values only. It is never part of
+-- the review/network payload. The same validator reads and writes it.
+local function CopySpellAmounts(source)
+    source=Table(source)
+    if not source then return end
+    local out,count={},0
+    for key,value in pairs(source) do
+        local id,amount=PlainNumber(key,100000000),PlainNumber(value,1e15)
+        count=count+1
+        if count>MAX_SPELLS or not id or id<1 or id%1~=0 or not amount then return end
+        out[id]=amount
+    end
+    return out
+end
+local function CopyBuild(source)
+    source=Table(source)
+    if not source then return end
+    local spec=PlainNumber(source.specID,100000)
+    local key,game=PlainString(source.buildKey),PlainString(source.gameBuild)
+    local selected=Table(source.selected)
+    if not spec or spec<1 or not key or #key>8192 or not game or #game>128 or not selected then return end
+    local out={specID=spec,buildKey=key,gameBuild=game,selected={},buildName=PlainString(source.buildName)}
+    if out.buildName and #out.buildName>256 then out.buildName=nil end
+    local count=0
+    for rawID,raw in pairs(selected) do
+        local id,entry=PlainNumber(rawID,100000000),Table(raw)
+        local entryID=entry and PlainNumber(entry.entryID,100000000)
+        local rank=entry and PlainNumber(entry.rank,1000)
+        count=count+1
+        if count>MAX_NODES or not id or not entryID or not rank then return end
+        out.selected[id]={entryID=entryID,rank=rank,spellID=PlainNumber(entry.spellID,100000000)}
+    end
+    return out
+end
+function Lab:Checkpoint()
+    if not self.run or self.finished then return end
+    local out={build=CopyBuild(self.build),partial=self.partial==true,mixed=self.mixed==true,
+        values={},baseline={}}
+    for field in pairs(TYPES) do
+        out.values[field]=CopySpellAmounts(self.values[field])
+        if not out.values[field] then return end
+        local base=self.baseline[field]
+        if base then
+            local total,spells=PlainNumber(base.total),CopySpellAmounts(base.spells)
+            if not total or not spells then return end
+            out.baseline[field]={total=total,spells=spells}
+        end
+    end
+    return out
+end
+function Lab:Restore(checkpoint)
+    checkpoint=Table(checkpoint)
+    local rawValues=checkpoint and Table(checkpoint.values)
+    local rawBaseline=checkpoint and Table(checkpoint.baseline)
+    if not self.run or not rawValues or not rawBaseline then return false end
+    local values,baseline={},{}
+    for field in pairs(TYPES) do
+        values[field]=CopySpellAmounts(rawValues[field])
+        if not values[field] then return false end
+        if rawBaseline[field]~=nil then
+            local raw=Table(rawBaseline[field])
+            local total=raw and PlainNumber(raw.total)
+            local spells=raw and CopySpellAmounts(raw.spells)
+            if not total or not spells then return false end
+            baseline[field]={total=total,spells=spells}
+        end
+    end
+    local build=CopyBuild(checkpoint.build)
+    if checkpoint.build~=nil and not build then return false end
+    self.values,self.baseline,self.build=values,baseline,build
+    self.partial=true -- A reload gap cannot certify one uninterrupted build.
+    self.mixed=JP.SafeOptionalBoolean(checkpoint.mixed)==true
+    self.buildDirty=true
+    return true
+end
+
+-- Older clients saved spec 0 during login. An identical recorded tree on
+-- the same game build can recover the specialization, but never missing
+-- spell amounts, completeness or the reason a sample was marked mixed.
+function Lab:ResolveSample(sample, runs)
+    runs=Table(runs) or {}
+    sample=Table(sample)
+    if not sample or (PlainNumber(sample.specID) or 0)>0 then return sample end
+    local key,game=PlainString(sample.buildKey),PlainString(sample.gameBuild)
+    local signature=key and #key<=8192 and key:match("^0|(.+)$")
+    if not signature or not game or not Table(sample.selected) then return sample end
+    local resolved
+    for i=1,math.min(#(runs or {}),MAX_RUNS) do
+        local other=Table(runs[i]) and Table(runs[i].talentSample)
+        local id=other and PlainNumber(other.specID,100000)
+        if id and id>0 and other.gameBuild==game and other.buildKey==tostring(id).."|"..signature
+            and Table(other.selected) then
+            local same,count=true,0
+            for nodeID,entry in pairs(sample.selected) do
+                count=count+1
+                local a,b=Table(entry),Table(other.selected[nodeID])
+                if count>MAX_NODES or not a or not b or a.entryID~=b.entryID
+                    or a.rank~=b.rank or a.spellID~=b.spellID then same=false; break end
+            end
+            local otherCount=0
+            for nodeID in pairs(other.selected) do
+                otherCount=otherCount+1
+                if otherCount>MAX_NODES or not sample.selected[nodeID] then same=false; break end
+            end
+            if same and count>0 then
+                if resolved and resolved~=id then return sample end
+                resolved=id
+            end
+        end
+    end
+    if not resolved then return sample end
+    local out={}
+    for field,value in pairs(sample) do out[field]=value end
+    out.specID=resolved; out.buildKey=tostring(resolved).."|"..signature
+    return out
 end
 
 function Lab:Rows(sample, metric)

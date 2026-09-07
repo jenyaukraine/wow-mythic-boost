@@ -77,15 +77,19 @@ def test_tree_colors_preview_and_lifecycle():
         assert(#tree.cards==3)
         assert(tree.cards[1].text.text=='56.0%' and tree.cards[1].border[1]==1)
         assert(tree.cards[2].text.text=='60.0%' and tree.cards[2].border[2]==.95)
+        assert(tree.cards[2].parent==buttons[2])
+        assert(tree.cards[2].strata==buttons[2].strata and tree.cards[2].level==buttons[2].level+1,
+            'talent decorations follow their own button layer, not a global dialog')
+        assert(tree.legend.parent==frame and tree.legend.strata==frame.strata)
         nodes[2].activeRank=2
-        tree:Refresh(); assert(tree.cards[2].text.text=='—', 'rank evidence must match')
+        tree:Refresh(); assert(not tree.cards[2].shown, 'unknown ranks have no grey rectangle or dash')
         nodes[1].activeRank=1; nodes[1].activeEntry={entryID=1}
         tree:Refresh(); assert(tree.cards[1].border[2]==.95, 'staged selection updates color')
         tree.metricButtons.damage.scripts.OnClick(); assert(tree.cards[1].text.text=='—')
         inspecting=true; tree:Refresh(); assert(not tree.cards[1].shown and not tree.legend.shown)
         inspecting=false; combat=true; tree:Refresh(); assert(not tree.cards[1].shown)
         combat=false; tree:Enable(); tree.driver.scripts.OnUpdate(tree.driver,.6)
-        assert(tree.cards[1].shown)
+        assert(not tree.cards[1].shown,'unknown talents have no floating placeholder')
         tree.driver.scripts.OnHide(); assert(not tree.cards[1].shown)
         tree:Disable(); assert(tree.driver.scripts.OnUpdate==nil)
     ''')

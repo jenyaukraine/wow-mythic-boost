@@ -2,8 +2,8 @@ local _, JP = ...
 local Stats, L = {}, JP.L
 JP.RunStats = Stats
 
--- Only primitive, public values cross this boundary. No native session,
--- unit token, frame, spell list or mutable meter table is kept in SavedVariables.
+-- Only primitive, public values cross this boundary. The local reload
+-- checkpoint is separate from the much smaller shared performance payload.
 local function Number(value, ceiling)
     value = JP.SafeNumber(value)
     if value and value == value and value >= 0 and value <= ceiling then return value end
@@ -17,6 +17,101 @@ local function Call(fn, ...)
     if type(fn) ~= "function" then return end
     local ok, value = pcall(fn, ...)
     if ok then return value end
+end
+
+local function CheckpointStore()
+    return JP.Settings("runHistory", {runs={}})
+end
+function Stats:ClearCheckpoint()
+    local settings=CheckpointStore()
+    if settings then settings.activeStats=nil end
+end
+function Stats:SaveCheckpoint()
+    local run=self.run
+    if not run or self.result or not self.players then return end
+    local started=Number(run.nativeStart,1e12)
+    local map,level=Number(run.mapID,1000000),Number(run.level,1000)
+    local guid=JP.SafeString(Call(UnitGUID,"player"))
+    if not started or started<=0 or not map or not level or not guid then return end
+    local saved={version=1,mapID=map,level=level,nativeStart=started,guid=guid,
+        at=time(),uptime=GetTime(),duration=Number(self.duration,86400),
+        durationUnknown=self.durationUnknown==true,players={},meters={}}
+    local count=0
+    for id,member in pairs(self.players) do
+        count=count+1; if count>5 then return end
+        saved.players[id]={}
+        for _,field in ipairs(FIELDS) do saved.players[id][field]=Number(member[field],1e15) end
+    end
+    for _,field in ipairs(FIELDS) do
+        local meter=self.meters[field]
+        local copy={lastDuration=Number(meter.lastDuration,1e8),partial=meter.partial==true}
+        if meter.last then
+            copy.last={}
+            for id in pairs(self.players) do copy.last[id]=Number(meter.last[id],1e15) end
+        end
+        saved.meters[field]=copy
+    end
+    saved.talent=JP.TalentLab and JP.TalentLab:Checkpoint()
+    local settings=CheckpointStore()
+    if settings then settings.activeStats=saved end
+end
+function Stats:RestoreCheckpoint()
+    local settings=CheckpointStore()
+    local saved=settings and JP.SafeTable(settings.activeStats)
+    self:ClearCheckpoint()
+    local run=self.run
+    if not saved or not run.trackingPartial or saved.version~=1 then return false end
+    local at,uptime=Number(saved.at,9999999999),Number(saved.uptime,1e12)
+    local started=Number(saved.nativeStart,1e12)
+    local age=at and time()-at
+    -- Map/level alone also match the next key. Require Blizzard's exact start,
+    -- the same character, a recent save, and a continuous client clock.
+    if not age or age<0 or age>43200 or not uptime or not started or started<=0
+        or started~=run.nativeStart or saved.mapID~=run.mapID or saved.level~=run.level
+        or JP.SafeString(saved.guid)~=JP.SafeString(Call(UnitGUID,"player"))
+        or math.abs((GetTime()-uptime)-age)>5 then return false end
+    local rawPlayers,rawMeters=JP.SafeTable(saved.players),JP.SafeTable(saved.meters)
+    local duration=Number(saved.duration,86400)
+    if not rawPlayers or not rawMeters or not duration then return false end
+    local players,meters,count={},{},0
+    for id,raw in pairs(rawPlayers) do
+        count=count+1
+        raw=JP.SafeTable(raw)
+        if count>5 or not raw or not self.players[id] then return false end
+        players[id]={}
+        for _,field in ipairs(FIELDS) do
+            local value=Number(raw[field],1e15)
+            if raw[field]~=nil and not value then return false end
+            players[id][field]=value
+        end
+    end
+    for id in pairs(self.players) do if not players[id] then return false end end
+    for _,field in ipairs(FIELDS) do
+        local raw=JP.SafeTable(rawMeters[field])
+        if not raw then return false end
+        local meter={partial=true,lastDuration=Number(raw.lastDuration,1e8)}
+        if raw.last~=nil then
+            local last=JP.SafeTable(raw.last)
+            if not last then return false end
+            meter.last={}
+            for id in pairs(players) do
+                local value=Number(last[id],1e15)
+                if last[id]~=nil and not value then return false end
+                meter.last[id]=value
+            end
+        end
+        meters[field]=meter
+    end
+    -- Restore both collectors atomically; unmatched source baselines could
+    -- otherwise pair pre-reload totals with post-reload talent amounts.
+    if JP.TalentLab and not JP.TalentLab:Restore(saved.talent) then return false end
+    for id,values in pairs(players) do
+        for _,field in ipairs(FIELDS) do self.players[id][field]=values[field] end
+    end
+    self.meters,self.duration=meters,duration
+    self.durationUnknown=JP.SafeOptionalBoolean(saved.durationUnknown)==true
+    self.restored=true
+    return true
 end
 
 function Stats:Validate(value)
@@ -157,7 +252,10 @@ function Stats:Snapshot(initial)
         if amounts then
             if state.last then
                 local reset = duration and state.lastDuration and duration < state.lastDuration
-                if reset then state.partial=true end
+                if reset then
+                    state.partial=true
+                    if JP.TalentLab then JP.TalentLab:ResetMeter(field) end
+                end
                 for guid,member in pairs(self.players) do
                     local current, previous = amounts[guid] or 0, state.last[guid] or 0
                     -- A disappearing row is not proof that an existing total
@@ -185,6 +283,7 @@ function Stats:Snapshot(initial)
     end
     if JP.TalentLab then JP.TalentLab:Snapshot(self.run,self.result,self) end
     if self.result then self:Publish() end
+    self:SaveCheckpoint()
 end
 
 function Stats:Publish()
@@ -221,7 +320,8 @@ function Stats:CancelTimer()
     if self.timer then self.timer:Cancel(); self.timer=nil end
     self.timerAt=nil
 end
-function Stats:Stop()
+function Stats:Stop(preserveCheckpoint)
+    if self.run and not preserveCheckpoint then self:ClearCheckpoint() end
     if JP.TalentLab then JP.TalentLab:Stop(self.run) end
     self:CancelTimer()
     if self.events then self.events:UnregisterAllEvents() end
@@ -249,9 +349,9 @@ function Stats:Queue(delay)
     self.timer=timer; self.timerAt=due
 end
 function Stats:Start(run)
-    self:Stop()
+    self:Stop(true)
     self.run=run; self.players={}; self.meters={}; self.resumed=run.trackingPartial==true
-    self.duration=0; self.durationUnknown=nil
+    self.duration=0; self.durationUnknown=nil; self.restored=nil
     for index,member in ipairs(run.members or {}) do
         if index>5 then break end
         if JP.SafeString(member.guid) and JP.SafeString(member.name) then
@@ -268,20 +368,29 @@ function Stats:Start(run)
                 if JP.TalentLab then JP.TalentLab:Reset() end
                 for _,m in pairs(self.meters) do m.last={}; m.lastDuration=0; m.partial=true end
                 self:Queue()
-            elseif event=="TRAIT_CONFIG_UPDATED" or event=="ACTIVE_TALENT_GROUP_CHANGED" then
+            elseif event=="TRAIT_CONFIG_UPDATED" or event=="ACTIVE_TALENT_GROUP_CHANGED"
+                or event=="PLAYER_SPECIALIZATION_CHANGED" then
                 if JP.TalentLab then JP.TalentLab:BuildChanged() end
                 if PublicCombat() then self:Queue() end
             elseif event=="PLAYER_ENTERING_WORLD" then
                 -- Loading during a finished-key grace period must not append
                 -- another zone's data. In-key reloads are labelled partial.
-                if self.result then self:Publish(); self:Stop() end
+                if self.result then self:Publish(); self:Stop()
+                else
+                    if JP.TalentLab then JP.TalentLab:BuildChanged() end
+                    self:Queue()
+                end
+            elseif event=="PLAYER_LOGOUT" then
+                if not self.result then self:Snapshot(); self:SaveCheckpoint() end
             elseif event=="PLAYER_REGEN_ENABLED" or PublicCombat() then self:Queue() end
         end)
     end
     for _,event in ipairs({"PLAYER_REGEN_ENABLED","PLAYER_REGEN_DISABLED","DAMAGE_METER_RESET",
         "DAMAGE_METER_COMBAT_SESSION_UPDATED","DAMAGE_METER_CURRENT_SESSION_UPDATED",
-        "INSPECT_READY","PLAYER_ENTERING_WORLD","TRAIT_CONFIG_UPDATED","ACTIVE_TALENT_GROUP_CHANGED"}) do self.events:RegisterEvent(event) end
+        "INSPECT_READY","PLAYER_ENTERING_WORLD","PLAYER_LOGOUT","TRAIT_CONFIG_UPDATED",
+        "ACTIVE_TALENT_GROUP_CHANGED","PLAYER_SPECIALIZATION_CHANGED"}) do self.events:RegisterEvent(event) end
     if JP.TalentLab then JP.TalentLab:Begin(run) end
+    self:RestoreCheckpoint()
     self:Snapshot(true)
 end
 function Stats:Finish(run,result)
@@ -294,6 +403,7 @@ function Stats:Finish(run,result)
         if player then player.role=JP.SafeString(member.role) or player.role end
     end
     self.result=result; self.deadline=GetTime()+45
-    if JP.TalentLab then JP.TalentLab:Finish(run,result) end
+    self:ClearCheckpoint()
+    if JP.TalentLab then JP.TalentLab:Finish(run,result,self) end
     self:Publish(); self:CancelTimer(); self:Queue(.5)
 end
