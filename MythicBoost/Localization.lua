@@ -9,6 +9,10 @@ local translations
 
 if locale == "deDE" then
     translations = {
+        ["При ограничениях чата: сообщение появится в строке ввода, Enter отправит его."] = "Bei Chatbeschränkungen wird die Nachricht vorbereitet. Enter sendet sie.",
+        ["В строке чата уже есть текст. Отправь его или закрой строку и повтори Alt-клик."] = "Die Chatzeile enthält bereits Text. Senden oder schließen, dann erneut Alt-klicken.",
+        ["Сообщение подготовлено в чате. Нажми Enter для отправки."] = "Nachricht im Chat vorbereitet. Zum Senden Enter drücken.",
+        ["Чат ограничен: отправляй по одной карточке через Alt-клик и Enter."] = "Chat beschränkt: einzelne Karten mit Alt-Klick und Enter senden.",
         ["Без подписи: нет пары. Нажми на число для сравнения и условий."] = "Keine Zahl: kein Vergleich. Zahl anklicken für Messungen und Bedingungen.",
         ["Без разницы"] = "Kein Unterschied",
         ["Вклад: доля измеренного лечения или урона, не оценка пользы таланта."] = "Beitrag: Anteil gemessener Heilung oder Schaden, keine Talentbewertung.",
@@ -760,6 +764,10 @@ if locale == "deDE" then
     }
 elseif locale ~= "ruRU" then
     translations = {
+        ["При ограничениях чата: сообщение появится в строке ввода, Enter отправит его."] = "When chat is restricted, the message is prepared in the chat input. Enter sends it.",
+        ["В строке чата уже есть текст. Отправь его или закрой строку и повтори Alt-клик."] = "The chat input already contains text. Send or close it, then Alt-click again.",
+        ["Сообщение подготовлено в чате. Нажми Enter для отправки."] = "Message prepared in chat. Press Enter to send.",
+        ["Чат ограничен: отправляй по одной карточке через Alt-клик и Enter."] = "Chat restricted: share individual cards with Alt-click and Enter.",
         ["Без подписи: нет пары. Нажми на число для сравнения и условий."] = "No label: no comparison. Click a number for samples and conditions.",
         ["Без разницы"] = "No difference",
         ["Вклад: доля измеренного лечения или урона, не оценка пользы таланта."] = "Contribution: share of measured healing or damage, not a talent rating.",

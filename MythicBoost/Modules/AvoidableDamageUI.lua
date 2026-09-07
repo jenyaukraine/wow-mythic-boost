@@ -44,13 +44,16 @@ local function ShowSpellTip(row)
     GameTooltip:AddLine(L("Избегаемый урон")..": "..(record.known==false and "—" or Amount(record.amount)),1,.78,.22)
     if record.name then GameTooltip:AddLine(record.name,.7,.75,.8) end
     if record.healthRatio then GameTooltip:AddLine((L("За бой: %.0f%% максимального HP от этой способности")):format(record.healthRatio*100),1,.65,.2) end
-    if not Monitor.preview then GameTooltip:AddLine(L("Alt + левый клик: отправить в группу"),.4,.8,1) end
+    if not Monitor.preview then
+        GameTooltip:AddLine(L("Alt + левый клик: отправить в группу"),.4,.8,1)
+        GameTooltip:AddLine(L("При ограничениях чата: сообщение появится в строке ввода, Enter отправит его."),.7,.75,.8,true)
+    end
     GameTooltip:Show()
 end
 local function ShareRow(row,button)
     if button~="LeftButton" or not IsAltKeyDown or not IsAltKeyDown() or not row.record then return end
-    local ok,message=Monitor:ShareReport("PARTY",nil,row.record)
-    if not ok and message then JP:Print(message) end
+    local ok,message,state=Monitor:ShareReport("PARTY",nil,row.record)
+    if message and (not ok or state=="prepared") then JP:Print(message) end
 end
 function Monitor:UpdateRowClicks()
     local enabled=not self.preview and not self:IsCombatLocked() and IsAltKeyDown and IsAltKeyDown() or false
@@ -185,12 +188,39 @@ function Monitor:OpenKeyReport()
 end
 -- Sharing requires a hardware click. No automatic chat, discovery whisper,
 -- retry queue or timer is permitted on this path.
+local function PrepareChatLine(line,channel,target)
+    local util=ChatFrameUtil
+    local open=util and util.OpenChat or ChatFrame_OpenChat
+    if type(open)~="function" then return false,L("Чат недоступен") end
+    local active=util and util.GetActiveWindow or ChatEdit_GetActiveWindow
+    if type(active)=="function" then
+        local ok,editBox=pcall(active)
+        if not ok then return false,L("Чат недоступен") end
+        if editBox then
+            local read,text=pcall(editBox.GetText,editBox)
+            text=read and JP.SafeStringOrEmpty(text)
+            if not text or text~="" then
+                return false,L("В строке чата уже есть текст. Отправь его или закрой строку и повтори Alt-клик.")
+            end
+        end
+    end
+    local prefix=channel=="PARTY" and "/p " or channel=="RAID" and "/raid "
+        or channel=="INSTANCE_CHAT" and "/i " or channel=="WHISPER" and ("/w "..target.." ")
+    if not prefix then return false end
+    -- Populate Blizzard's normal input, including an explicit destination.
+    -- Only the player's later Enter submits it; never call SendText or a
+    -- secure handler from addon code, and never queue a post-lockdown retry.
+    local ok,editBox=pcall(open,prefix..line,DEFAULT_CHAT_FRAME)
+    if not ok or not editBox then return false,L("Чат недоступен") end
+    return true,L("Сообщение подготовлено в чате. Нажми Enter для отправки."),"prepared"
+end
 function Monitor:ShareReport(channel,target,selectedRecord)
     if self.preview or not self.lastReport then return false end
     if InCombatLockdown() then return false,L("Недоступно в бою") end
+    local chatLocked=false
     if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown then
         local ok,locked=pcall(C_ChatInfo.InChatMessagingLockdown)
-        if not ok or JP.SafeOptionalBoolean(locked)~=false then return false,L("Чат недоступен") end
+        chatLocked=not ok or JP.SafeOptionalBoolean(locked)~=false
     end
     if channel=="PARTY" then
         if not IsInGroup() then return false,L("Нет группы") end
@@ -205,7 +235,7 @@ function Monitor:ShareReport(channel,target,selectedRecord)
     local now=GetTime()
     if self.lastShare and now-self.lastShare<5 then return false,L("Повтори через 5 секунд") end
     local send=C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
-    if not send then return false,L("Чат недоступен") end
+    if type(send)~="function" then chatLocked=true end
     local rows,report=selectedRecord and {selectedRecord} or self:ReportRows(),self.lastReport
     local offset=not selectedRecord and self.reportOffset or 0
     local readable=false
@@ -241,6 +271,10 @@ function Monitor:ShareReport(channel,target,selectedRecord)
         end
     end
     if #rows==0 then lines[#lines+1]="[MythicBoost] "..(report.complete and "No avoidable damage recorded." or "No readable data.") end
+    if chatLocked then
+        if #lines==1 then return PrepareChatLine(lines[1],channel,target) end
+        return false,L("Чат ограничен: отправляй по одной карточке через Alt-клик и Enter.")
+    end
     self.lastShare=now
     for _,line in ipairs(lines) do
         local ok=pcall(send,line,channel,nil,target)

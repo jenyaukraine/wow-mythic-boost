@@ -382,9 +382,74 @@ def test_alt_click_group_card():
     ''')
 
 
+def test_restricted_alt_click_prepares_native_group_chat():
+    lua=fixture()
+    lua.execute(r'''
+        local m=JP.AvoidableDamage
+        function IsAltKeyDown() return true end
+        grouped=true; instance=false; raid=false; LE_PARTY_CATEGORY_INSTANCE=2
+        function IsInGroup(category) return category==2 and instance or category==nil and grouped end
+        function IsInRaid() return raid end
+        C_ChatInfo.InChatMessagingLockdown=function() return true end
+        C_ChatInfo.SendChatMessage=function() error('restricted API must not be attempted') end
+        local opened,printed={},{}
+        function JP:Print(text) printed[#printed+1]=text end
+        DEFAULT_CHAT_FRAME=NewWidget(UIParent)
+        local edit=NewWidget(DEFAULT_CHAT_FRAME)
+        function edit:GetText() return self.text end
+        ChatFrameUtil={
+            GetActiveWindow=function() return active and edit end,
+            OpenChat=function(text,owner)
+                assert(owner==DEFAULT_CHAT_FRAME)
+                opened[#opened+1]=text; edit:SetText(text); active=true
+                return edit
+            end,
+        }
+        local function ClearDraft() active=false; edit:SetText('') end
+        C_Spell.GetSpellInfo=function(id) return {name='Грозовой плевок',iconID=id} end
+        m:Enable()
+        m.lastReport={complete=false,entries={{name='Манкунеанец',spellID=133,amount=757400,known=true}}}
+        m:Render()
+        local row=m.rows[1]
+        row.scripts.OnMouseUp(row,'LeftButton')
+        assert(#opened==1 and opened[1]:sub(1,3)=='/p ')
+        assert(opened[1]:find('Манкунеанец',1,true) and opened[1]:find('757.4k',1,true))
+        assert(opened[1]:find('|Hspell:133|h[Грозовой плевок]|h',1,true))
+        assert(printed[1]:find('Enter',1,true) and not printed[1]:find('отправлен',1,true))
+        assert(not m.lastShare,'preparing a draft does not claim or throttle delivery')
+        row.scripts.OnMouseUp(row,'LeftButton')
+        assert(#opened==1 and printed[2]:find('уже есть текст',1,true))
+        edit:SetText('my unfinished whisper'); row.scripts.OnMouseUp(row,'LeftButton')
+        assert(edit:GetText()=='my unfinished whisper','do not replace unrelated user text')
+        edit:SetText(Secret('private')); row.scripts.OnMouseUp(row,'LeftButton')
+        assert(#opened==1,'secret input is not read or replaced')
+        ClearDraft(); instance=true; row.scripts.OnMouseUp(row,'LeftButton')
+        assert(opened[2]:sub(1,3)=='/i ')
+        ClearDraft(); instance=false; raid=true; row.scripts.OnMouseUp(row,'LeftButton')
+        assert(opened[3]:sub(1,6)=='/raid ')
+        ClearDraft(); raid=false
+        local ok,reason,state=m:ShareReport('WHISPER','Friend-Realm',row.record)
+        assert(ok and state=='prepared' and opened[4]:sub(1,16)=='/w Friend-Realm ')
+        ClearDraft(); grouped=false; row.scripts.OnMouseUp(row,'LeftButton'); assert(#opened==4)
+        grouped=true; combat=true; row.scripts.OnMouseUp(row,'LeftButton'); assert(#opened==4)
+        combat=false; m.preview=true; row.scripts.OnMouseUp(row,'LeftButton'); assert(#opened==4)
+        m.preview=false; row.record.known=false; row.scripts.OnMouseUp(row,'LeftButton'); assert(#opened==4)
+        row.record.known=true
+        -- Full reports are not silently reduced to one line or placed in an automatic queue.
+        ok,reason=m:ShareReport('PARTY'); assert(not ok and reason:find('по одной карточке',1,true))
+        assert(#opened==4 and not m.lastShare)
+        -- Compatibility fallback opens the same explicitly addressed draft.
+        ChatFrame_OpenChat=ChatFrameUtil.OpenChat; ChatFrameUtil=nil
+        row.scripts.OnMouseUp(row,'LeftButton'); assert(opened[5]:sub(1,3)=='/p ')
+        ChatFrame_OpenChat=nil; row.scripts.OnMouseUp(row,'LeftButton')
+        assert(#opened==5 and printed[#printed]=='Чат недоступен')
+        m:Disable()
+    ''')
+
+
 if __name__=='__main__':
     for test in (test_combat_reports,test_report_secrets_and_cancellation,test_loot_actions_and_timers,
                  test_guild_real_profile_path,test_center_recovery,test_headerless_feed_and_severity,
                  test_severity_uses_only_public_matching_health,test_continuous_key_report_scroll,
-                 test_empty_share_is_local_only,test_alt_click_group_card):
+                 test_empty_share_is_local_only,test_alt_click_group_card,test_restricted_alt_click_prepares_native_group_chat):
         test(); print(test.__name__+': OK')
