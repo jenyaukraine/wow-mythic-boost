@@ -351,6 +351,11 @@ def test_whisper_and_dialog():
 def test_secure_buff_driver():
     lua = runtime()
     lua.execute(r'''
+        local methods=getmetatable(UIParent).__index
+        function methods:SetAttribute(k,v)
+            assert(not combat or engine,'only the secure state driver may change attributes in combat')
+            self.attrs=self.attrs or {}; self.attrs[k]=v
+        end
         db.smartClick={buff=true}; learned[1126]=true; function UnitClass() return 'Druid','DRUID' end
         C_Spell.GetSpellName=function() return 'Buff' end
         C_Spell.GetSpellInfo=function() return {name='Buff'} end
@@ -362,12 +367,15 @@ def test_secure_buff_driver():
         assert(b.condition=='[combat] 1; 0')
         b:SetAttribute('mb-enabled',true); b:SetAttribute('mb-visible',false); b:Hide()
         local driver=assert(load('return function(self,newstate) '..b:GetAttribute('_onstate-combat')..' end'))()
-        combat=true; engine=true; driver(b,'1'); engine=false; assert(b.shown)
+        combat=true; engine=true; driver(b,'1'); engine=false; assert(not b.shown)
         local built=allocations
         for i=1,1000 do m:RefreshBuffButton() end
-        assert(b.shown and b.label.text=='Бафф группы' and allocations==built)
+        assert(not b.shown and allocations==built, 'combat cannot invent a missing-buff warning')
         combat=false; driver(b,'0'); assert(not b.shown)
         b:SetAttribute('mb-visible',true); driver(b,'0'); assert(b.shown)
+        combat=true; engine=true; driver(b,'1'); engine=false
+        assert(not b.shown and not b:GetAttribute('mb-visible'), 'combat clears a stale pre-pull reminder')
+        combat=false; driver(b,'0'); assert(not b.shown, 'wait for a fresh aura check after combat')
         b:SetAttribute('mb-enabled',false); driver(b,'1'); assert(not b.shown)
         driver(b,'0'); assert(not b.shown, 'disabled buff stays hidden even with stale reminder')
         assert(b:GetAttribute('useOnKeyDown')==false)

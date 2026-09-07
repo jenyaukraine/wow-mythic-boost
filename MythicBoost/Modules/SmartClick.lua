@@ -429,7 +429,10 @@ function SmartClick:BuildBuffButton()
     button:SetAttribute("macrotext", BuffMacro(name))
     button:SetAttribute("mb-enabled", self:GetSettings().buff == true)
     button:SetAttribute("_onstate-combat", [[
-        if self:GetAttribute("mb-enabled") and (newstate == "1" or self:GetAttribute("mb-visible")) then
+        if newstate == "1" then
+            self:SetAttribute("mb-visible", false)
+        end
+        if newstate == "0" and self:GetAttribute("mb-enabled") and self:GetAttribute("mb-visible") then
             self:Show()
         else
             self:Hide()
@@ -467,13 +470,10 @@ function SmartClick:BuildBuffButton()
 end
 
 function SmartClick:RefreshBuffButton()
-    -- The secure driver keeps an enabled button available throughout combat.
-    -- Only ordinary display text changes here; never use aura state to hide a
-    -- secure button, zero its alpha, or swap its spell during a fight.
-    if InCombatLockdown() then
-        if self.buffButton then self.buffButton.label:SetText(L("Бафф группы")) end
-        return
-    end
+    -- This is a missing-buff reminder, not an always-visible combat shortcut.
+    -- The secure combat driver hides it and invalidates the old reminder.
+    -- Recheck public aura data after combat before showing the button again.
+    if InCombatLockdown() then return end
     local settings = self:GetSettings()
     if not settings or not settings.buff then
         if self.buffButton then
