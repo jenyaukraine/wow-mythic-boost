@@ -224,7 +224,7 @@ def test_measured_talents_default_zeros_and_unknown_filter():
         assert(lab.coverage.text:find('С цифрами: 3',1,true))
         lab.allTalentsButton.scripts.OnClick()
         assert(lab.rows[4].kind=='unattributed')
-        assert(lab.rows[4].amount.text=='Нет отдельного источника' and lab.rows[4].rate.text=='')
+        assert(lab.rows[4].amount.text=='Нет привязанных данных' and lab.rows[4].rate.text=='')
         lab.allTalentsButton.scripts.OnClick()
         assert(not lab.rows[4].shown)
         lab.sourceButton.scripts.OnClick(); assert(not lab.allTalentsButton.shown)

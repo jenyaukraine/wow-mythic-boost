@@ -87,7 +87,7 @@ if ($LASTEXITCODE -ne 0) { throw "HUD positions/tooltips/auction layering tests 
 
 foreach ($testName in @("TestRunStats.py", "TestPlayerNetwork.py", "TestPlayerMemoryUI.py",
     "TestPlayerDataIntegration.py", "TestUpgradeReasons.py", "TestTalentLab.py",
-    "TestTalentLabUI.py", "TestTalentSources.py", "TestInformation.py", "TestListingSpam.py",
+    "TestTalentLabUI.py", "TestTalentComparison.py", "TestTalentSources.py", "TestInformation.py", "TestListingSpam.py",
     "TestChatSpamCondenser.py", "TestReviewsUI.py", "TestSharedReviews.py", "TestAuctionPerformance.py",
     "TestTimerTheme.py", "TestTalentTreeStats.py")) {
     & python (Join-Path $PSScriptRoot $testName)

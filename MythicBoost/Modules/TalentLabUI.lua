@@ -115,6 +115,10 @@ end
 local function PublicTooltip(row)
     local id = row and Number(row.spellID)
     if not id or id % 1 ~= 0 then return end
+    if row.comparisonDetail then
+        UI.Tooltip(row,row.spellName or L("Талант"),row.comparisonDetail)
+        return
+    end
     -- Only rows owned by this panel may invoke the native tooltip. There are
     -- no global tooltip hooks and no traversal of Blizzard talent objects.
     if GameTooltip and type(GameTooltip.SetSpellByID) == "function" then
@@ -123,14 +127,14 @@ local function PublicTooltip(row)
         local ok = ownerOK and pcall(GameTooltip.SetSpellByID, GameTooltip, id)
         if ok then
             if row.kind == "unattributed" and type(GameTooltip.AddLine) == "function" then
-                GameTooltip:AddLine(L("Источник таланта не подтверждён; вклад неизвестен."), .7, .7, .7, true)
+                GameTooltip:AddLine(L("Источник не сопоставлен или отсутствует в этом замере."), .7, .7, .7, true)
             end
             GameTooltip:Show(); return
         end
     end
     UI.Tooltip(row, row.spellName or L("Источник заклинания"),
         (L("Публичный ID заклинания: %d")):format(id),
-        row.kind == "unattributed" and L("Источник таланта не подтверждён; вклад неизвестен.") or nil)
+        row.kind == "unattributed" and L("Источник не сопоставлен или отсутствует в этом замере.") or nil)
 end
 
 local function HideTooltip()
@@ -155,8 +159,13 @@ function Lab:CreateUI()
     self.uiSubtitle = Label(f, "", 16, -43, 450, C.text)
     self.uiSubtitle:SetWordWrap(true); self.uiSubtitle:SetMaxLines(1); self.uiSubtitle:SetHeight(18)
     self.uiDate = Label(f, "", 16, -65, 450, C.muted)
-    self.uiBuild = Label(f, "", 16, -87, 600, C.muted)
+    self.uiBuild = Label(f, "", 16, -87, 445, C.muted)
     self.uiBuild:SetWordWrap(true); self.uiBuild:SetMaxLines(1); self.uiBuild:SetHeight(18)
+    self.comparisonButton = UI.Button(f,L("Сравнить сборки"),140,25)
+    self.comparisonButton:SetPoint("TOPLEFT",476,-83)
+    self.comparisonButton:SetScript("OnClick",function()
+        self.view="comparison"; self.keyPickerMenu:Hide(); self:Render()
+    end)
     self.keyPicker = UI.Button(f, L("Выбрать ключ"), 136, 28)
     self.keyPicker:SetPoint("TOPRIGHT", -16, -39)
     self.keyPicker:SetScript("OnClick", function()
@@ -191,7 +200,9 @@ function Lab:CreateUI()
     self.allTalentsButton = UI.Button(f, L("Все таланты"), 140, 25)
     self.allTalentsButton:SetPoint("TOPLEFT", 476, -120)
     self.allTalentsButton:SetScript("OnClick", function()
-        self.showUnknown = not self.showUnknown; self:Render()
+        if self.view=="comparison" then self.showComparisonAll=not self.showComparisonAll
+        else self.showUnknown = not self.showUnknown end
+        self:Render()
     end)
     self.healButton:SetScript("OnClick", function() self.metric = "healing"; self.page = 0; self:Render() end)
     self.damageButton:SetScript("OnClick", function() self.metric = "damage"; self.page = 0; self:Render() end)
@@ -233,6 +244,7 @@ function Lab:CreateUI()
         row.amount = Label(row, "", 320, -5, 86, C.text); row.amount:SetJustifyH("RIGHT")
         row.rate = Label(row, "", 410, -5, 86, C.amber); row.rate:SetJustifyH("RIGHT")
         row.share = Label(row, "", 500, -5, 62, C.green); row.share:SetJustifyH("RIGHT")
+        row.meta = Label(row,"",38,-24,520,C.muted); row.meta:Hide()
         row:SetScript("OnEnter", function() PublicTooltip(row) end)
         row:SetScript("OnLeave", HideTooltip)
         row:SetScript("OnMouseWheel", function(_, delta) Scroll(delta) end)
@@ -246,13 +258,15 @@ function Lab:CreateUI()
     f:SetScript("OnHide", function()
         HideTooltip()
         self.latestRun, self.sampleRuns = nil, nil
+        self.comparisonContexts=nil
         self.keyPickerMenu:Hide()
     end)
 end
 
 function Lab:RefreshKeyPicker()
     if not self.keyPickerOptions then return end
-    local runs = self.sampleRuns or {}
+    local comparing=self.view=="comparison"
+    local runs = (comparing and self.comparisonContexts or self.sampleRuns) or {}
     local count = math.min(#runs, MAX_RUNS)
     while #self.keyPickerOptions < count do
         local index = #self.keyPickerOptions + 1
@@ -264,7 +278,10 @@ function Lab:RefreshKeyPicker()
         end
         option:SetPoint("TOPLEFT", 0, -(index - 1) * 48)
         option:SetScript("OnClick", function()
-            self.sampleIndex = index
+            if self.view=="comparison" then
+                local context=self.comparisonContexts and self.comparisonContexts[index]
+                self.comparisonKey=context and context.key
+            else self.sampleIndex = index end
             self.keyPickerMenu:Hide()
             self:Render()
         end)
@@ -277,6 +294,10 @@ function Lab:RefreshKeyPicker()
         local run = index <= count and runs[index] or nil
         option:SetShown(run ~= nil)
         if run then
+            if comparing then
+                option:SetText(("+%d %s\n"):format(run.level,run.mapName or L("Подземелье"))
+                    ..(L("Замеров: %d | Талантов с парой: %d")):format(run.runs,run.pairs))
+            else
             local sample = run.talentSample or {}
             local map = Text(run.mapName) or L("Подземелье")
             local level = Number(run.level) or 0
@@ -284,6 +305,7 @@ function Lab:RefreshKeyPicker()
             local completed = stamp > 0 and date("%d.%m %H:%M", stamp) or "—"
             option:SetText(("%s +%d\n%s | %s"):format(
                 map, level, completed, (L("Замер %s")):format(FormatDuration(sample.duration))))
+            end
         end
     end
 end
@@ -324,8 +346,90 @@ function Lab:CompareText(runs, metric)
     return line .. "\n" .. L("Условия и состав группы влияют на результат.")
 end
 
+local function CohortText(label,summary,unit)
+    if summary.runs==0 then return label..": "..L("Нет замеров") end
+    local range=summary.hasSpread and (Compact(summary.min).." - "..Compact(summary.max))
+        or L("нужны хотя бы 2 замера")
+    return (L("%s: %s %s | замеров: %d")):format(label,Compact(summary.mean),unit,summary.runs)
+        .."\n"..(L("Диапазон: %s")):format(range)
+        .."\n"..(L("Замерено: %s")):format(FormatDuration(summary.duration))
+end
+
+function Lab:StyleButtons()
+    for _,state in ipairs({{self.healButton,self.metric=="healing"},{self.damageButton,self.metric=="damage"},
+        {self.sourceButton,self.view=="sources"},{self.talentButton,self.view=="talents"},
+        {self.comparisonButton,self.view=="comparison"}}) do
+        local button,active=state[1],state[2]
+        button:SetBackdropBorderColor(active and .25 or .30,active and .70 or .32,active and .85 or .34,1)
+        button:SetBackdropColor(active and .06 or .025,active and .16 or .032,active and .21 or .042,1)
+    end
+end
+
+function Lab:RenderComparison(runs)
+    self:StyleButtons()
+    local result=self:CompareTalents(runs,self.metric)
+    local contexts=result.contexts
+    self.comparisonContexts=contexts
+    local context=contexts[1]
+    for _,candidate in ipairs(contexts) do if candidate.key==self.comparisonKey then context=candidate; break end end
+    self.comparisonKey=context and context.key
+    self.keyPicker:SetText(L("Выбрать условия")); SetButtonEnabled(self.keyPicker,#contexts>0)
+    self:RefreshKeyPicker()
+    self.uiSubtitle:SetText(context and (L("Сравнение: +%d %s")):format(context.level,context.mapName or L("Подземелье"))
+        or L("Нет замеров с известной неизменной сборкой"))
+    local unit=self.metric=="healing" and "HPS" or "DPS"
+    self.uiDate:SetText(context and (L("Замеров: %d | Неполных: %d | %s")):format(context.runs,context.partial,context.gameBuild) or "")
+    self.uiBuild:SetText((L("Средний %s за прохождение: с талантом / без таланта")):format(unit))
+    self.sourceHeader:SetText(L("Талант / ранг"))
+    self.amountHeader:SetText(L("С талантом")); self.rateHeader:SetText(L("Без таланта"))
+    self.shareHeader:SetText(L("Разница"))
+    self.allTalentsButton:Show()
+    self.allTalentsButton:SetText(self.showComparisonAll and L("Только с парой") or L("Все таланты"))
+    local rows={}
+    for _,row in ipairs(context and context.rows or {}) do
+        if row.comparable or self.showComparisonAll then rows[#rows+1]=row end
+    end
+    while #self.rows<#rows do self.rows[#self.rows+1]=self.createRow(#self.rows+1) end
+    self.rowCanvas:SetSize(568,math.max(ROW_VIEWPORT_HEIGHT,#rows*48)); self.rowScroll:SetVerticalScroll(0)
+    for i,row in ipairs(self.rows) do
+        local data=rows[i]
+        row:SetShown(data~=nil)
+        if data then
+            local id,name,icon=SpellInfo(data.spellID)
+            row.spellID=id; row.spellName=name or (L("ID заклинания %d")):format(id)
+            row.kind=nil
+            row:SetHeight(44); row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(i-1)*48)
+            row.nameText:SetText(row.spellName.." ("..data.rank..")")
+            row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+            row.amount:SetWidth(86); row.amount:SetText(Compact(data.with.mean)); row.rate:SetText(Compact(data.without.mean))
+            row.share:SetText(data.percent and ("%+.1f%%"):format(data.percent) or "—")
+            row.share:SetTextColor(UI.Unpack(C.amber)); row.amount:SetTextColor(UI.Unpack(C.text))
+            row.meta:Show()
+            row.meta:SetText((L("Замеров с / без: %d / %d")):format(data.with.runs,data.without.runs)
+                ..(not data.comparable and (" | "..L("Нет пары")) or data.smallSample and (" | "..L("Мало замеров")) or "")
+                ..(data.partial and (" | "..L("Неполные данные")) or ""))
+            local detail=CohortText(L("С талантом"),data.with,unit).."\n"..CohortText(L("Без таланта"),data.without,unit)
+            if data.comparable then
+                detail=detail.."\n"..(L("Других различий в талантах: %d - %d")):format(data.otherChangesMin,data.otherChangesMax)
+                if data.rosterChanged then detail=detail.."\n"..L("Состав группы различается.") end
+                if data.rosterUnknown then detail=detail.."\n"..L("Состав группы неизвестен.") end
+            end
+            row.comparisonDetail=detail.."\n"..L("Это сравнение результатов сборок, не доказанный прирост от одного таланта.")
+        else
+            row.spellID=nil; row.comparisonDetail=nil; row.meta:Hide()
+        end
+    end
+    self.empty:SetText(context and (L("Талантов с замерами с обеих сторон: %d. Наведи на строку для диапазона и условий.")):format(context.pairs)
+        or L("Нужны сохранённые прохождения с известными талантами и длительностью замера."))
+    self.coverage:SetText((L("Исключено: смешанная сборка %d | недоступные данные %d")):format(result.excluded.mixed,result.excluded.invalid))
+    self.compare:SetText(L("Это сравнение результатов сборок, не доказанный прирост от одного таланта.")
+        .."\n"..L("При одном замере с каждой стороны разброс неизвестен."))
+end
+
 function Lab:Render()
     local runs = ReadRuns()
+    if self.view=="comparison" and self.CompareTalents then self:RenderComparison(runs); return end
+    self.comparisonContexts=nil
     local sampleRuns = {}
     for _, run in ipairs(runs) do
         if type(run.talentSample) == "table" then sampleRuns[#sampleRuns + 1] = run end
@@ -347,13 +451,7 @@ function Lab:Render()
         FormatDuration(latest.duration), FormatDuration(selectedDuration))) or "")
     self.allTalentsButton:SetShown(self.view=="talents")
     self.allTalentsButton:SetText(self.showUnknown and L("Только с цифрами") or L("Все таланты"))
-    for _, state in ipairs({{self.healButton, self.metric == "healing"},
-        {self.damageButton, self.metric == "damage"}, {self.sourceButton, self.view == "sources"},
-        {self.talentButton, self.view == "talents"}}) do
-        local button, active = state[1], state[2]
-        button:SetBackdropBorderColor(active and .25 or .30, active and .70 or .32, active and .85 or .34, 1)
-        button:SetBackdropColor(active and .06 or .025, active and .16 or .032, active and .21 or .042, 1)
-    end
+    self:StyleButtons()
     self:RefreshKeyPicker()
     self.uiSubtitle:SetText(latest and ((L("Ключ: +%d %s")):format(
         Number(latest.level) or 0, Text(latest.mapName) or L("Подземелье")))
@@ -361,6 +459,7 @@ function Lab:Render()
     self.uiBuild:SetText(BuildText(sample))
     self.amountHeader:SetText(self.metric == "healing" and L("Исцеление") or L("Урон"))
     self.rateHeader:SetText(self.metric == "healing" and "HPS" or "DPS")
+    self.shareHeader:SetText(L("Доля"))
     self.sourceHeader:SetText(self.view == "talents" and L("Талант") or L("Источник"))
     local rows = self.view == "talents" and type(Lab.TalentRows) == "function"
         and Call(Lab.TalentRows, Lab, sample, self.metric) or Lab.UIRows(sample, self.metric)
@@ -375,7 +474,7 @@ function Lab:Render()
         end
         rows=visible
     end
-    self.coverage:SetText(self.view=="talents" and (L("С цифрами: %d | Без отдельного источника: %d")):format(known,unknown) or "")
+    self.coverage:SetText(self.view=="talents" and (L("С цифрами: %d | Без привязанных данных: %d")):format(known,unknown) or "")
     local duration = sample and Number(sample.duration)
     local total = sample and Number(self.metric == "healing" and sample.overallHealing or sample.overallDamage)
     local rowCount = math.min(#rows, MAX_ROWS)
@@ -385,6 +484,9 @@ function Lab:Render()
     self.rowCanvas:SetSize(568, math.max(ROW_VIEWPORT_HEIGHT, rowCount * ROW_STEP))
     self.rowScroll:SetVerticalScroll(0)
     for i, row in ipairs(self.rows) do
+        row.comparisonDetail=nil; row.meta:Hide()
+        row:SetHeight(ROW_HEIGHT); row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(i-1)*ROW_STEP)
+        row.share:SetTextColor(UI.Unpack(C.green))
         local data = i <= rowCount and rows[i] or nil
         row:SetShown(data ~= nil)
         if data then
@@ -396,7 +498,7 @@ function Lab:Render()
             local amount = Number(data.amount)
             row.amount:SetWidth(amount~=nil and 86 or 242)
             row.amount:SetTextColor(UI.Unpack(amount~=nil and C.text or C.muted))
-            row.amount:SetText(amount~=nil and Compact(amount) or L("Нет отдельного источника"))
+            row.amount:SetText(amount~=nil and Compact(amount) or L("Нет привязанных данных"))
             row.rate:SetText(amount==nil and "" or (duration and duration > 0 and Compact(amount / duration) or "—"))
             row.share:SetText(amount==nil and "" or (total and total > 0 and (("%.1f%%"):format(amount / total * 100)) or "—"))
         else
