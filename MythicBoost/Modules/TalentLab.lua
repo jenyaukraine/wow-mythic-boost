@@ -28,11 +28,7 @@ end
 local function OOC()
     return type(InCombatLockdown) == "function" and JP.SafeOptionalBoolean(InCombatLockdown()) == false
 end
-local function Call(fn, ...)
-    if type(fn) ~= "function" then return end
-    local ok, a, b = pcall(fn, ...)
-    if ok then return a, b end
-end
+local Call = JP.SafeCallPair
 
 local function SpecID()
     local api = C_SpecializationInfo

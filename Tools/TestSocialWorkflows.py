@@ -153,13 +153,14 @@ def test_addon_presence():
         p:Enable()
         assert(p:IsUser('Alice-Realm') and not p:IsUser('Bob-Realm') and not p:IsUser('Bob'))
         for i=1,10000 do p:Decorate('Offline'..i..'-Realm','Peer') end
-        assert(not p.queue and #packets==0, 'browsing never probes players')
+        assert(not p.queue and #packets==0 and not p.ticker, 'browsing never probes players or starts a ticker')
         grouped=true; guild=true; p:Request()
         for i=1,1000 do p:Request() end
         assert(#p.queue==2 and p.ticker)
+        local activeTicker=p.ticker; local tickerCount=#tickers
         p:Pump(); p:Pump(); assert(#packets==2)
         p:Receive('MBPresence1','A1','WHISPER','Bob-Realm')
-        assert(p:IsUser('Bob-Realm'))
+        assert(p:IsUser('Bob-Realm') and p.ticker==activeTicker and #tickers==tickerCount)
         p:Receive('MBPresence1','Q1','WHISPER','Carol-Realm')
         assert(#p.queue==0, 'legacy whisper discovery never sends a whisper back')
         for i=1,10000 do p:Receive('MBPresence1','Q1','PARTY','Peer'..i..'-Realm') end
@@ -173,6 +174,7 @@ def test_addon_presence():
         assert(allocations==built and #packets==3)
         p:Receive(Secret('MBPresence1'),Secret('Q1'),Secret('WHISPER'),Secret('Name'))
         now=800; p:Pump(); assert(not p:IsUser('Bob-Realm') and not p.ticker)
+        assert(activeTicker.cancelled, 'expiry must cancel the original ticker')
         grouped=true; p:Request(); p:Pump()
         local sentBefore=#packets
         for i=1,12 do
@@ -181,7 +183,10 @@ def test_addon_presence():
             assert(p:IsUser('Bob-Realm') and p.ticker)
         end
         assert(#packets==sentBefore+12,'quiet groups renew discovery beyond the ten-minute TTL')
-        p:Disable(); assert(not next(p.events.events) and not p.ticker)
+        activeTicker=p.ticker; tickerCount=#tickers
+        p:Disable(); p:Disable(); p:Pump()
+        assert(not next(p.events.events) and not p.ticker and activeTicker.cancelled)
+        assert(#tickers==tickerCount, 'disabled pump must not restart a ticker')
     ''')
 
 

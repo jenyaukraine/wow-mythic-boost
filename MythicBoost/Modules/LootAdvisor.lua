@@ -19,10 +19,7 @@ local function PreviewKeyLevel(value)
 end
 
 local function RewardItemLevel(keyLevel)
-    if not C_MythicPlus or not C_MythicPlus.GetRewardLevelForDifficultyLevel then return nil end
-    -- The FIRST return is the weekly vault, not the dungeon chest.
-    local _, level = C_MythicPlus.GetRewardLevelForDifficultyLevel(keyLevel)
-    return UsableNumber(level) and level > 0 and level or nil
+    return JP.API.GetRewardLevel(keyLevel).level
 end
 
 local function ItemLevel(link)

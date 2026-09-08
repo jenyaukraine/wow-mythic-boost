@@ -97,16 +97,8 @@ function LootUI:GetSlots()
     for slot = 1, count do
         local ok, icon, name, quantity, currencyID, quality, locked, isQuestItem = pcall(GetLootSlotInfo, slot)
         if ok and (SafeValue(icon) or SafeValue(name)) then
-            local slotType
-            if type(GetLootSlotType) == "function" then
-                local typeOK, result = pcall(GetLootSlotType, slot)
-                if typeOK then slotType = SafeValue(result) end
-            end
-            local link
-            if type(GetLootSlotLink) == "function" then
-                local linkOK, result = pcall(GetLootSlotLink, slot)
-                if linkOK then link = SafeValue(result) end
-            end
+            local slotType = SafeValue(JP.SafeCall(GetLootSlotType, slot))
+            local link = SafeValue(JP.SafeCall(GetLootSlotLink, slot))
             slots[#slots + 1] = {
                 slot = slot,
                 icon = SafeValue(icon, 134400),

@@ -99,9 +99,9 @@ function Market:Render()
     self.older:SetEnabled(snapshot~=nil and self.versionIndex>1)
     self.newer:SetEnabled(snapshot~=nil and self.versionIndex<#db.snapshots)
     self.compare:SetText(self.comparison and (L("Сравнение со снимком: ")..date("%d.%m %H:%M",self.comparison.stamp)) or L("Нет снимка за 24 часа (допуск ±3 ч.)"))
-    if snapshot and snapshot.partial then self.compare:SetText(L("Частичный снимок — сигналы отключены")) end
-    local stats=snapshot and snapshot.stats
     if snapshot and snapshot.partial then
+        self.compare:SetText(L("Частичный снимок — сигналы отключены"))
+        local stats=snapshot.stats
         self.diagnostics:SetText(stats and (L("Пропуски: данные %d / некорректные %d / ошибки %d / лимит %d")):format(
             stats.unloaded or 0,stats.invalid or 0,stats.errors or 0,(stats.itemLimit or 0)+(stats.lotLimit or 0)+(snapshot.trimmed or 0))
             or L("Причины пропусков в старом снимке не сохранены. Нужен новый скан."))

@@ -462,15 +462,7 @@ local function InitializeDatabase()
         -- Visual migrations must not move an already positioned tracker.
         db.positiveAuraTracker.wingLayoutRevision = 1
     end
-    Default(db.positiveAuraTracker, "barHeight", 190)
-    Default(db.positiveAuraTracker, "barWidth", 72)
-    Default(db.positiveAuraTracker, "sideGap", 110)
-    Default(db.positiveAuraTracker, "barSpacing", 12)
-    Default(db.positiveAuraTracker, "colorPreset", 2)
-    Default(db.positiveAuraTracker, "texturePreset", 1)
-    Default(db.positiveAuraTracker, "fontSize", 24)
     Default(db.positiveAuraTracker, "pulse", true)
-    Default(db.positiveAuraTracker, "pulseSpeed", .8)
     Default(db.positiveAuraTracker, "barTexture", nil)
     Default(db.positiveAuraTracker, "maxIcons", 8)
     Default(db.positiveAuraTracker, "x", 0)

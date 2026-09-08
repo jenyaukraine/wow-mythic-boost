@@ -440,7 +440,6 @@ function Monitor:Render()
     self.frame:SetHeight(91+math.max(1,math.min(5,#rows))*STEP)
     self.empty:SetShown(#rows==0)
     self.empty:ClearAllPoints(); self.empty:SetPoint("TOPLEFT",16,-50)
-    self.empty:SetText(report and report.complete and L("Избегаемого урона нет") or L("Нет доступных данных"))
     self.footer:SetText((report.complete and L("Избегаемый урон") or L("Неполная сводка"))..
         (#rows>5 and ("  "..(offset+1).."-"..math.min(offset+5,#rows).." / "..#rows) or ""))
     self.frame:SetAlpha(1)

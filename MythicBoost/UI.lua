@@ -396,6 +396,63 @@ function UI.Button(parent, label, width, height, primary)
     return button
 end
 
+-- Shared activity cards: Mythic+ and raids use the same frame and grid.
+UI.activityCardLayout={height=80,gap=8,padding=12,icon=56,columns=4,top=30}
+
+function UI.ActivityCard(parent)
+    local card = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    card:SetSize(216, UI.activityCardLayout.height)
+    UI.Backdrop(card, C.raised, C.hudEdge)
+
+    card.art = card:CreateTexture(nil, "BACKGROUND")
+    card.art:SetPoint("TOPLEFT", 1, -1)
+    card.art:SetPoint("BOTTOMRIGHT", -1, 1)
+    card.art:SetAlpha(.3)
+
+    local scrim = UI.Scrim(card, "BORDER", 0, .34)
+    scrim:SetPoint("TOPLEFT", 1, -1)
+    scrim:SetPoint("BOTTOMRIGHT", -1, 1)
+
+    card.iconBorder = CreateFrame("Frame", nil, card, "BackdropTemplate")
+    card.iconBorder:SetSize(UI.activityCardLayout.icon, UI.activityCardLayout.icon)
+    card.iconBorder:SetPoint("TOPLEFT", UI.activityCardLayout.padding, -UI.activityCardLayout.padding)
+    UI.Backdrop(card.iconBorder, { C.field[1], C.field[2], C.field[3], 1 }, C.hudEdge)
+
+    card.icon = card.iconBorder:CreateTexture(nil, "ARTWORK")
+    card.icon:SetPoint("TOPLEFT", 1, -1)
+    card.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+
+    card.iconLabel = UI.Text(card.iconBorder, "GameFontNormal", "", C.accentDim)
+    card.iconLabel:SetPoint("CENTER", 0, 0)
+
+    return card
+end
+
+function UI.LayoutActivityCards(panel,cards,count,width)
+    local layout=UI.activityCardLayout
+    local available=math.max(560,(width or panel:GetWidth())-16)
+    local cardWidth=math.floor((available-layout.gap*(layout.columns-1))/layout.columns)
+    for i,card in ipairs(cards) do
+        local column,row=(i-1)%layout.columns,math.floor((i-1)/layout.columns)
+        card:ClearAllPoints(); card:SetSize(cardWidth,layout.height)
+        card:SetPoint("TOPLEFT",8+column*(cardWidth+layout.gap),-layout.top-row*(layout.height+layout.gap))
+    end
+    local rows=math.ceil(count/layout.columns)
+    return layout.top+rows*layout.height+math.max(0,rows-1)*layout.gap+10
+end
+
+function UI.ActivityCardsPanel(body,label)
+    local panel=UI.Panel(body,C.panel,C.hudEdge)
+    panel:SetPoint("TOPLEFT",258,-10); panel:SetPoint("TOPRIGHT",-10,-10)
+    local title=UI.Text(panel,"GameFontNormalSmall",label,C.muted)
+    title:SetPoint("TOPLEFT",232,-11)
+    local all=UI.Button(panel,L("Все"),62,21); all:SetPoint("TOPRIGHT",-10,-8)
+    local summary=UI.Text(panel,"GameFontHighlightSmall","",C.accent)
+    summary:SetPoint("RIGHT",all,"LEFT",-10,0)
+    return panel,title,all,summary
+end
+-- End shared activity cards.
+
 -- Компактная кнопка для фирменных и контекстных действий. В отличие от
 -- текстовой UI.Button она остаётся читаемой в штатных окнах Blizzard, где под
 -- подпись обычно нет места, и не зависит от букв «MB» в игровом шрифте.

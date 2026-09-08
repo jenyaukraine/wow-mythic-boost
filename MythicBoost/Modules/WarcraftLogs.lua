@@ -95,6 +95,14 @@ end
 
 local COPY_DIALOG = "MYTHICBOOST_COPY_WARCRAFTLOGS_URL"
 
+local function SetEditBoxText(popup, text)
+    local editBox = popup.GetEditBox and popup:GetEditBox() or popup.EditBox or popup.editBox
+    if not editBox then return end
+    editBox:SetText(text)
+    editBox:SetFocus()
+    editBox:HighlightText()
+end
+
 local function InstallCopyDialog()
     if not StaticPopupDialogs or StaticPopupDialogs[COPY_DIALOG] then return end
     StaticPopupDialogs[COPY_DIALOG] = {
@@ -109,11 +117,7 @@ local function InstallCopyDialog()
         hideOnEscape = true,
         preferredIndex = 3,
         OnShow = function(self)
-            local editBox = self.GetEditBox and self:GetEditBox() or self.EditBox or self.editBox
-            if not editBox then return end
-            editBox:SetText(self.data or "")
-            editBox:SetFocus()
-            editBox:HighlightText()
+            SetEditBoxText(self, self.data or "")
         end,
         EditBoxOnEscapePressed = function(editBox) editBox:GetParent():Hide() end,
     }
@@ -126,8 +130,7 @@ function WarcraftLogs:ShowCopyURL(name, realm)
     local popup = StaticPopup_Show and StaticPopup_Show(COPY_DIALOG, name .. "-" .. realm, nil, url)
     if popup then
         popup.data = url
-        local editBox = popup.GetEditBox and popup:GetEditBox() or popup.EditBox or popup.editBox
-        if editBox then editBox:SetText(url); editBox:SetFocus(); editBox:HighlightText() end
+        SetEditBoxText(popup, url)
     elseif ChatFrame_OpenChat then
         local editBox = ChatFrame_OpenChat(url, DEFAULT_CHAT_FRAME)
         if editBox then editBox:HighlightText() end

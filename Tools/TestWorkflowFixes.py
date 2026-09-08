@@ -6,6 +6,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load(lua, name):
+    # Загружаем Contracts.lua для доступа к API
+    contracts = (ROOT / 'MythicBoost/Contracts.lua').read_text(encoding='utf-8')
+    lua.eval("function(code) return assert(load(code))('MythicBoost', JP) end")(contracts)
     source = (ROOT / 'MythicBoost/Modules' / name).read_text(encoding='utf-8')
     lua.eval("function(code) return assert(load(code))('MythicBoost', JP) end")(source)
 

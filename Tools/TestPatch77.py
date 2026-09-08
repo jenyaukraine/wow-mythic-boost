@@ -90,6 +90,39 @@ def test_report_secrets_and_cancellation():
     ''')
 
 
+def test_loot_slot_api_failures():
+    lua=fixture()
+    load(lua,'Contracts.lua')
+    load(lua,'Modules/LootUI.lua')
+    lua.execute(r'''
+        function GetNumLootItems() return 1 end
+        function GetLootSlotInfo() return 10,'Item',1,nil,1,true,1 end
+        local l=JP.LootUI
+        -- Optional APIs may be absent; strict boolean flags are retained.
+        GetLootSlotType=nil; GetLootSlotLink=nil
+        local row=l:GetSlots()[1]
+        assert(row.name=='Item' and row.locked==true and row.quest==false)
+        assert(row.slotType==nil and row.link==nil)
+        local calls={}
+        function GetLootSlotType(slot)
+            assert(slot==1); calls[#calls+1]='type'; error('unavailable')
+        end
+        function GetLootSlotLink(slot)
+            assert(slot==1); calls[#calls+1]='link'; return false,'ignored'
+        end
+        row=l:GetSlots()[1]
+        assert(row.slotType==nil and row.link==false)
+        assert(table.concat(calls,',')=='type,link')
+        function GetLootSlotType() return Secret(2) end
+        function GetLootSlotLink() return Secret('item:1') end
+        function GetLootSlotInfo() return 10,'Item',1,nil,1,Secret(true),Secret(true) end
+        row=l:GetSlots()[1]
+        assert(row.slotType==nil and row.link==nil and not row.locked and not row.quest)
+        function GetNumLootItems() return Secret(3) end
+        assert(#l:GetSlots()==0)
+    ''')
+
+
 def test_loot_actions_and_timers():
     lua=fixture()
     lua.execute(r'''
@@ -448,7 +481,7 @@ def test_restricted_alt_click_prepares_native_group_chat():
 
 
 if __name__=='__main__':
-    for test in (test_combat_reports,test_report_secrets_and_cancellation,test_loot_actions_and_timers,
+    for test in (test_combat_reports,test_report_secrets_and_cancellation,test_loot_slot_api_failures,test_loot_actions_and_timers,
                  test_guild_real_profile_path,test_center_recovery,test_headerless_feed_and_severity,
                  test_severity_uses_only_public_matching_health,test_continuous_key_report_scroll,
                  test_empty_share_is_local_only,test_alt_click_group_card,test_restricted_alt_click_prepares_native_group_chat):

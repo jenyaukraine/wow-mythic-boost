@@ -89,7 +89,7 @@ foreach ($testName in @("TestRunStats.py", "TestPlayerNetwork.py", "TestPlayerMe
     "TestPlayerDataIntegration.py", "TestUpgradeReasons.py", "TestTalentLab.py",
     "TestTalentLabUI.py", "TestTalentComparison.py", "TestTalentSources.py", "TestInformation.py", "TestListingSpam.py",
     "TestChatSpamCondenser.py", "TestReviewsUI.py", "TestSharedReviews.py", "TestAuctionPerformance.py",
-    "TestTimerTheme.py", "TestTalentTreeStats.py", "TestTalentPointValue.py")) {
+    "TestTimerTheme.py", "TestTalentTreeStats.py", "TestTalentPointValue.py", "TestGroupTools.py", "TestSearch106.py", "TestPolish109.py")) {
     & python (Join-Path $PSScriptRoot $testName)
     if ($LASTEXITCODE -ne 0) { throw "$testName failed. Release was not created." }
 }

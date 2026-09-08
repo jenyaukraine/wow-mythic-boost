@@ -44,7 +44,7 @@ end
 
 function Convenience:AddRaidRepairCost(copper)
     if not UI.UsableNumber(copper) or copper <= 0 or not self:UpdateRaidRepairSession() then return nil end
-    self.raidRepairTotal = (UI.UsableNumber(self.raidRepairTotal) and self.raidRepairTotal or 0) + copper
+    self.raidRepairTotal = (JP.SafeNumber(self.raidRepairTotal) or 0) + copper
     return self.raidRepairTotal
 end
 

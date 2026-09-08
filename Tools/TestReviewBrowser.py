@@ -168,7 +168,7 @@ def test_listing_taint_boundary():
     lua.execute('''
         opened=0; printed=0
         JP.Print=function() printed=printed+1 end
-        JP.FrameSwitch={OpenBlizzard=function() opened=opened+1; return true end}
+        JP.ListingDefaults={OpenOwned=function() opened=opened+1; return true end}
         function LFGListEntryCreation_Show() error('native prefill must never run') end
         function LFGListEntryCreation_Select() error('native prefill must never run') end
         C_LFGList={SetEntryTitle=function() error('restricted title must never run') end}
@@ -177,7 +177,7 @@ def test_listing_taint_boundary():
     lua.execute('''
         assert(JP.GroupSearchUI:OpenListingAction() and opened==1)
         combat=true; assert(not JP.GroupSearchUI:OpenListingAction() and opened==1)
-        combat=false; JP.FrameSwitch=nil; assert(not JP.GroupSearchUI:OpenListingAction())
+        combat=false; JP.ListingDefaults=nil; assert(not JP.GroupSearchUI:OpenListingAction())
     ''')
     search = source('Modules/GroupSearchUI.lua')
     for forbidden in ('LFGListEntryCreation_Show(', 'LFGListEntryCreation_Select(', 'SetEntryTitle('):

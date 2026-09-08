@@ -130,40 +130,10 @@ def test_party_greeting():
 
 
 def test_listing_default():
-    lua = runtime()
-    lua.execute(TIMERS + r'''
-        hooks={}; calls=0
-        function hooksecurefunc(name,fn) hooks[name]=fn end
-        function LFGListEntryCreation_Show() error('must not open native form') end
-        function LFGListEntryCreation_Select() error('must not select native activity') end
-        function LFGListEntryCreation_IsEditMode(panel) return panel.edit or false end
-        function LFGListEntryCreation_OnPlayStyleSelectedInternal(panel,value)
-            assert(secureContext); calls=calls+1; panel.generalPlaystyle=value
-        end
-        function securecallfunction(fn,...) secureContext=true; fn(...); secureContext=false end
-        Enum.LFGEntryGeneralPlaystyle={None=0,FunSerious=3}
-        C_LFGList={GetActivityInfoTable=function() return {isMythicPlusActivity=mythic} end}
-        mythic=true; LFGListFrame={EntryCreation=NewWidget(UIParent)}
-        LFGListFrame.EntryCreation.selectedActivity=42; LFGListFrame.EntryCreation:Show()
-    ''')
-    load(lua, 'Modules/ListingDefaults.lua')
-    lua.execute(r'''
-        local d=JP.ListingDefaults; local p=LFGListFrame.EntryCreation
-        d:Enable(); hooks.LFGListEntryCreation_Show(); hooks.LFGListEntryCreation_Select()
-        assert(#timers==1); Flush(); assert(calls==1 and p.generalPlaystyle==3)
-        p.generalPlaystyle=2; d:Queue(); Flush(); assert(calls==1,'keep user choice')
-        p.generalPlaystyle=Secret(0); d:Queue(); Flush(); assert(calls==1)
-        p.generalPlaystyle=0; p.edit=true; d:Queue(); Flush(); assert(calls==1,'keep editing')
-        p.edit=false; mythic=false; d:Queue(); Flush(); assert(calls==1)
-        mythic=true; combat=true; d:Queue(); Flush(); assert(calls==1)
-        combat=false; p:Hide(); d:Queue(); Flush(); assert(calls==1)
-        p:Show(); d:Queue(); d:Disable(); Flush(); assert(calls==1)
-        local count=allocations
-        for i=1,1000 do d:Enable(); hooks.LFGListEntryCreation_Show(); d:Disable(); Flush() end
-        assert(count==allocations and not next(d.frame.events) and not d.pending)
-    ''')
+    from TestSearch106 import test_owned_key_form_and_coexistence
+    test_owned_key_form_and_coexistence()
     text = source('Modules/ListingDefaults.lua')
-    assert 'panel.generalPlaystyle =' not in text
+    assert 'C_Timer.' not in text
     assert 'C_LFGList.SetEntryTitle(' not in text
 
 

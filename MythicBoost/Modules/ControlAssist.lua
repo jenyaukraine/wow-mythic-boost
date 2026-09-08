@@ -104,10 +104,9 @@ end
 
 function Assist:Refresh()
     if not self.frame then return end
-    local shown = self.running and Settings().enabled ~= false and #(self.spells or {}) > 0
-        and (self.preview or InCombatLockdown())
+    local enabled = self.running and Settings().enabled ~= false and #(self.spells or {}) > 0
+    local shown = enabled and (self.preview or InCombatLockdown())
     if not InCombatLockdown() then
-        local enabled = self.running and Settings().enabled ~= false and #(self.spells or {}) > 0
         local visibility = enabled and (self.preview and "show" or "[combat] show; hide") or "hide"
         if self.visibility ~= visibility then RegisterStateDriver(self.frame, "visibility", visibility); self.visibility = visibility end
         self.frame:SetShown(shown)

@@ -7,10 +7,7 @@ local function Number(v)
     v=JP.SafeNumber(v)
     return type(v)=="number" and v==v and v>=0 and v<1e15 and v or nil
 end
-local function Call(fn,...)
-    if type(fn)~="function" then return end
-    local ok,value=pcall(fn,...); if ok then return value end
-end
+local Call = JP.SafeCall
 local function Rank(sample,spellID)
     local count,unknown=0,false
     for _,raw in pairs(JP.SafeTable(sample.selected) or {}) do

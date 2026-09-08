@@ -151,7 +151,7 @@ local function BuildGuide(self, owner)
     Choice(2, L("Собрать группу на свой ключ"),
         L("Сначала создай объявление в окне Blizzard. После этого кандидаты появятся здесь с опытом по каждому подземелью."),
         L("Создать объявление"), function()
-            if JP.FrameSwitch then JP.FrameSwitch.OpenBlizzard() end
+            JP.GroupSearchUI:OpenListingAction()
         end)
     Choice(3, L("Проверить пати или кандидатов"),
         L("Сравни рейтинг, лучшие ключи и слабые места. Пригласить или отклонить игрока можно прямо из списка."),
@@ -239,7 +239,7 @@ function Welcome:Create()
     for index, item in ipairs(order) do
         local tab = UI.Tab(frame, item.label, 140)
         tab:SetPoint("TOPLEFT", 12 + (index - 1) * 146, tabTop)
-        tab:SetScript("OnClick", function() self:SwitchPage(item.key) end)
+        tab:SetScript("OnClick", function() self:OnTabClick(item.key) end)
         self.tabs[item.key] = tab
     end
 
@@ -360,7 +360,9 @@ function Welcome:Create()
         layoutQueued = true
         C_Timer.After(.05, function()
             layoutQueued = false
+            if JP.RaidFinder then JP.RaidFinder:Refresh(self) end
             JP.GroupSearchUI:Layout(self)
+            if JP.GroupTools then JP.GroupTools:UpdateToolbar(self) end
             JP.GuildBoard:Layout()
             JP.ApplicantBoard:Layout()
             JP.RunHistory:Layout()
@@ -443,8 +445,9 @@ function Welcome:Refresh()
         return
     end
 
+    if JP.RaidFinder then JP.RaidFinder:Refresh(self) end
     JP.GroupSearchUI:Layout(self)
-    JP.GroupSearchUI:RefreshDungeonCards(self)
+    if self.groupFilters.category~="raid" then JP.GroupSearchUI:RefreshDungeonCards(self) end
     local batch = JP.GroupSearchUI.completedBatch
     JP.GroupSearchUI.completedBatch = nil
     local matches, excluded, message, scanned, rejected
@@ -460,7 +463,7 @@ function Welcome:Refresh()
     end
     -- Сортируем по силе всей текущей группы, а не только по лидеру.
     excluded = excluded or {}
-    local experienceRejected = JP.GroupSearchUI:EnrichPartyRatings(matches, self.groupFilters, excluded) or 0
+    local experienceRejected = self.groupFilters.category~="raid" and JP.GroupSearchUI:EnrichPartyRatings(matches, self.groupFilters, excluded) or 0
     if experienceRejected > 0 then
         rejected = rejected or {}
         local reason = L("не все участники проходили этот уровень")
@@ -468,6 +471,10 @@ function Welcome:Refresh()
     end
     self.eligibleMatches = matches
     self.excludedMatches = excluded
+    if JP.GroupTools then
+        matches,excluded=JP.GroupTools:OrderResults(matches,excluded)
+        JP.GroupTools:UpdateToolbar(self)
+    end
     self.matches = JP.GroupSearchUI:ComposeResults(matches, excluded)
 
     local visible = self.visibleRows or 5
@@ -498,6 +505,14 @@ function Welcome:Refresh()
     end
     self.status:SetText(scanned and scanned > 0 and
         ((L("подходит групп: %d, ниже фильтров: %d")):format(#matches, #excluded)) or "")
+end
+
+-- The applicants tab only navigates; its separate create button opens the listing form.
+function Welcome:OnTabClick(key)
+    self:SwitchPage(key)
+    if key=="groups" and not InCombatLockdown() and not JP.GroupSearchUI.searchPending then
+        JP.GroupSearchUI:RequestBlizzardSearch(self)
+    end
 end
 
 function Welcome:Center()

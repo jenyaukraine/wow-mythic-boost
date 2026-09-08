@@ -13,11 +13,7 @@ local TYPES = {damage="DamageDone", healing="HealingDone", avoidable="AvoidableD
 local function PublicCombat()
     return InCombatLockdown and JP.SafeOptionalBoolean(InCombatLockdown()) == false
 end
-local function Call(fn, ...)
-    if type(fn) ~= "function" then return end
-    local ok, value = pcall(fn, ...)
-    if ok then return value end
-end
+local Call = JP.SafeCall
 
 local function CheckpointStore()
     return JP.Settings("runHistory", {runs={}})
@@ -205,7 +201,7 @@ function Stats:ReadMeter(field)
     local session = JP.SafeTable(Call(api.GetCombatSessionFromType, overall, meter))
     local sources = session and JP.SafeTable(session.combatSources)
     if not sources then return end
-    local duration = Number(session.durationSeconds, 1e8)
+    local duration = JP.API.GetDamageMeterDuration(overall, session)
     local amounts, count = {}, 0
     for _, raw in pairs(sources) do
         count = count+1

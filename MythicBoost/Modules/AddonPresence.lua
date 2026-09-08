@@ -27,6 +27,14 @@ local function Trim(map, age)
     if count>=CAP and oldest then map[oldest]=nil end
 end
 
+local function EnsureTicker(self)
+    if not self.ticker then self.ticker=C_Timer.NewTicker(1,function() self:Pump() end) end
+end
+
+local function StopTicker(self)
+    if self.ticker then self.ticker:Cancel(); self.ticker=nil end
+end
+
 function Presence:Notify()
     if self.notifyQueued then return end
     self.notifyQueued=true
@@ -53,7 +61,7 @@ function Presence:Mark(name)
     self.seen=self.seen or {}; Trim(self.seen,TTL)
     local key=name:lower(); local fresh=not self.seen[key] or GetTime()-self.seen[key]>=TTL
     self.seen[key]=GetTime()
-    if not self.ticker then self.ticker=C_Timer.NewTicker(1,function() self:Pump() end) end
+    EnsureTicker(self)
     if fresh then self:Notify() end
 end
 
@@ -76,7 +84,7 @@ function Presence:Queue(channel, packet)
     if #self.queue>=8 or (last and now-last<(packet=="Q1" and 120 or 5)) then return end
     self.announced[key]=now
     self.queue[#self.queue+1]={channel=channel,packet=packet,tries=0}
-    if not self.ticker then self.ticker=C_Timer.NewTicker(1,function() self:Pump() end) end
+    EnsureTicker(self)
 end
 
 function Presence:Request()
@@ -111,7 +119,7 @@ function Presence:Pump()
         if changed then self:Notify() end
     end
     if not self.running or (not joined and (not self.queue or #self.queue==0) and not next(self.seen or {})) then
-        if self.ticker then self.ticker:Cancel(); self.ticker=nil end
+        StopTicker(self)
         return
     end
     if not self.queue or #self.queue==0 then return end
@@ -131,7 +139,7 @@ function Presence:Pump()
         entry.tries=entry.tries+1; self.retryAt=now+5
         if entry.tries>=3 then table.remove(self.queue,1) end
     end
-    if not joined and #self.queue==0 and not next(self.seen or {}) and self.ticker then self.ticker:Cancel(); self.ticker=nil end
+    if not joined and #self.queue==0 and not next(self.seen or {}) then StopTicker(self) end
 end
 
 function Presence:Receive(prefix,message,channel,sender)
@@ -163,7 +171,7 @@ end
 
 function Presence:Disable()
     self.running=false; self.queue={}; self.seen={}; self.announced={}; self.discoveryAt=nil
-    if self.ticker then self.ticker:Cancel(); self.ticker=nil end
+    StopTicker(self)
     if self.events then self.events:UnregisterAllEvents() end
 end
 function Presence:Destroy() self:Disable() end

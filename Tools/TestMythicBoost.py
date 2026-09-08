@@ -203,6 +203,8 @@ def test_raid_repair_total_resets_after_leaving_instance():
             RegisterModule=function(self,name,module) self[name]=module end}
     """)
     jp = lua.globals().JP
+    load(lua, "MythicBoost/Contracts.lua", jp)
+    jp.UI.UsableNumber = jp.UsableNumber
     load(lua, "MythicBoost/Modules/Convenience.lua", jp)
     lua.execute("""
         JP.Convenience:Repair()
@@ -216,6 +218,12 @@ def test_raid_repair_total_resets_after_leaving_instance():
         inRaid=true; repairCost=75
         JP.Convenience:Repair()
         assert(messages[5]=='Ремонт: 75' and messages[6]=='За время рейда: 75')
+        JP.Convenience.raidRepairTotal='bad'
+        assert(JP.Convenience:AddRaidRepairCost(1)==1)
+        function issecretvalue(v) return v==123456 end
+        JP.Convenience.raidRepairTotal=123456
+        assert(JP.Convenience:AddRaidRepairCost(1)==1)
+        assert(JP.Convenience:AddRaidRepairCost(123456)==nil)
     """)
 
 
@@ -279,7 +287,9 @@ def test_application_plan():
         JP.Settings=function() return {showRejectedResults=false,allowRejectedApplications=true} end
         composed=JP.GroupSearchUI:ComposeResults({{searchResultID=1}},
             {{searchResultID=2,rejected=true}})
-        assert(#composed==1 and composed[1].searchResultID==1)
+        -- The removed hide-rejected setting must not hide the lower section.
+        assert(#composed==3 and composed[1].searchResultID==1)
+        assert(composed[2].isSection and composed[3].searchResultID==2)
         function GetTime() return 100 end
         local button={match={searchResultID=8,rejected=true,actionable=true}}
         function button:SetText(value) self.text=value end
@@ -602,7 +612,7 @@ def test_search_row_hides_internal_priority():
     create_row = source.split("local function CreateResultRow", 1)[1].split(
         "local ApplicationCoachTooltip", 1
     )[0]
-    assert 'row.keyFallback = KeyLabel("+")' in create_row
+    assert 'row.keyFallback = KeyLabel("")' in create_row
     assert 'for level = 2, 40 do row.keyLabels[level] = KeyLabel("+" .. level) end' in create_row
     assert "label:SetSize(COL.keyWidth + 8, 30)" in create_row
     assert "keyPlate" not in create_row
@@ -620,7 +630,7 @@ def test_header_and_listing_actions_stay_compact():
         "local function ValidTexture", 1
     )[0]
     assert "OpenOwnKeystoneListingForm" not in search
-    assert "FrameSwitch.OpenBlizzard" in listing_action
+    assert "JP.ListingDefaults:OpenOwned()" in listing_action
     assert 'welcome.createOwnKey:SetText(active and L("Открыть объявление") or L("Создать объявление"))' in search
     assert "level ~= nil and leader" in search
 
@@ -644,7 +654,7 @@ def test_exact_key_search_uses_blizzard_range_syntax():
     assert "languages, searchCrossFactionListings, advancedFilter, activityIDs" in direct_search
     assert "languages, searchText" not in direct_search
     assert '("+%d"):format(targetLevel)' not in direct_search
-    assert "if C_LFGList.ClearSearchTextFields then pcall(C_LFGList.ClearSearchTextFields) end" in direct_search
+    assert "ClearSearchTextFields" not in direct_search  # Preserve the player's native query.
     assert "GroupSearchUI:CaptureNativeExactSearch(welcome)" in source
     request = source.split("function GroupSearchUI:RequestBlizzardSearch", 1)[1].split(
         "-- Карточки подземелий", 1
@@ -727,6 +737,35 @@ def test_warcraft_logs_character_urls():
     lua.execute("RaiderIO=nil")
     url = jp.WarcraftLogs.BuildURL(jp.WarcraftLogs, "Player", "Tarren Mill", "eu")
     assert url == "https://www.warcraftlogs.com/character/eu/tarren-mill/Player"
+
+    lua.globals().WCL = jp.WarcraftLogs
+    lua.execute('''
+        StaticPopupDialogs={}; CLOSE='Close'
+        local function EditBox()
+            return {SetText=function(self,v) self.text=v end,
+                SetFocus=function(self) self.focused=true end,
+                HighlightText=function(self) self.highlighted=true end}
+        end
+        local methodBox,upperBox,lowerBox=EditBox(),EditBox(),EditBox()
+        for _,popup in ipairs({
+            {GetEditBox=function() return methodBox end,EditBox=upperBox,editBox=lowerBox},
+            {GetEditBox=function() return nil end,EditBox=upperBox,editBox=lowerBox},
+            {editBox=lowerBox}, {}}) do
+            local chosen=popup.GetEditBox and popup:GetEditBox() or popup.EditBox or popup.editBox
+            StaticPopup_Show=function(key,_,_,url)
+                popup.data=url; StaticPopupDialogs[key].OnShow(popup); return popup
+            end
+            WCL:ShowCopyURL('Player','Tarren Mill')
+            if chosen then
+                assert(chosen.text==popup.data and chosen.focused and chosen.highlighted)
+            end
+        end
+        local chat=EditBox()
+        StaticPopup_Show=function() return nil end
+        ChatFrame_OpenChat=function(url) chat.text=url; return chat end
+        WCL:ShowCopyURL('Player','Tarren Mill')
+        assert(chat.highlighted and chat.text:find('/tarren-mill/Player',1,true))
+    ''')
 
     source = (ROOT / "MythicBoost/Modules/WarcraftLogs.lua").read_text(encoding="utf-8")
     assert 'Menu.ModifyMenu("MENU_UNIT_" .. which, callback)' in source
@@ -1325,7 +1364,65 @@ def test_restricted_auras_use_targeted_friendly_lookup():
     """)
 
 
+def test_reward_level_api():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("function issecretvalue(v) return type(v)=='number' and v==777 end")
+    jp = lua.table()
+    load(lua, "MythicBoost/Contracts.lua", jp)
+
+    cases = [
+        ("C_MythicPlus=nil", None),
+        ("C_MythicPlus={}", None),
+        ("C_MythicPlus='unavailable'", None),
+        ("C_MythicPlus={GetRewardLevelForDifficultyLevel=true}", None),
+    ]
+    for returns, expected in [
+        ("nil", None), ("600, 300", 300), ("777, 300", 300),
+        ("600, nil", None), ("nil, 0", None), ("nil, -1", None),
+        ("nil, '300'", None), ("nil, false", None), ("nil, {}", None),
+        ("nil, 777", None), ("nil, 0/0", None), ("nil, 35", 35),
+    ]:
+        cases.append(("C_MythicPlus={GetRewardLevelForDifficultyLevel=function(key) "
+                      "assert(key==20); return " + returns + " end}", expected))
+    cases.append(("C_MythicPlus={GetRewardLevelForDifficultyLevel=function() "
+                  "error('not ready') end}", None))
+    for setup, expected in cases:
+        lua.execute(setup)
+        result = jp.API.GetRewardLevel(20)
+        assert (result.level, result.source) == (
+            expected, "dungeon" if expected is not None else None
+        ), setup
+
+
+
+
+def test_shared_protected_calls():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    jp = lua.table()
+    load(lua, "MythicBoost/Contracts.lua", jp)
+    lua.globals().JP = jp
+    lua.execute('''
+        for _,call in ipairs({JP.SafeCall,JP.SafeCallPair}) do
+            assert(select('#',call(nil))==0)
+            assert(select('#',call('not a function'))==0)
+            assert(select('#',call(function() error('API unavailable') end))==0)
+            local first,second=call(function(a,b) assert(a==false and b==42); return a,b end,false,42)
+            assert(first==false)
+            assert(second==(call==JP.SafeCallPair and 42 or nil))
+            local secret={}
+            assert(rawequal(call(function() return secret end),secret))
+        end
+        assert(select('#',JP.SafeCall(function() end))==1)
+        assert(select('#',JP.SafeCall(function() return nil,42 end))==1)
+        assert(select('#',JP.SafeCallPair(function() end))==2)
+        local first,second=JP.SafeCallPair(function() return nil,false,99 end)
+        assert(first==nil and second==false)
+        assert(select('#',JP.SafeCallPair(function() return nil,false,99 end))==2)
+    ''')
+
+
 if __name__ == "__main__":
+    test_shared_protected_calls()
     test_completion_api()
     test_safe_defaults()
     test_raid_repair_total_resets_after_leaving_instance()
@@ -1365,4 +1462,5 @@ if __name__ == "__main__":
     test_unit_frame_health_can_optionally_use_class_color()
     test_approved_hud_is_the_new_profile_default()
     test_restricted_auras_use_targeted_friendly_lookup()
+    test_reward_level_api()
     print("MythicBoost executable smoke tests: all passed")

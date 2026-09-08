@@ -1,10 +1,7 @@
 local _, JP = ...
 local Lab, Points, UI, L = JP.TalentLab, JP.TalentPointValue, JP.UI, JP.L
 
-local function Call(fn,...)
-    if type(fn)~="function" then return end
-    local ok,value=pcall(fn,...); if ok then return value end
-end
+local Call = JP.SafeCall
 local function Spell(id)
     local info=C_Spell and JP.SafeTable(Call(C_Spell.GetSpellInfo,id))
     return info and JP.SafeString(info.name) or tostring(id),info and info.iconID

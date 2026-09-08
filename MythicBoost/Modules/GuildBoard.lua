@@ -15,6 +15,49 @@ local MEDAL_COLORS = {
 
 local UsableNumber, SafeString = UI.UsableNumber, UI.SafeString
 
+-- Raider.IO raidProgress groups are character progress for current raids;
+-- main-character and previous-tier records must not be attributed to this alt.
+function GuildBoard:RaidProgress(profile)
+    local raidProfile=profile and JP.SafeTable(profile.raidProfile)
+    local source=raidProfile and JP.SafeTable(raidProfile.raidProgress)
+    local rows,summary={},{}
+    for _,record in ipairs(source or {}) do
+        record=JP.SafeTable(record)
+        local raid=record and JP.SafeTable(record.raid)
+        local total=raid and JP.SafeNumber(raid.bossCount)
+        if record and JP.SafeBoolean(record.current) and not JP.SafeBoolean(record.isMainProgress)
+            and total and total>0 then
+            local byDifficulty={}
+            for _,group in ipairs(JP.SafeTable(record.progress) or {}) do
+                group=JP.SafeTable(group)
+                local diff=group and JP.SafeNumber(group.difficulty)
+                local kills=group and JP.SafeNumber(group.kills)
+                if diff and diff>=1 and diff<=3 and diff==math.floor(diff) and kills and kills>=0 and kills<=total then
+                    byDifficulty[diff]=math.max(byDifficulty[diff] or 0,kills)
+                end
+            end
+            local parts,best={},nil
+            local suffix={"N","H","M"}
+            for diff=1,3 do
+                if byDifficulty[diff] then
+                    local value=("%d/%d %s"):format(byDifficulty[diff],total,suffix[diff])
+                    parts[#parts+1]=value
+                    if not best or byDifficulty[diff]>0 then best=value end
+                end
+            end
+            if best then
+                local dungeon=JP.SafeTable(raid.dungeon)
+                local name=(dungeon and SafeString(dungeon.name)) or SafeString(raid.name) or SafeString(raid.shortName) or L("Рейд")
+                local short=SafeString(raid.shortName) or name
+                rows[#rows+1]={name=name,value=table.concat(parts,"   ")}
+                summary[#summary+1]=short.." "..best
+                if #rows==8 then break end
+            end
+        end
+    end
+    return rows,table.concat(summary,"  /  ")
+end
+
 ---------------------------------------------------------------------------
 -- Данные гильдии
 ---------------------------------------------------------------------------
@@ -50,7 +93,7 @@ function GuildBoard:ShowKeyTooltip(owner)
     -- can disagree with Raider.IO's own name/realm normalization.
     local cells = search:GetDungeonCells(entry.fullName, entry.classFile, entry.profile)
     if not self.keyTooltip then
-        local tip = UI.Panel(UIParent, C.surface, C.line)
+        local tip = UI.Panel(UIParent, C.surface, C.hudEdge)
         tip:SetWidth(440)
         tip:SetFrameStrata("TOOLTIP")
         tip:SetClampedToScreen(true)
@@ -59,7 +102,7 @@ function GuildBoard:ShowKeyTooltip(owner)
         tip.title:SetPoint("TOPLEFT", 12, -12)
         tip.title:SetPoint("TOPRIGHT", -90, -12)
         tip.title:SetJustifyH("LEFT"); tip.title:SetWordWrap(false)
-        tip.score = UI.Text(tip, "GameFontNormalLarge", "", C.amber)
+        tip.score = UI.Text(tip, "GameFontNormalLarge", "", C.text)
         tip.score:SetPoint("TOPRIGHT", -12, -12)
         local label = UI.Text(tip, "GameFontNormalSmall", L("ПОДЗЕМЕЛЬЯ СЕЗОНА"), C.muted)
         label:SetPoint("TOPLEFT", 12, -42)
@@ -67,7 +110,7 @@ function GuildBoard:ShowKeyTooltip(owner)
         best:SetPoint("TOPRIGHT", -12, -42)
         tip.rows = {}
         for index = 1, 8 do
-            local row = UI.Panel(tip, index % 2 == 0 and C.rowAlt or C.row, C.lineSoft)
+            local row = UI.Panel(tip, index % 2 == 0 and C.rowAlt or C.row, C.hudEdge)
             row:SetPoint("TOPLEFT", 10, -62 - (index-1)*30)
             row:SetPoint("TOPRIGHT", -10, -62 - (index-1)*30)
             row:SetHeight(28)
@@ -81,6 +124,13 @@ function GuildBoard:ShowKeyTooltip(owner)
             row.value:SetPoint("RIGHT", -8, 0)
             tip.rows[index] = row
         end
+        tip.raidLabel=UI.Text(tip,"GameFontNormalSmall",L("РЕЙДОВЫЙ ПРОГРЕСС"),C.accent)
+        tip.raidRows={}
+        for i=1,8 do
+            local row=UI.Text(tip,"GameFontHighlightSmall","",C.text)
+            row:SetWidth(416); row:SetJustifyH("LEFT"); row:SetWordWrap(false)
+            tip.raidRows[i]=row
+        end
         tip.footer = UI.Text(tip, "GameFontHighlightSmall", "", C.muted)
         tip.footer:SetPoint("BOTTOMLEFT", 12, 9)
         self.keyTooltip = tip
@@ -89,7 +139,7 @@ function GuildBoard:ShowKeyTooltip(owner)
     tip.owner = owner
     tip.title:SetText(UI.ClassIcon(entry.classFile, 20) .. "  " .. entry.fullName)
     tip.title:SetTextColor(UI.ClassColor(entry.classFile))
-    tip.score:SetText(math.floor(entry.score))
+    tip.score:SetText(entry.hasKeystoneScore==false and "—" or math.floor(entry.score))
     local count = math.min(8, #columns)
     for index, row in ipairs(tip.rows) do
         local column, cell = columns[index], cells and cells[index]
@@ -103,8 +153,16 @@ function GuildBoard:ShowKeyTooltip(owner)
             row:Hide()
         end
     end
-    tip.footer:SetText(cells and "Raider.IO" or L("Нет данных"))
-    tip:SetHeight(88 + count*30)
+    local raids=entry.raids or self:RaidProgress(entry.profile)
+    tip.raidLabel:ClearAllPoints(); tip.raidLabel:SetPoint("TOPLEFT",12,-(72+count*30))
+    for i,row in ipairs(tip.raidRows) do
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT",12,-(94+count*30+(i-1)*20))
+        local raid=raids[i]
+        row:SetText(raid and (raid.name.."  /  "..raid.value) or (i==1 and L("Нет рейдовых данных Raider.IO") or ""))
+        row:SetShown(raid~=nil or i==1)
+    end
+    tip.footer:SetText((cells or #raids>0) and "Raider.IO" or L("Нет данных"))
+    tip:SetHeight(124 + count*30+math.max(1,#raids)*20)
     tip:ClearAllPoints()
     tip:SetPoint("TOPRIGHT", owner, "BOTTOMRIGHT", 0, -6)
     tip:Show()
@@ -149,7 +207,8 @@ function GuildBoard:Collect(force)
             local profile = MemberProfile(fullName)
             local keystone = profile and profile.mythicKeystoneProfile
             local score = UI.KeystoneScore(keystone)
-            if score then
+            local raids,raidSummary=self:RaidProgress(profile)
+            if score or #raids>0 then
                 local profileName = SafeString(profile.name)
                 local profileRealm = SafeString(profile.realm)
                 if profileName and profileRealm then fullName = profileName .. "-" .. profileRealm end
@@ -158,8 +217,10 @@ function GuildBoard:Collect(force)
                     fullName = fullName,
                     profile = profile,
                     classFile = classFile,
-                    score = score,
-                    bestKey = BestKeyLevel(keystone),
+                    score = score or 0,
+                    hasKeystoneScore=score~=nil,
+                    raids=raids,raidSummary=raidSummary,
+                    bestKey = keystone and BestKeyLevel(keystone) or 0,
                     online = online and true or false,
                 }
             end
@@ -182,7 +243,7 @@ end
 ---------------------------------------------------------------------------
 
 local function CreatePodiumCard(parent, place)
-    local card = UI.Panel(parent, C.raised, C.line)
+    local card = UI.Panel(parent, C.raised, C.hudEdge)
     card.place = place
     HookKeyTooltip(card)
 
@@ -196,12 +257,15 @@ local function CreatePodiumCard(parent, place)
     card.name:SetJustifyH("LEFT")
     card.name:SetWordWrap(false)
 
-    card.score = UI.Text(card, "GameFontNormalHuge", "", C.amber)
+    card.score = UI.Text(card, "GameFontNormalHuge", "", C.text)
     card.score:SetPoint("BOTTOMLEFT", 14, 14)
 
     card.detail = UI.Text(card, "GameFontHighlightSmall", "", C.muted)
     card.detail:SetPoint("BOTTOMRIGHT", -14, 18)
     card.detail:SetJustifyH("RIGHT")
+    card.raid=UI.Text(card,"GameFontHighlightSmall","",C.muted)
+    card.raid:SetPoint("TOPLEFT",14,-42); card.raid:SetPoint("TOPRIGHT",-14,-42)
+    card.raid:SetJustifyH("LEFT"); card.raid:SetWordWrap(false)
 
     local glow = card:CreateTexture(nil, "OVERLAY")
     glow:SetColorTexture(unpack(MEDAL_COLORS[place]))
@@ -214,7 +278,7 @@ local function CreatePodiumCard(parent, place)
 end
 
 local function CreateListRow(parent, index)
-    local row = UI.Panel(parent, index % 2 == 0 and C.rowAlt or C.row, C.lineSoft)
+    local row = UI.Panel(parent, index % 2 == 0 and C.rowAlt or C.row, C.hudEdge)
     HookKeyTooltip(row)
     row:SetHeight(26)
 
@@ -225,9 +289,12 @@ local function CreateListRow(parent, index)
 
     row.name = UI.Text(row, "GameFontHighlightSmall", "", C.text)
     row.name:SetPoint("LEFT", 46, 0)
-    row.name:SetPoint("RIGHT", row, "RIGHT", -220, 0)
+    row.name:SetPoint("RIGHT", row, "RIGHT", -450, 0)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
+    row.raid=UI.Text(row,"GameFontHighlightSmall","",C.text)
+    row.raid:SetPoint("RIGHT",-220,0); row.raid:SetWidth(220)
+    row.raid:SetJustifyH("LEFT"); row.raid:SetWordWrap(false)
 
     row.best = UI.Text(row, "GameFontHighlightSmall", "", C.muted)
     row.best:SetPoint("RIGHT", -130, 0)
@@ -239,7 +306,7 @@ local function CreateListRow(parent, index)
     row.status:SetWidth(44)
     row.status:SetJustifyH("CENTER")
 
-    row.score = UI.Text(row, "GameFontNormalSmall", "", C.amber)
+    row.score = UI.Text(row, "GameFontNormalSmall", "", C.text)
     row.score:SetPoint("RIGHT", -14, 0)
     row.score:SetWidth(64)
     row.score:SetJustifyH("RIGHT")
@@ -291,6 +358,8 @@ function GuildBoard:Build(welcome, page)
     bestHeader:SetPoint("TOPRIGHT", -130, -142)
     bestHeader:SetWidth(80)
     bestHeader:SetJustifyH("CENTER")
+    local raidHeader=UI.Text(page,"GameFontNormalSmall",L("РЕЙДОВЫЙ ПРОГРЕСС"),C.faint)
+    raidHeader:SetPoint("TOPRIGHT",-220,-142); raidHeader:SetWidth(220); raidHeader:SetJustifyH("LEFT")
 
     self.rows = {}
     for index = 1, LIST_ROW_POOL do
@@ -371,7 +440,8 @@ function GuildBoard:RenderRows()
             row.name:SetTextColor(UI.ClassColor(entry.classFile))
             row.best:SetText(entry.bestKey > 0 and ("+" .. entry.bestKey) or "—")
             row.status:SetText(entry.online and L("|cff43d17aонлайн|r") or "")
-            row.score:SetText(math.floor(entry.score))
+            row.score:SetText(entry.hasKeystoneScore==false and "—" or math.floor(entry.score))
+            row.raid:SetText(entry.raidSummary and entry.raidSummary~="" and entry.raidSummary or "—")
             row:Show()
         else
             row:Hide()
@@ -397,7 +467,8 @@ function GuildBoard:Refresh()
         if entry then
             card.name:SetText(UI.ClassIcon(entry.classFile, 20) .. "  " .. entry.name)
             card.name:SetTextColor(UI.ClassColor(entry.classFile))
-            card.score:SetText(math.floor(entry.score))
+            card.score:SetText(entry.hasKeystoneScore==false and "—" or math.floor(entry.score))
+            card.raid:SetText(entry.raidSummary and entry.raidSummary~="" and entry.raidSummary or L("Нет рейдовых данных Raider.IO"))
             card.detail:SetText((L("|cff8a939fлучший ключ|r  |cff43d17a+%d|r")):format(entry.bestKey))
             card:Show()
         else

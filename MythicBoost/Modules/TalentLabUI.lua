@@ -29,11 +29,7 @@ local function Text(value)
     return type(value) == "string" and value ~= "" and value or nil
 end
 
-local function Call(fn, ...)
-    if type(fn) ~= "function" then return end
-    local ok, a, b = pcall(fn, ...)
-    if ok then return a, b end
-end
+local Call = JP.SafeCallPair
 
 local function Label(parent, value, x, y, width, color)
     local f = UI.Text(parent, "GameFontHighlightSmall", value or "", color or C.text)

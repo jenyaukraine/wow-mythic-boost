@@ -1,4 +1,4 @@
-"""Executable BuildMatch anti-spam cases, including secret text."""
+"""Removed listing filter must not reject groups, even with legacy settings."""
 from pathlib import Path
 from lupa import LuaRuntime
 
@@ -29,7 +29,7 @@ def test_build_match_spam_boundaries():
     lua.execute(r'''
         local f=JP.AutoMatch.TestBuildMatch
         SetText('WTS +12','for gold')
-        local ok,reason,match=f(1,{hideSpamListings=true},{},{}); assert(not ok and match and match.spamMarker)
+        local ok,reason,match=f(1,{hideSpamListings=true},{},{}); assert(reason~='рекламный/платный пост', "legacy enabled flag must not hide a listing")
         SetText('no boost weekly learning','free run, learning route'); ok,reason,match=f(2,{hideSpamListings=true},{},{}); assert(reason~='рекламный/платный пост')
         SetText('not boosting','free weekly'); ok,reason,match=f(3,{hideSpamListings=true},{},{}); assert(reason~='рекламный/платный пост')
         for _,name in ipairs({'Goldrinn weekly','Unpaid learning group','Newts +12'}) do

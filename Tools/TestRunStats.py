@@ -183,8 +183,37 @@ def test_temporarily_missing_native_row_does_not_double_count():
     ''')
 
 
+def test_duration_accessor_when_overall_table_omits_time():
+    lua=fixture()
+    lua.execute(r'''
+        local original=C_DamageMeter.GetCombatSessionFromType
+        C_DamageMeter.GetCombatSessionFromType=function(kind,typ)
+            local data=original(kind,typ); data.durationSeconds=nil; return data
+        end
+        C_DamageMeter.GetSessionDurationSeconds=function(kind)
+            assert(kind==Enum.DamageMeterSessionType.Overall and not combat)
+            return durations[0]
+        end
+        run=NewRun(); s:Start(run)
+        Native(31000,62000,5500,100); s:Snapshot()
+        result=Result(); s:Finish(run,result); Tick(.5)
+        local stats=result.performance['bob-realm']
+        assert(stats.damage==30000 and stats.healing==60000 and stats.duration==60)
+        assert(s:Text(stats,true):find('DPS 500',1,true))
+        assert(s:Text(stats,true):find('HPS 1.0k',1,true))
+        local copy=s:Validate(stats)
+        assert(copy.duration==60 and copy.damage/copy.duration==500)
+        s:Stop()
+        C_DamageMeter.GetSessionDurationSeconds=function() return Secret(60) end
+        assert(JP.API.GetDamageMeterDuration(0,{})==nil)
+        C_DamageMeter.GetSessionDurationSeconds=function() error('unavailable') end
+        assert(JP.API.GetDamageMeterDuration(0,{})==nil)
+    ''')
+
+
 if __name__=='__main__':
     for test in [test_key_baseline_rates_and_readonly_review,test_partial_missing_resets_and_secrets,
                  test_lifecycle_bounds_and_boundaries,test_validation_and_history_integration,
-                 test_temporarily_missing_native_row_does_not_double_count]:
+                 test_temporarily_missing_native_row_does_not_double_count,
+                 test_duration_accessor_when_overall_table_omits_time]:
         test(); print(test.__name__+': OK')

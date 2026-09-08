@@ -6,37 +6,11 @@ local UI = JP.UI
 local BLOODLUST_CLASSES = { HUNTER = true, MAGE = true, SHAMAN = true, EVOKER = true }
 local BATTLE_REZ_CLASSES = { DEATHKNIGHT = true, DRUID = true, PALADIN = true, WARLOCK = true }
 local MIN_KEY_LEVEL, MAX_KEY_LEVEL = 2, 40
-local SPAM_PATTERNS = {
-    " wts ", " wtb ", " wtt ", " boost service ", " boosting service ",
-    " paid ", " for gold ", " gold only ", " платно ", " продажа ", " продам ",
-    " услуги ", " услугу ", " за золото ",
-}
 
 -- Строки и числа из C_LFGList в Midnight могут быть защищёнными. Все
 -- потребители используют общий фильтр, чтобы отбор и UI видели одно значение.
 local UsableNumber, SafeString = UI.UsableNumber, UI.SafeString
 local SafeBoolean, SafeTable = UI.SafeBoolean, UI.SafeTable
-
-local function NormalizeSpamText(value)
-    if type(value) ~= "string" or value == "" then return nil end
-    local text = value:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-    text = text:lower()
-    return " " .. text:gsub("[%p%s]+", " "):gsub("%s+", " ") .. " "
-end
-
-local function ContainsSpamPattern(title, comment)
-    local candidates = {}
-    local titleText = NormalizeSpamText(title)
-    local commentText = NormalizeSpamText(comment)
-    if titleText then candidates[#candidates+1]=titleText end
-    if commentText then candidates[#candidates+1]=commentText end
-    for _, text in ipairs(candidates) do
-        for _, pattern in ipairs(SPAM_PATTERNS) do
-            if text:find(pattern, 1, true) then return pattern end
-        end
-    end
-    return nil
-end
 
 local function Contains(list, value)
     if type(list) ~= "table" then return false end
@@ -175,6 +149,7 @@ local function GetActivityID(info)
 end
 
 local function PlayerRole()
+    if JP.GroupTools and JP.GroupTools.applyRole then return JP.GroupTools:GetRole() end
     local specialization = GetSpecialization and GetSpecialization()
     local role = specialization and GetSpecializationRole(specialization)
     if role == "TANK" or role == "HEALER" or role == "DAMAGER" then return role end
@@ -196,7 +171,7 @@ local function OwnPartyProfile()
     for _, unit in ipairs(units) do
         if UnitExists(unit) then
             local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit)
-            if (not role or role == "NONE") and unit == "player" then role = PlayerRole() end
+            if unit == "player" then role = PlayerRole() end
             if role ~= "TANK" and role ~= "HEALER" and role ~= "DAMAGER" then role = "DAMAGER" end
             profile.roles[role] = profile.roles[role] + 1
             local _, classFilename = UnitClass(unit)
@@ -211,8 +186,8 @@ local function Composition(searchResultID, numMembers)
     local counts = C_LFGList.GetSearchResultMemberCounts and SafeTable(C_LFGList.GetSearchResultMemberCounts(searchResultID))
     local tankCount = counts and counts.TANK
     local healerCount = counts and counts.HEALER
-    local hasTank = UsableNumber(tankCount) and tankCount > 0 or false
-    local hasHealer = UsableNumber(healerCount) and healerCount > 0 or false
+    local hasTank = UsableNumber(tankCount) and tankCount > 0
+    local hasHealer = UsableNumber(healerCount) and healerCount > 0
     local hasBloodlust = false
     local hasBattleRes = false
     local memberInfo = {}
@@ -225,6 +200,8 @@ local function Composition(searchResultID, numMembers)
             memberInfo[#memberInfo + 1] = {
                 name = SafeString(member.name),
                 classFilename = classFilename,
+                specName = SafeString(member.specName),
+                isLeaver = JP.SafeOptionalBoolean(member.isLeaver),
                 assignedRole = role,
                 isLeader = SafeBoolean(member.isLeader) or index == 1,
             }
@@ -327,7 +304,6 @@ local REASON = {
     full = L("группа уже полная"),
     belowBest = L("ключ ниже твоего рекорда"),
     keyUnknown = L("уровень ключа не распознан"),
-    spam = L("рекламный/платный пост"),
     recordUnknown = L("не найден твой рекорд подземелья"),
     roleFit = L("нет места под роли твоей пати"),
     tank = L("в группе нет танка"),
@@ -397,18 +373,8 @@ local function BuildMatch(searchResultID, filters, runtime, party)
 
     local activityID = GetActivityID(info)
     local activity = activityID and C_LFGList.GetActivityInfoTable(activityID)
+    if activity and JP.SafeNumber(activity.categoryID) and activity.categoryID~=2 then return end
     local title, comment = SafeString(info.name), SafeString(info.comment)
-    if filters.hideSpamListings ~= false then
-        local spamMarker = ContainsSpamPattern(title, comment)
-        if spamMarker then
-            return Reject({
-                searchResultID = searchResultID,
-                dungeon = L("Рекламное объявление"),
-                members = 0, score = 0, bestLevel = 0,
-                spamMarker = spamMarker,
-            }, REASON.spam, false)
-        end
-    end
     local keyLevel = ParseKeyLevel(title) or ParseKeyLevel(comment)
 
     local run = PlayerDungeon(activityID)
@@ -436,6 +402,10 @@ local function BuildMatch(searchResultID, filters, runtime, party)
     local hasTank, hasHealer, hasBloodlust, hasBattleRes, counts, memberInfo = Composition(searchResultID, members)
 
     local challengeMapInfo = mapID and JP.API.GetChallengeMap(mapID)
+    local bnetFriends, charFriends = JP.SafeNumber(info.numBNetFriends), JP.SafeNumber(info.numCharFriends)
+    local friends
+    if bnetFriends and charFriends then friends = bnetFriends + charFriends
+    elseif (bnetFriends or charFriends or 0) > 0 then friends = bnetFriends or charFriends end
     local match = {
         searchResultID = searchResultID,
         activityID = activityID,
@@ -446,6 +416,12 @@ local function BuildMatch(searchResultID, filters, runtime, party)
         title = title,
         comment = comment,
         leaderName = SafeString(info.leaderName),
+        friends = friends,
+        requiredItemLevel = JP.SafeNumber(info.requiredItemLevel),
+        requiredScore = JP.SafeNumber(info.requiredDungeonScore),
+        playstyle = JP.SafeNumber(info.generalPlaystyle),
+        autoAccept = JP.SafeOptionalBoolean(info.autoAccept),
+        leaderFaction = JP.SafeNumber(info.leaderFactionGroup),
         leaderDungeonScoreInfo = info.leaderDungeonScoreInfo,
         keyLevel = keyLevel,
         keyApprox = keyApprox,
@@ -466,6 +442,11 @@ local function BuildMatch(searchResultID, filters, runtime, party)
 
     if SafeBoolean(info.isDelisted) then return Reject(match, REASON.delisted, false) end
     if members >= 5 then return Reject(match, REASON.full, false) end
+    if JP.GroupTools then
+        for _,member in ipairs(memberInfo or {}) do if member.isLeaver then match.hasLeaver=true end end
+        local reason = JP.GroupTools:Reject(match, filters)
+        if reason then return Reject(match, reason) end
+    end
 
     -- Сначала отбираем подземелье: activityID остаётся обычным числом даже
     -- тогда, когда Blizzard защищает пользовательское название объявления.
@@ -480,7 +461,7 @@ local function BuildMatch(searchResultID, filters, runtime, party)
     -- LeaderRunLevel() is only the leader's best result for this dungeon. It
     -- is useful as a hint in the row, but it is NOT the level advertised by
     -- the group. Never use that approximation as a hard filter.
-    if keyLevel and not keyApprox and keyLevel <= bestLevel then return Reject(match, REASON.belowBest) end
+    if filters.scoreUpgrade and keyLevel and not keyApprox and keyLevel <= bestLevel then return Reject(match, REASON.belowBest) end
     -- В Midnight name/comment являются protected strings. Стандартный фрейм
     -- умеет их рисовать, но Lua не имеет права вызвать на них match(). Поэтому
     -- известный уровень проверяем строго, а скрытый не превращаем в ложный
@@ -523,11 +504,13 @@ local function BuildMatch(searchResultID, filters, runtime, party)
     if filters.notDeclined and IsDeclined(searchResultID) then return Reject(match, REASON.declined, false) end
     -- Уровень ключа в заголовке может быть скрыт клиентом. Неизвестный
     -- уровень оставляем видимым, вместо того чтобы выкинуть годную группу.
-    if not filters.scoreUpgrade and not InRange(keyApprox and nil or keyLevel, filters.keyMin, filters.keyMax, true) then
+    local confirmedLevel
+    if not keyApprox then confirmedLevel = keyLevel end
+    if not filters.scoreUpgrade and not InRange(confirmedLevel, filters.keyMin, filters.keyMax, true) then
         return Reject(match, REASON.keyRange)
     end
     if not InRange(score, filters.scoreMin, filters.scoreMax, false) then return Reject(match, REASON.score) end
-    if tonumber(filters.runsMin) then
+    if (tonumber(filters.runsMin) or 0) > 0 then
         -- Отсутствие профиля и слабый профиль — разные причины: иначе выдача
         -- молча пустеет там, где на самом деле просто нет данных.
         if leaderRuns == nil then return Reject(match, REASON.runsUnknown) end
@@ -561,7 +544,8 @@ function AutoMatch:Scan(filters, runtime)
     end
     local rejected = {}
     for sourceOrder, searchResultID in ipairs(resultIDs) do
-        local ok, match, reason, rejectedMatch = pcall(BuildMatch, searchResultID, filters, runtime, party)
+        local builder=filters.category=="raid" and JP.RaidFinder and JP.RaidFinder.BuildMatch or BuildMatch
+        local ok, match, reason, rejectedMatch = pcall(builder, searchResultID, filters, runtime, party)
         if not ok then
             JP:Log(L("строка поиска %s не разобрана: %s"), tostring(searchResultID), tostring(match))
             reason = REASON.readError
@@ -609,6 +593,7 @@ function AutoMatch:Scan(filters, runtime)
 end
 
 function AutoMatch:Apply(match, editBeforeApply)
+    if JP.GroupTools then JP.GroupTools:Track(match) end
     local searchResultID = type(match) == "table" and match.searchResultID or match
     local info = searchResultID and C_LFGList.GetSearchResultInfo(searchResultID)
     if not info or SafeBoolean(info.isDelisted) then
@@ -624,7 +609,7 @@ function AutoMatch:Apply(match, editBeforeApply)
         if type(SetLFGRoles) == "function"
             and type(GetSpecialization) == "function" and type(GetSpecializationRole) == "function" then
             local spec = GetSpecialization()
-            local role = spec and GetSpecializationRole(spec)
+            local role = JP.GroupTools and JP.GroupTools:GetRole() or (spec and GetSpecializationRole(spec))
             if role == "TANK" or role == "HEALER" or role == "DAMAGER" then
                 -- The first argument is the independent leader preference,
                 -- not tank. Omitting it registered healers as tanks.

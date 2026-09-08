@@ -172,11 +172,9 @@ function CastBar:Start(channel, empower, castGUID, eventSpellID)
     local frame = self.frame
     frame:SetAlpha(wasActive and 1 or 0)
     frame.icon:SetTexture(icon or 136243)
-    local sentMatches = PlainToken(self.sentGUID) and PlainToken(self.castGUID)
-        and self.sentGUID == self.castGUID
-    if not sentMatches and PlainNumber(self.sentSpellID) and PlainNumber(self.castSpellID) then
-        sentMatches = self.sentSpellID == self.castSpellID
-    end
+    local sentMatches = (PlainToken(self.sentGUID) and PlainToken(self.castGUID)
+        and self.sentGUID == self.castGUID) or (PlainNumber(self.sentSpellID)
+        and PlainNumber(self.castSpellID) and self.sentSpellID == self.castSpellID)
     local target = sentMatches and self.targetName or nil
     -- A SENT event can belong to a cancelled or previous cast. Never turn its
     -- stale timestamp into a full-bar latency zone on the next spell.

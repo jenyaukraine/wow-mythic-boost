@@ -17,6 +17,12 @@ JP.Limits = {
     REVIEW_RECORDS = 1000,
     REVIEW_TEXT_BYTES = 240,
     ACTIVE_APPLICATIONS = 5,
+    SEARCH_PRESETS = 8,
+    SEARCH_LEADERS = 200,
+    SEARCH_LEADER_TTL = 180 * 24 * 60 * 60,
+    SEARCH_HISTORY = 200,
+    SEARCH_HISTORY_TTL = 30 * 24 * 60 * 60,
+    SEARCH_CACHE = 200,
 }
 
 -- Midnight помечает часть данных как secret. На клиентах без этого API
@@ -61,6 +67,19 @@ end
 
 function JP.SafeTable(value)
     return type(value) == "table" and not JP.IsSecret(value) and value or nil
+end
+
+-- Keep protected-call return counts stable for consumers of raw API values.
+function JP.SafeCall(fn, ...)
+    if type(fn) ~= "function" then return end
+    local ok, value = pcall(fn, ...)
+    if ok then return value end
+end
+
+function JP.SafeCallPair(fn, ...)
+    if type(fn) ~= "function" then return end
+    local ok, first, second = pcall(fn, ...)
+    if ok then return first, second end
 end
 
 local API = {}
@@ -159,6 +178,18 @@ function API.GetChallengeDeaths()
     return { count = JP.SafeNumber(count) or 0, timeLost = JP.SafeNumber(timeLost) or 0 }
 end
 
+function API.GetDamageMeterDuration(sessionType, session)
+    -- Возвращает продолжительность сессии из C_DamageMeter или из session объекта.
+    local duration = JP.SafeTable(session) and JP.SafeNumber(session.durationSeconds)
+    if not duration then
+        if C_DamageMeter and type(C_DamageMeter.GetSessionDurationSeconds) == "function" then
+            local ok, value = Call(C_DamageMeter, "GetSessionDurationSeconds", sessionType)
+            if ok then duration = JP.SafeNumber(value) end
+        end
+    end
+    if duration and duration >= 0 and duration <= 1e8 then return duration end
+end
+
 local DECLINED = {
     declined = true,
     declined_full = true,
@@ -191,6 +222,14 @@ end
 function API.GetApplicationIDs()
     local ok, applications = Call(C_LFGList, "GetApplications")
     return ok and JP.SafeTable(applications) or nil
+end
+
+function API.GetRewardLevel(difficultyLevel)
+    -- Blizzard returns the vault reward first, the dungeon reward second.
+    local ok, _, dungeon = Call(C_MythicPlus, "GetRewardLevelForDifficultyLevel", difficultyLevel)
+    local level = ok and JP.SafeNumber(dungeon)
+    level = level and level > 0 and level or nil
+    return { level = level, source = level and "dungeon" or nil }
 end
 
 -- Совместимый фасад для старых модулей и сторонних обращений. Новый код

@@ -66,16 +66,10 @@ local function EnsureButton(module)
     -- close button occupies the row above, so this does not overlap it.
     button:SetPoint("TOPRIGHT", -8, -23)
     button:SetFrameStrata("HIGH")
-    button:SetScript("OnClick", function()
-        if InCombatLockdown() then
-            OpenOurs()
-            return
-        end
-        -- MythicBoost — вспомогательное окно поверх штатного поиска. Не
-        -- закрываем PVEFrame: пользователь должен вернуться ровно к тому
-        -- списку или форме, поверх которой открыл аддон.
-        OpenOurs()
-    end)
+    -- MythicBoost — вспомогательное окно поверх штатного поиска. Не
+    -- закрываем PVEFrame: пользователь должен вернуться ровно к тому
+    -- списку или форме, поверх которой открыл аддон.
+    button:SetScript("OnClick", OpenOurs)
     button:HookScript("OnEnter", function(self)
         UI.Tooltip(self, "MythicBoost",
             L("Открыть окно подбора групп: фильтры, кандидаты и рейтинг гильдии."),

@@ -50,6 +50,7 @@ def check_api_ownership(entries: list[str]) -> None:
         "GetMapUIInfo",
         "GetApplicationInfo",
         "GetApplications",
+        "GetRewardLevelForDifficultyLevel",
     }
     for entry in entries:
         if not entry.endswith(".lua") or entry == "Contracts.lua" or entry.startswith("Libs/"):

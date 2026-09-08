@@ -294,6 +294,8 @@ function Monitor:CancelCombatReport()
     self.pullSnapshotReadyPlayers=nil
 end
 
+local REPORT_RETRY_DELAYS = {.35, .65, 1, 2, 3}
+
 function Monitor:QueueCombatReport(attempt)
     if not self.running or not self.active or self.frozen or self.reportTimer then return end
     if self.completed and self.keyFinalized then return end
@@ -304,7 +306,7 @@ function Monitor:QueueCombatReport(attempt)
     attempt=attempt or (self.reportExhausted and 6 or 1)
     -- Five quick attempts, then wake only on native meter updates. The player
     -- combat event can precede both lockdown release and public spell details.
-    local delay=attempt==1 and .35 or (attempt==2 and .65 or (attempt==3 and 1 or (attempt==4 and 2 or (attempt==5 and 3 or .25))))
+    local delay=REPORT_RETRY_DELAYS[attempt] or .25
     delay=math.max(delay,(self.reportRetryAt or 0)-GetTime())
     local timer
     timer=C_Timer.NewTimer(delay,function()
