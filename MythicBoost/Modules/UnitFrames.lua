@@ -477,7 +477,7 @@ end
 
 local function UpdatePower(display)
     if IsBoolean(UnitExists(display.unit), false) then return end
-    local powerType = UnitPowerType(display.unit)
+    local powerType, token = UnitPowerType(display.unit)
     local current, maximum = UnitPower(display.unit, powerType), UnitPowerMax(display.unit, powerType)
     local targetIsPlayer = IsBoolean(UnitIsPlayer(display.unit), true)
     if (UI.UsableNumber(maximum) and maximum <= 0)
@@ -496,7 +496,6 @@ local function UpdatePower(display)
     local maximumOK, maximumText = pcall(AbbreviateNumbers, maximum)
     if currentOK and maximumOK then display.powerValue:SetFormattedText("%s/%s", currentText, maximumText)
     else display.powerValue:SetText("") end
-    local _, token = UnitPowerType(display.unit)
     local usableToken = type(token) == "string" and not issecretvalue(token)
     local color = usableToken and PowerBarColor and PowerBarColor[token]
     if color and color.r then MatteBarColor(display.power, color.r, color.g, color.b)
@@ -2115,6 +2114,19 @@ function UnitFrames:QueuePortraitRefresh(display)
     end)
 end
 
+function UnitFrames:RefreshPowerType(display)
+    if not display then return end
+    UpdatePower(display)
+    if display.powerRefreshPending or not C_Timer or type(C_Timer.After) ~= "function" then return end
+    -- Form/model notifications can precede the final displayed power type.
+    -- Refresh once after the event burst, reading the current unit again.
+    display.powerRefreshPending = true
+    C_Timer.After(.05, function()
+        display.powerRefreshPending = nil
+        if self.container and self.container:IsShown() then UpdatePower(display) end
+    end)
+end
+
 function UnitFrames:OnEvent(event, unit, updateInfo)
     if event == "PLAYER_REGEN_ENABLED" then
         local pending = self.pending; self.pending = {}
@@ -2132,11 +2144,13 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         self:RefreshDispelSet(); self:RefreshAll()
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
         self:RefreshDispelSet()
+        self:RefreshPowerType(self.displays.player)
         UpdateResourcePips(self.displays.player)
         if self.displays.player and self.displays.player.debuffRow then RefreshAuras(self.displays.player) end
         if self.displays.target then RefreshAuras(self.displays.target) end
     elseif event == "UPDATE_SHAPESHIFT_FORM" or event == "RUNE_POWER_UPDATE" then
         UpdateResourcePips(self.displays.player)
+        if event == "UPDATE_SHAPESHIFT_FORM" then self:RefreshPowerType(self.displays.player) end
         if event == "UPDATE_SHAPESHIFT_FORM" and self.displays.player.portrait then
             self:QueuePortraitRefresh(self.displays.player)
         end
@@ -2155,13 +2169,15 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then UpdateAbsorbs(display)
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER"
             or event == "UNIT_POWER_POINT_CHARGE" then
-            UpdatePower(display)
+            if event == "UNIT_DISPLAYPOWER" then self:RefreshPowerType(display)
+            else UpdatePower(display) end
             if display.unit == "player" then
                 UpdateResourcePips(display)
                 if event == "UNIT_DISPLAYPOWER" and display.debuffRow then RefreshAuras(display) end
             end
         elseif event == "UNIT_PORTRAIT_UPDATE" or event == "UNIT_MODEL_CHANGED" then
             self:QueuePortraitRefresh(display)
+            if event == "UNIT_MODEL_CHANGED" then self:RefreshPowerType(display) end
         else UpdateIdentity(display); UpdateState(display) end
     end
 end

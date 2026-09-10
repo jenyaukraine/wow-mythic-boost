@@ -808,6 +808,39 @@ local function IsOwnLootMessage(message)
     return false
 end
 
+-- Celebrate only the player's received gear. A guide recommendation alone
+-- does not make another player's loot, or a second equipped copy, a reward.
+local function NewBiSReward(link)
+    local bis = JP.BiSData
+    if not bis or not bis.GetItem then return end
+    local itemID = tonumber(link:match("item:(%d+)"))
+    if not itemID then return end
+    local specID = bis.GetLootSpecID and bis:GetLootSpecID()
+    if not specID then
+        specID = JP.SafeNumber(JP.SafeCall(GetLootSpecialization))
+        if not specID or specID == 0 then specID = bis:GetCurrentSpecID() end
+    end
+    local recommendation = bis:GetItem(specID, itemID, "overall")
+    if not recommendation or recommendation.kind ~= "bis" then return end
+    for slot = 1, 19 do
+        local equipped = JP.SafeNumber(JP.SafeCall(GetInventoryItemID, "player", slot))
+        if equipped == itemID then
+            local itemLevel = C_Item and C_Item.GetDetailedItemLevelInfo
+            local receivedLevel = JP.SafeNumber(JP.SafeCall(itemLevel, link))
+            local equippedLink = JP.SafeString(JP.SafeCall(GetInventoryItemLink, "player", slot))
+            local equippedLevel = equippedLink and JP.SafeNumber(JP.SafeCall(itemLevel, equippedLink))
+            -- The same BiS on a higher reward track is still worth celebrating.
+            -- Unloaded levels cannot establish that it improves an owned copy.
+            if not receivedLevel or not equippedLevel or receivedLevel <= equippedLevel then return end
+        end
+    end
+    local now = GetTime()
+    for _, entry in ipairs(LootUI.history or {}) do
+        if entry.rewardItemID == itemID and (entry.expires or 0) > now then return end
+    end
+    return itemID
+end
+
 function LootUI:AddHistoryMessage(message, event)
     if not Settings().showHistory or IsExternalMonitorLoaded() or type(message) ~= "string"
         or issecretvalue(message) then return end
@@ -837,15 +870,18 @@ function LootUI:AddHistoryMessage(message, event)
         local ok, info = pcall(C_CurrencyInfo.GetCurrencyInfoFromLink, currencyLink)
         if ok and type(info) == "table" then icon = SafeValue(info.iconFileID, icon) end
     end
-    local displayMessage = message
+    local displayMessage, rewardItemID = message, nil
     if event == "CHAT_MSG_LOOT" and itemLink and IsOwnLootMessage(message) then
         -- Системный текст «Ваша добыча: …» в компактной строке только
         -- повторяет очевидное. Цветная ссылка уже содержит имя и качество.
         displayMessage = itemLink
+        rewardItemID = NewBiSReward(itemLink)
+        if rewardItemID then displayMessage = "|cffffd45aBIS|r  " .. displayMessage end
     end
     self.history = self.history or {}
     table.insert(self.history, 1, {
         message = displayMessage, link = link, icon = icon, quality = quality,
+        rewardItemID = rewardItemID,
         expires = GetTime() + HISTORY_LIFETIME,
     })
     while #self.history > MAX_HISTORY_ROWS do table.remove(self.history) end
@@ -887,13 +923,26 @@ function LootUI:RefreshHistory()
     local maximumWidth = 220
     for index, row in ipairs(self.historyRows) do
         local data = display[index]
+        row.playRewardPulse = nil
         if data then
             row.link = data.link
+            row.rewardItemID = data.rewardItemID
             row.icon:SetTexture(data.icon)
             row.text:SetText(data.message)
             local r, g, b = QualityColor(data.quality)
+            if data.rewardItemID then r, g, b = 1, .78, .20 end
             row:SetBackdropBorderColor(r, g, b, .90)
-            row.glow:SetVertexColor(r, g, b, (data.quality or 1) >= 2 and .26 or .04)
+            row.glow:SetVertexColor(r, g, b, data.rewardItemID and .48 or ((data.quality or 1) >= 2 and .26 or .04))
+            -- Reused rows must not keep a previous reward's animation. Mark
+            -- the entry itself so reordering the history does not replay it.
+            if row.historyEntry ~= data then
+                row.rewardPulse:Stop()
+                row.rewardGlow:SetAlpha(0)
+                row.historyEntry = data
+                if data.rewardItemID and not data.rewardShown then
+                    row.playRewardPulse = true
+                end
+            end
             local textWidth = type(row.text.GetStringWidth) == "function" and row.text:GetStringWidth() or 180
             local rowWidth = math.max(150, math.min(430, 48 + (textWidth or 180)))
             row:SetWidth(rowWidth)
@@ -901,6 +950,9 @@ function LootUI:RefreshHistory()
             row:Show()
         else
             row.link = nil
+            row.rewardItemID, row.historyEntry = nil, nil
+            row.rewardPulse:Stop()
+            row.rewardGlow:SetAlpha(0)
             row:Hide()
         end
     end
@@ -908,6 +960,13 @@ function LootUI:RefreshHistory()
     self.historyFrame:SetWidth(maximumWidth)
     self.historyFrame:SetHeight(4 + shown * HISTORY_ROW_HEIGHT)
     self.historyFrame:SetShown(shown > 0)
+    for _, row in ipairs(self.historyRows) do
+        if row.playRewardPulse then
+            row.historyEntry.rewardShown = true
+            row.rewardPulse:Play()
+            row.playRewardPulse = nil
+        end
+    end
 end
 
 function LootUI:SetUnlocked(unlocked)
@@ -979,6 +1038,7 @@ function LootUI:BuildAuxiliaryFrames()
             SaveAuxiliaryPosition(historyFrame, "historyPosition")
         end)
         row:SetScript("OnHide", function(owner)
+            if owner.rewardPulse then owner.rewardPulse:Stop(); owner.rewardGlow:SetAlpha(0) end
             if owner.historyDragging then
                 owner.historyDragging = nil; historyFrame:StopMovingOrSizing()
             end
@@ -994,6 +1054,20 @@ function LootUI:BuildAuxiliaryFrames()
         row.glow:SetPoint("BOTTOMRIGHT", 1, -1)
         row.glow:SetTexture(LOOT_GLOW_TEXTURE)
         row.glow:SetBlendMode("ADD")
+        row.rewardGlow = row:CreateTexture(nil, "OVERLAY")
+        row.rewardGlow:SetPoint("TOPLEFT", -2, 2)
+        row.rewardGlow:SetPoint("BOTTOMRIGHT", 2, -2)
+        row.rewardGlow:SetTexture(LOOT_GLOW_TEXTURE)
+        row.rewardGlow:SetBlendMode("ADD")
+        row.rewardGlow:SetVertexColor(1, .78, .20)
+        row.rewardGlow:SetAlpha(0)
+        row.rewardPulse = row.rewardGlow:CreateAnimationGroup()
+        local brighten = row.rewardPulse:CreateAnimation("Alpha")
+        brighten:SetFromAlpha(0); brighten:SetToAlpha(.70); brighten:SetDuration(.45); brighten:SetOrder(1)
+        brighten:SetSmoothing("IN_OUT")
+        local fade = row.rewardPulse:CreateAnimation("Alpha")
+        fade:SetFromAlpha(.70); fade:SetToAlpha(0); fade:SetDuration(1.25); fade:SetOrder(2)
+        fade:SetSmoothing("IN_OUT")
         row.icon = row:CreateTexture(nil, "ARTWORK")
         row.icon:SetPoint("TOPLEFT", 3, -3)
         row.icon:SetSize(26, 26)
@@ -1007,6 +1081,7 @@ function LootUI:BuildAuxiliaryFrames()
             if owner.link then
                 GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
                 GameTooltip:SetHyperlink(owner.link)
+                if owner.rewardItemID then GameTooltip:AddLine(L("Получен BIS-предмет"), 1, .78, .20) end
                 GameTooltip:Show()
             end
         end)
