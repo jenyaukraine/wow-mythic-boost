@@ -1355,6 +1355,9 @@ end
 -- write SaveAdvancedFilter: its tables are also consumed by restricted UI.
 function GroupSearchUI:ImportNativeDungeons(welcome)
     if not welcome or not welcome.groupFilters or not C_LFGList.GetAdvancedFilter then return end
+    -- Refresh uses the native query submission too; that is not a request
+    -- to replace our selected dungeon cards with Blizzard's global filter.
+    if self.submittingNativeQuery then return end
     -- The native EditBox is also our query editor. Its Enter/category setup
     -- runs a stock search, but does not mean the player changed dungeon cards.
     if JP.GroupTools and (JP.GroupTools.edit or JP.GroupTools.openingQuery or JP.GroupTools.closingQuery) then
@@ -1409,36 +1412,62 @@ function GroupSearchUI:RunDirectSearch(welcome, token)
     self.searchAwaitingResults = true
     local ok = false
 
-    -- Сборка фильтра обязана быть защищена: если список активностей ещё
-    -- не готов или API конкретной сборки вернул неожиданные данные, кнопка не
-    -- должна навечно оставаться в состоянии «Поиск...».
-    local built, advancedFilter, activityIDs = pcall(self.BuildServerFilter, self, welcome)
-    if not built then
-        JP:Log(L("ошибка серверного фильтра: %s"), tostring(advancedFilter))
-        FinishBlizzardSearch(welcome, token, L("Не удалось собрать фильтр Blizzard. Нажми «Обновить» ещё раз."))
-        return
-    end
-    local filterEnum = Enum and Enum.LFGListFilter or {}
-    local languages = C_LFGList.GetLanguageSearchFilter and C_LFGList.GetLanguageSearchFilter() or nil
-    if welcome.groupFilters.languages then
-        languages={}
-        for _,key in ipairs({"english","russian","german","french","spanish","italian"}) do
-            languages[key]=welcome.groupFilters.languages[key]~=false
+    local panel = LFGListFrame and LFGListFrame.SearchPanel
+    local category = welcome.groupFilters.category == "raid" and 3 or 2
+    local query = ReadNativeSearchText()
+    local nativeQuery = query and query ~= "" and panel and panel.categoryID == category
+        and type(LFGListSearchPanelSearchBox_OnEnterPressed) == "function"
+    if nativeQuery then
+        -- Submit the retained protected input exactly as Enter does, including
+        -- autocomplete, native languages/advanced filters and preferred flags.
+        -- Do not close the input or rewrite its protected text before Search.
+        self.submittingNativeQuery = true
+        if JP.ListingDefaults then
+            ok = JP.ListingDefaults:Call(LFGListSearchPanelSearchBox_OnEnterPressed, panel.SearchBox)
+        else
+            ok = pcall(LFGListSearchPanelSearchBox_OnEnterPressed, panel.SearchBox)
         end
-    end
-    -- Match the native dungeon category arithmetic; text remains in the
-    -- original input and is applied by Blizzard on this hardware click.
-    local searchFilter = bit and bit.bor(filterEnum.Recommended or 1, filterEnum.PvE or 4) or 5
-    local preferredFilters = 0
-    self.manualExactLevel = targetLevel
-    if welcome.groupFilters then welcome.groupFilters.searchExactLevel = targetLevel end
-    local searchCrossFactionListings = nil
-    if JP.ListingDefaults then
-        ok = JP.ListingDefaults:Call(C_LFGList.Search, welcome.groupFilters.category=="raid" and 3 or 2,
-            searchFilter, preferredFilters, languages, searchCrossFactionListings, advancedFilter, activityIDs)
+        self.submittingNativeQuery = nil
+        -- Autocomplete can change the query during the native submission.
+        targetLevel = category == 2 and NativeExactLevel() or nil
+        self.currentSearchTarget = targetLevel
+        self.lastSearchTarget = targetLevel
+        self.manualExactLevel = targetLevel
+        welcome.groupFilters.searchExactLevel = targetLevel
+        if JP.GroupTools then JP.GroupTools:AcceptQuery(welcome) end
     else
-        ok = pcall(C_LFGList.Search, 2, searchFilter, preferredFilters,
-            languages, searchCrossFactionListings, advancedFilter, activityIDs)
+
+        -- Сборка фильтра обязана быть защищена: если список активностей ещё
+        -- не готов или API конкретной сборки вернул неожиданные данные, кнопка не
+        -- должна навечно оставаться в состоянии «Поиск...».
+        local built, advancedFilter, activityIDs = pcall(self.BuildServerFilter, self, welcome)
+        if not built then
+            JP:Log(L("ошибка серверного фильтра: %s"), tostring(advancedFilter))
+            FinishBlizzardSearch(welcome, token, L("Не удалось собрать фильтр Blizzard. Нажми «Обновить» ещё раз."))
+            return
+        end
+        local filterEnum = Enum and Enum.LFGListFilter or {}
+        local languages = C_LFGList.GetLanguageSearchFilter and C_LFGList.GetLanguageSearchFilter() or nil
+        if welcome.groupFilters.languages then
+            languages={}
+            for _,key in ipairs({"english","russian","german","french","spanish","italian"}) do
+                languages[key]=welcome.groupFilters.languages[key]~=false
+            end
+        end
+        -- Match the native dungeon category arithmetic; text remains in the
+        -- original input and is applied by Blizzard on this hardware click.
+        local searchFilter = bit and bit.bor(filterEnum.Recommended or 1, filterEnum.PvE or 4) or 5
+        local preferredFilters = 0
+        self.manualExactLevel = targetLevel
+        if welcome.groupFilters then welcome.groupFilters.searchExactLevel = targetLevel end
+        local searchCrossFactionListings = nil
+        if JP.ListingDefaults then
+            ok = JP.ListingDefaults:Call(C_LFGList.Search, welcome.groupFilters.category=="raid" and 3 or 2,
+                searchFilter, preferredFilters, languages, searchCrossFactionListings, advancedFilter, activityIDs)
+        else
+            ok = pcall(C_LFGList.Search, 2, searchFilter, preferredFilters,
+                languages, searchCrossFactionListings, advancedFilter, activityIDs)
+        end
     end
     JP:Log(L("точный поиск: %s"), targetLevel and (("%d-%d"):format(targetLevel, targetLevel)) or L("без уровня"))
     if not ok then
@@ -1485,7 +1514,7 @@ function GroupSearchUI:QueueSearchResults(welcome, event)
 end
 
 function GroupSearchUI:RequestBlizzardSearch(welcome)
-    if JP.GroupTools then JP.GroupTools:EndEdit(); JP.GroupTools:AcceptQuery(welcome) end
+    if JP.GroupTools then JP.GroupTools:AcceptQuery(welcome) end
     if welcome.groupFilters.category~="raid" and SelectedCount(welcome) == 0 and welcome.groupFilters.dungeonsNone == true then
         JP:Print(L("Выбери хотя бы одно подземелье."))
         return
@@ -1519,6 +1548,7 @@ function GroupSearchUI:RequestBlizzardSearch(welcome)
     -- защищён hardware event и обязан выполняться в стеке этого клика.
     if C_LFGList.RequestAvailableActivities then pcall(C_LFGList.RequestAvailableActivities) end
     self:ScheduleCurrentSearch(welcome, token)
+    if JP.GroupTools then JP.GroupTools:EndEdit() end
 
 end
 
