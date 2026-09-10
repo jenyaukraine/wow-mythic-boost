@@ -62,17 +62,18 @@ function Assist:ActionBody(focus)
     if focus == true then
         local body = "/clearfocus [mod:alt]\n/stopmacro [mod:alt]\n/focus [@mouseover,harm,nodead][harm,nodead]"
         if s.skipRaid then body = body .. "\n/stopmacro [group:raid]" end
-        if s.marker > 0 then body = body .. "\n/tm [@focus,harm,nodead] " .. (s.preserveMark and "~" or "") .. s.marker end
+        if s.marker > 0 then body = body .. "\n/tm [@focus,harm,nodead] " .. (s.preserveMark and "~" or "!") .. s.marker end
         return body
     end
     local body = info and ("#showtooltip " .. info.name) or ""
     if focus == "shared" then
-        -- Both protected operations run on the same hardware click. Friendly,
-        -- dead or absent mouseover units leave the current focus unchanged.
-        body = body .. "\n/focus [@mouseover,harm,nodead]"
+        -- Mouseover replaces focus; otherwise preserve an existing focus.
+        -- With no focus, acquire only a living hostile selected target. The
+        -- explicit 'focus' action keeps the native /focus special case stable.
+        body = body .. "\n/focus [@mouseover,harm,nodead] mouseover; [@focus,exists] focus; [harm,nodead] target"
         if s.marker > 0 then
             body = body .. "\n/tm [@focus,harm,nodead" .. (s.skipRaid and ",nogroup:raid" or "")
-                .. "] " .. (s.preserveMark and "~" or "") .. s.marker
+                .. "] " .. (s.preserveMark and "~" or "!") .. s.marker
         end
     end
     if not info then return focus == "shared" and body or nil end
@@ -101,7 +102,8 @@ function Assist:HintUnit()
         and not Known(UnitIsDeadOrGhost("mouseover")) then return "mouseover" end
     if UnitExists("focus") and UnitCanAttack("player", "focus")
         and not Known(UnitIsDeadOrGhost("focus")) then return "focus" end
-    if shared and Settings().fallback == "target" and UnitExists("target") and UnitCanAttack("player", "target")
+    if shared and (not UnitExists("focus") or Settings().fallback == "target")
+        and UnitExists("target") and UnitCanAttack("player", "target")
         and not Known(UnitIsDeadOrGhost("target")) then return "target" end
 end
 function Assist:Update()

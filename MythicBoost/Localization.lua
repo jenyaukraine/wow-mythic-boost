@@ -2727,14 +2727,10 @@ if translations then
         ["Общий: ~+%d"] = "Gesamt: ~+%d",
         ["Данные: %d/%d"] = "Daten: %d/%d",
         ["Риск: %s"] = "Risiko: %s",
-        ["Опыт: %s"] = "Erfahrung: %s",
-        ["Нет данных: %s"] = "Keine Daten: %s",
         ["Данные показывают долю участников с записанным прохождением, а не шанс успеха."] = "Die Daten zeigen den Anteil der Mitglieder mit einem erfassten Lauf, nicht die Erfolgschance.",
         ["Прогноз не гарантирует прохождение в таймер."] = "Die Prognose garantiert keinen Abschluss innerhalb des Zeitlimits.",
         ["Записанных прохождений: %d"] = "Erfasste Läufe: %d",
-        ["У этого участника самая низкая оценка опыта в выбранном подземелье среди текущего состава."] = "Dieses Mitglied hat in der aktuellen Gruppe die niedrigste Erfahrungseinschätzung für den gewählten Dungeon.",
         ["Лучшее записанное прохождение на %d ур. ниже твоего ключа."] = "Der beste erfasste Lauf liegt %d Stufen unter deinem Schlüsselstein.",
-        ["Нет записанного прохождения этого подземелья. Это недостаток данных, а не доказательство плохой игры."] = "Für diesen Dungeon wurde kein Lauf erfasst. Fehlende Daten sind kein Beleg für schlechtes Spiel.",
     } or {
         ["Группа: %d/5"] = "Party: %d/5",
         ["Средний RIO: %d"] = "Average RIO: %d",
@@ -2742,14 +2738,24 @@ if translations then
         ["Общий: ~+%d"] = "Overall: ~+%d",
         ["Данные: %d/%d"] = "Data: %d/%d",
         ["Риск: %s"] = "Risk: %s",
-        ["Опыт: %s"] = "Experience: %s",
-        ["Нет данных: %s"] = "No data: %s",
         ["Данные показывают долю участников с записанным прохождением, а не шанс успеха."] = "Data shows the share of members with a recorded run, not the chance of success.",
         ["Прогноз не гарантирует прохождение в таймер."] = "The forecast does not guarantee a timed completion.",
         ["Записанных прохождений: %d"] = "Recorded runs: %d",
-        ["У этого участника самая низкая оценка опыта в выбранном подземелье среди текущего состава."] = "This member has the lowest estimated experience for the selected dungeon in the current party.",
         ["Лучшее записанное прохождение на %d ур. ниже твоего ключа."] = "Their best recorded run is %d levels below your key.",
-        ["Нет записанного прохождения этого подземелья. Это недостаток данных, а не доказательство плохой игры."] = "No run is recorded for this dungeon. Missing data is not evidence of poor play.",
+    }
+    for key, value in pairs(extra) do translations[key] = value end
+end
+
+-- Missing profiles are incomplete evidence, not a player-risk warning.
+if translations then
+    local extra = locale == "deDE" and {
+        ["Прогноз: неполный"] = "Prognose: unvollst.",
+        ["ОЦЕНКА НЕПОЛНА"] = "EINSCHÄTZUNG UNVOLLSTÄNDIG",
+        ["У этого участника есть записанное прохождение ниже цели или без таймера на уровне цели."] = "Der erfasste Lauf dieses Mitglieds liegt unter dem Ziel oder wurde auf Zielstufe nicht innerhalb des Zeitlimits abgeschlossen.",
+    } or {
+        ["Прогноз: неполный"] = "Forecast: partial",
+        ["ОЦЕНКА НЕПОЛНА"] = "ASSESSMENT INCOMPLETE",
+        ["У этого участника есть записанное прохождение ниже цели или без таймера на уровне цели."] = "This member's recorded run is below the target, or was not timed at the target level.",
     }
     for key, value in pairs(extra) do translations[key] = value end
 end

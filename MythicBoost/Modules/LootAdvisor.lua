@@ -144,6 +144,7 @@ local function ConfigureJournal()
         difficulty = EJ_GetDifficulty and EJ_GetDifficulty(),
         slotFilter = C_EncounterJournal.GetSlotFilter and C_EncounterJournal.GetSlotFilter(),
         instanceID = EncounterJournal and EncounterJournal.instanceID,
+        encounterID = EncounterJournal and EncounterJournal.encounterID,
     }
     return state
 end
@@ -156,12 +157,18 @@ local function RestoreJournal(state)
     if C_EncounterJournal and C_EncounterJournal.SetSlotFilter and state.slotFilter ~= nil then
         C_EncounterJournal.SetSlotFilter(state.slotFilter)
     end
+    -- Filter/difficulty events can reselect the visible journal's encounter.
+    if state.instanceID and EJ_SelectInstance then EJ_SelectInstance(state.instanceID) end
+    if state.encounterID and EJ_SelectEncounter then EJ_SelectEncounter(state.encounterID) end
 end
 
 local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel, raidDifficulty)
     local instanceMapID = InstanceMapID(dungeon)
     local journalID = dungeon.journalID or (instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID))
-    if not journalID or not EJ_SelectInstance or not EJ_GetNumLoot then return {percent=0,total=0,upgrades={},pending=true} end
+    if not UsableNumber(journalID) or journalID <= 0 or not EJ_SelectInstance
+        or not EJ_GetNumLoot or not EJ_GetEncounterInfoByIndex then
+        return {percent=0,total=0,upgrades={},pending=true}
+    end
     EJ_SelectInstance(journalID)
     -- Selecting an instance can reset an unsupported previous difficulty.
     -- Apply ALL preview settings after the selection, for every dungeon.
@@ -172,6 +179,20 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     local lootSpecID = specIndex and GetSpecializationInfo(specIndex)
     if EJ_SetLootFilter and classID and lootSpecID then EJ_SetLootFilter(classID, lootSpecID) end
     if C_EncounterJournal.ResetSlotFilter then C_EncounterJournal.ResetSlotFilter() end
+    -- EJ_DIFFICULTY_UPDATE refreshes Blizzard's visible journal synchronously
+    -- and can select its old boss again. Select our instance AFTER those events.
+    EJ_SelectInstance(journalID)
+    if EJ_GetDifficulty and EJ_GetDifficulty() ~= (raidDifficulty or MYTHIC_PLUS_DIFFICULTY_ID) then
+        return {percent=0,total=0,upgrades={},pending=true}
+    end
+    local encounters = {}
+    local encounterIndex = 1
+    while true do
+        local name, _, encounterID = EJ_GetEncounterInfoByIndex(encounterIndex, journalID)
+        if not name then break end
+        if UsableNumber(encounterID) and encounterID > 0 then encounters[encounterID] = true end
+        encounterIndex = encounterIndex + 1
+    end
     local total, upgrades, pending, totalGain = 0, {}, false, 0
     local usefulCount, upgradeCount, bisCount, topCount = 0, 0, 0, 0
     local upgradeSlots = {}
@@ -180,6 +201,12 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     local seen = {}
     for lootIndex = 1, lootCount do
         local item = C_EncounterJournal.GetLootInfoByIndex(lootIndex)
+        -- Loaded item data alone does not prove the global loot list is ours.
+        -- Do not cache a foreign boss's BiS item under every dungeon card.
+        if item and not encounters[item.encounterID] then
+            pending = true
+            item = nil
+        end
         if not item or not item.name or not item.link then
             pending = true
             if item and item.itemID and C_Item and C_Item.RequestLoadItemDataByID then

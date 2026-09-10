@@ -1253,7 +1253,8 @@ function SettingsHub:Refresh()
         elseif key == "lootRolls" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showRolls ~= false
         elseif key == "lootHistory" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showHistory ~= false
         elseif key == "interfaceUnlocked" then value = MythicBoostDB.interfaceUnlocked == true
-        elseif key == "bossFrames" or key == "dungeonTimer" or key == "controlAssist" or key == "healerMana" then
+        elseif key == "bossFrames" or key == "dungeonTimer" or key == "controlAssist" or key == "healerMana"
+            or key == "templeHealer" or key == "avoidableDamage" then
             value = JP.Settings(key, {enabled=true}).enabled ~= false
         elseif key == "positiveAuraEnabled" then
             value = MythicBoostDB.positiveAuraTracker and MythicBoostDB.positiveAuraTracker.enabled == true

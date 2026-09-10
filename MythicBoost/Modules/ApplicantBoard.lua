@@ -381,6 +381,9 @@ function ApplicantBoard:Build(welcome, page)
         frame:SetBackdropBorderColor(.58, .36, .12, .85)
         GameTooltip_Hide()
     end)
+    self.partyRisk:SetScript("OnHide", function(frame)
+        if GameTooltip:IsOwned(frame) then GameTooltip:Hide() end
+    end)
     self.partyRisk:Hide()
 
     self.forecastHelp = HeaderIconButton(page,
@@ -710,13 +713,22 @@ function ApplicantBoard:RefreshParty()
     local forecast = 0
     for _, strength in ipairs(memberStrengths) do forecast = forecast + strength end
     if #memberStrengths > 0 then forecast = math.max(2, math.floor(forecast / #memberStrengths)) end
-    local safeLevel, weakest, confidence = TeamReadiness(self.partyEvidence)
+    local safeLevel, _, confidence = TeamReadiness(self.partyEvidence)
+    -- Missing profiles lower model confidence; their placeholder strength is
+    -- not evidence of player risk. Only name someone with a recorded gap.
+    local riskRecord
+    for _, record in ipairs(self.partyEvidence) do
+        if record.known and ownLevel and (record.level < ownLevel
+            or (record.level == ownLevel and (record.upgrades or 0) <= 0)) then
+            if not riskRecord or record.strength < riskRecord.strength then riskRecord = record end
+        end
+    end
     self.partyMetrics[1]:SetText((L("Группа: %d/5")):format(members))
     self.partyMetrics[1]:SetTextColor(.88, .91, .94)
     self.partyMetrics[2]:SetText(("|cff%s%s|r"):format(JP.GroupSearchUI:GetPartyRatingColor(average),
         (L("Средний RIO: %d")):format(math.floor(average + .5))))
     self.partyMetrics[3]:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
-    self.partyRiskRecord, self.partyRiskTarget, self.partyRiskDungeon = weakest, ownLevel, nil
+    self.partyRiskRecord, self.partyRiskTarget, self.partyRiskDungeon = riskRecord, ownLevel, nil
     for _, column in ipairs(columns) do
         if ownMapID and tonumber(column.key) == tonumber(ownMapID) then
             self.partyRiskDungeon = column.name
@@ -724,14 +736,14 @@ function ApplicantBoard:RefreshParty()
         end
     end
     if ownMapID and ownLevel and #self.partyEvidence > 0 then
-        self.partyMetrics[3]:SetText((L("Прогноз: ~+%d")):format(safeLevel))
+        self.partyMetrics[3]:SetText(confidence == 100 and (L("Прогноз: ~+%d")):format(safeLevel)
+            or L("Прогноз: неполный"))
         local evidenceCount = 0
         for _, record in ipairs(self.partyEvidence) do if record.known then evidenceCount = evidenceCount + 1 end end
         self.partyMetrics[4]:SetText((L("Данные: %d/%d")):format(evidenceCount, members))
-        self.partyRisk.label:SetText((weakest and not weakest.known and L("Нет данных: %s")
-            or weakest and weakest.strength < ownLevel and L("Риск: %s")
-            or L("Опыт: %s")):format(weakest and weakest.name or "—"))
-        self.partyRisk:Show()
+        self.partyRisk.label:SetText(riskRecord and (L("Риск: %s")):format(riskRecord.name) or "")
+        self.partyRisk:SetShown(riskRecord ~= nil)
+        if riskRecord and GameTooltip:IsOwned(self.partyRisk) then self:ShowPartyRiskTooltip(self.partyRisk) end
         self.forecastHelp:Show()
     else
         self.partyMetrics[3]:SetText((L("Общий: ~+%d")):format(forecast))
@@ -757,7 +769,7 @@ end
 
 function ApplicantBoard:ShowPartyRiskTooltip(frame)
     local record = self.partyRiskRecord
-    if not record then return end
+    if not record or not record.known then return end
     GameTooltip:SetOwner(frame, "ANCHOR_TOP")
     GameTooltip:SetText(record.name or L("Игрок"), 1, .78, .30)
     if self.partyRiskDungeon then GameTooltip:AddLine(self.partyRiskDungeon, .70, .83, .90) end
@@ -774,12 +786,10 @@ function ApplicantBoard:ShowPartyRiskTooltip(frame)
         if record.runs and record.runs > 0 then
             GameTooltip:AddLine((L("Записанных прохождений: %d")):format(record.runs), .70, .75, .80)
         end
-        GameTooltip:AddLine(L("У этого участника самая низкая оценка опыта в выбранном подземелье среди текущего состава."), .85, .85, .85, true)
+        GameTooltip:AddLine(L("У этого участника есть записанное прохождение ниже цели или без таймера на уровне цели."), .85, .85, .85, true)
         if self.partyRiskTarget and record.level < self.partyRiskTarget then
             GameTooltip:AddLine((L("Лучшее записанное прохождение на %d ур. ниже твоего ключа.")):format(self.partyRiskTarget - record.level), 1, .70, .35, true)
         end
-    else
-        GameTooltip:AddLine(L("Нет записанного прохождения этого подземелья. Это недостаток данных, а не доказательство плохой игры."), 1, .75, .40, true)
     end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(L("Прогноз не гарантирует прохождение в таймер."), .65, .72, .78, true)
@@ -797,6 +807,8 @@ function ApplicantBoard:UpdateLaunchDecision(entries)
     elseif members >= 5 then
         if rolesMissing > 0 then
             advice, color = L("ПОДОЖДИ: НЕВЕРНЫЙ СОСТАВ РОЛЕЙ"), "ffff5f66"
+        elseif (self.partyConfidence or 0) < 100 then
+            advice, color = L("ОЦЕНКА НЕПОЛНА"), "ff8a939f"
         elseif (self.partySafeLevel or 0) >= targetLevel and (self.partyConfidence or 0) >= 60 then
             advice, color = L("ЗАПУСКАЙ"), "ff43d17a"
         elseif (self.partySafeLevel or 0) >= targetLevel - 1 then
