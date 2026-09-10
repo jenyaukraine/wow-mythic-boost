@@ -648,6 +648,19 @@ local function DumpSearchResults()
         tooltipHooked = JP.modules.PlayerTooltip and JP.modules.PlayerTooltip.searchHooked == true,
         results = {},
     }
+    local search = JP.GroupSearchUI
+    local welcome = JP.modules.Welcome
+    if search and welcome then
+        snapshot.searchState = {
+            pending = search.searchPending == true,
+            awaitingResults = search.searchAwaitingResults == true,
+            queuedBatch = search.completedBatch ~= nil,
+            displayed = #(welcome.matches or {}),
+            eligible = #(welcome.eligibleMatches or {}),
+            excluded = #(welcome.excludedMatches or {}),
+        }
+        snapshot.filters = DescribeTable(welcome.groupFilters)
+    end
     if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown then
         local ok, restricted = pcall(C_ChatInfo.InChatMessagingLockdown)
         snapshot.chatMessagingLockdown = ok and DescribeValue(restricted) or {type="error"}

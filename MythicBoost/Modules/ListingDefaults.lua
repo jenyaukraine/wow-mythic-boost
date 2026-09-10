@@ -101,7 +101,8 @@ function Defaults:OpenOwned()
                     -- Availability/base-filter events can restore the old
                     -- search/category panel. Keep the prepared form visible
                     -- without rewriting its title or the secure dispatcher.
-                    panel:Hide(); ec:Show()
+                    if panel and type(panel.Hide)=="function" then panel:Hide() end
+                    ec:Show()
                 end
             end
         end)

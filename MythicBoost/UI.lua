@@ -271,7 +271,10 @@ local atlasCache = {}
 local function AtlasMarkup(atlas, size)
     if not atlas or not CreateAtlasMarkup then return end
     if atlasCache[atlas] == nil then
-        atlasCache[atlas] = (C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)) and true or false
+        -- Only cache confirmed availability. A missing API or an unloaded
+        -- atlas on the first draw must not force the fallback until /reload.
+        if not (C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)) then return end
+        atlasCache[atlas] = true
     end
     if not atlasCache[atlas] then return end
     return CreateAtlasMarkup(atlas, size, size)

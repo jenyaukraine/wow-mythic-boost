@@ -116,6 +116,52 @@ def test_either_side_and_generic_phase():
         ''')
 
 
+def test_public_phase_does_not_require_map_data():
+    cases = (
+        "units.party1.map=200",  # another floor or dungeon is not a copy ID
+        "units.party1.map=Secret(100)",
+        "units.party1.map=nil",
+        "playerMap=0",
+        "playerMap=Secret(100)",
+        "C_Map=nil",
+    )
+    for phase in ('Sharding', 'Phasing'):
+        for setup in cases:
+            lua=fixture()
+            lua.execute("Member(Enum.PhaseReason."+phase+"); "+setup)
+            lua.execute(r'''
+                local a=JP.InstanceAlert; a:Enable()
+                for i=1,3 do Tick() end
+                assert(a.source=='shard' and a.frame:IsShown(),
+                    'public phase evidence must not depend on a readable matching map')
+                assert(a.title.text=='Группа в разных копиях или фазах')
+                units.party1.phase=nil; Tick(3)
+                assert(not a.source and not a.frame:IsShown(),
+                    'map differences or missing maps alone must not keep the warning')
+            ''')
+
+
+def test_late_candidate_finishes_confirmation():
+    lua=fixture()
+    lua.execute(r'''
+        Member(nil)
+        local a=JP.InstanceAlert; a:Enable()
+        local deadline=a.deadline
+        Tick(10.5)
+        units.party1.phase=Enum.PhaseReason.Sharding
+        Tick() -- first evidence at 11.5 seconds of the 12-second window
+        assert(not a.source and a.candidateSince==deadline-.5)
+        Tick() -- deadline passed, but evidence is only one second old
+        assert(GetTime()>deadline and not a.source and a.pending,
+            'an existing candidate needs its full two-second confirmation')
+        Tick()
+        assert(a.source=='shard' and a.frame:IsShown())
+        units.party1.phase=nil; Tick(3)
+        assert(not a.source and not a.pending and not a.deadline,
+            'late confirmation must not create idle polling after evidence is lost')
+    ''')
+
+
 def test_no_false_positives_or_secret_use():
     cases = (
         "units.party1.phase=nil",  # invisible/far away, no phase signal
@@ -124,11 +170,6 @@ def test_no_false_positives_or_secret_use():
         "units.party1.phase=Enum.PhaseReason.TimerunningHwt",
         "units.party1.phase=Secret(1)",
         "units.party1.phase='1'",
-        "units.party1.map=200",  # member outside / in another dungeon
-        "units.party1.map=Secret(100)",
-        "units.party1.map=nil",
-        "playerMap=0",
-        "playerMap=Secret(100)",
         "units.party1.connected=false",
         "units.party1.connected=Secret(true)",
         "units.party1.dead=true",
@@ -136,7 +177,6 @@ def test_no_false_positives_or_secret_use():
         "units.party1.guid=Secret('hidden')",
         "UnitPhaseReason=nil",
         "UnitPhaseReason=function() error('restricted') end",
-        "C_Map=nil",
         "Enum.PhaseReason=nil",
         "combat=true",
         "raid=true",
@@ -226,7 +266,8 @@ def test_loading_disable_preview_and_memory():
 
 
 if __name__=='__main__':
-    for test in (test_either_side_and_generic_phase,test_native_notification,test_join_inside_and_resolution,
+    for test in (test_either_side_and_generic_phase,test_public_phase_does_not_require_map_data,
+                 test_late_candidate_finishes_confirmation,test_native_notification,test_join_inside_and_resolution,
                  test_no_false_positives_or_secret_use,test_loading_disable_preview_and_memory):
         test(); print(test.__name__+': OK')
     code=source('Modules/InstanceAlert.lua')

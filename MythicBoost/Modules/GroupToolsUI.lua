@@ -186,9 +186,16 @@ function Tools:AcceptQuery(w)
     local first,last=self:QueryText():match("^%s*(%d+)%s*%-%s*(%d+)%s*$")
     first,last=tonumber(first),tonumber(last)
     if first and last and first>=2 and last>=first and last<=40 then
+        -- A range typed by the player takes precedence over the automatic
+        -- personal-record target, which otherwise bypasses keyMin/keyMax.
+        w.groupFilters.scoreUpgrade=false
+        if w.scoreUpgrade then w.scoreUpgrade:SetChecked(false) end
         w.groupFilters.keyMin=first; w.groupFilters.keyMax=last
         for _,key in ipairs({"keyMin","keyMax"}) do
-            if w.filterFields[key] then w.filterFields[key]:SetText(tostring(w.groupFilters[key])) end
+            if w.filterFields[key] then
+                w.filterFields[key]:SetFieldEnabled(true)
+                w.filterFields[key]:SetText(tostring(w.groupFilters[key]))
+            end
         end
     end
 end
@@ -198,6 +205,7 @@ end
 function Tools:EndEdit()
     local e=self.edit
     if not e then return end
+    self.closingQuery=true
     self.edit=nil
     if self.caret then self.caret:Hide() end
     if e.queryFont[1] then e.w.queryButton.label:SetFont(unpack(e.queryFont)) end
@@ -212,6 +220,7 @@ function Tools:EndEdit()
     if e.box:HasFocus() then e.box:ClearFocus() end
     if e.extraShown and LFGListFrame.activePanel~=e.sp then e.sp:Hide() end
     if e.opened and PVEFrame:IsShown() then HideUIPanel(PVEFrame) end
+    self.closingQuery=nil
     self:AcceptQuery(e.w); self:UpdateToolbar(e.w)
 end
 
@@ -246,14 +255,15 @@ function Tools:EditQuery(w)
     if self.edit then self:EndEdit(); return end
     if not PVEFrame or not PVEFrame_ShowFrame then JP:Print(L("Открой поиск групп Blizzard один раз и повтори.")); return end
     local opened=not PVEFrame:IsShown()
+    self.openingQuery=true
     -- Other addons may replace the stock opener. Use only the public outer
     -- frame entry point, and verify it actually stayed open before focusing.
     if JP.ListingDefaults then
-        if not JP.ListingDefaults:ShowPanel() then return end
+        if not JP.ListingDefaults:ShowPanel() then self.openingQuery=nil; return end
     else PVEFrame_ShowFrame("GroupFinderFrame","LFGListPVEStub") end
     local sp=LFGListFrame and LFGListFrame.SearchPanel
     local cs=LFGListFrame and LFGListFrame.CategorySelection
-    if not sp or not sp.SearchBox then JP:Print(L("Открой раздел готовых групп Blizzard и повтори.")); return end
+    if not sp or not sp.SearchBox then self.openingQuery=nil; JP:Print(L("Открой раздел готовых групп Blizzard и повтори.")); return end
     local extraShown=not sp:IsShown()
     local category=w.groupFilters.category=="raid" and 3 or 2
     if sp.categoryID~=category or extraShown then
@@ -264,13 +274,14 @@ function Tools:EditQuery(w)
                 if category==2 or b.filters==1 then chosen=b; break end
             end
         end
-        if not chosen or not LFGListSearchPanel_SetCategory then JP:Print(L("Выбери подземелья в штатном поиске Blizzard и повтори.")); return end
+        if not chosen or not LFGListSearchPanel_SetCategory then self.openingQuery=nil; JP:Print(L("Выбери подземелья в штатном поиске Blizzard и повтори.")); return end
         if LFGListCategorySelection_SelectCategory then
             LFGListCategorySelection_SelectCategory(cs,chosen.categoryID,chosen.filters)
         end
         LFGListSearchPanel_SetCategory(sp,chosen.categoryID,chosen.filters,LFGListFrame.baseFilters)
     end
     sp:Show()
+    self.openingQuery=nil
     if not PVEFrame:IsShown() then return end
     local box=sp.SearchBox
     local bx,sx=box:GetLeft(),w.queryButton:GetLeft()

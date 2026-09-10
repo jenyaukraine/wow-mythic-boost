@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
 
-FORBIDDEN_SUFFIXES = (".ps1", ".py", ".pyc", ".bak", ".old", ".zip")
+FORBIDDEN_SUFFIXES = (".ps1", ".py", ".pyc", ".pyo", ".bak", ".old", ".orig", ".rej", ".tmp", ".patch", ".diff", ".zip")
 
 
 def fail(message: str) -> None:
@@ -24,15 +24,22 @@ def main() -> None:
 
     try:
         with ZipFile(archive) as package:
-            names = package.namelist()
-            if len(names) != len(set(names)):
+            # ZipInfo.filename normalizes backslashes on Windows; inspect the
+            # original central-directory spelling before accepting paths.
+            names = [entry.orig_filename for entry in package.infolist()]
+            if len(names) != len({name.casefold().rstrip('/') for name in names}):
                 fail("archive contains duplicate paths")
             files = {name for name in names if not name.endswith("/")}
-            for name in files:
+            for name in names:
                 path = PurePosixPath(name)
-                if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != "MythicBoost":
+                components = name.rstrip('/').split('/')
+                if (path.is_absolute() or not path.parts or path.parts[0] != "MythicBoost"
+                        or '\\' in name or ':' in name
+                        or any(part in ('', '.', '..') or part.endswith((' ', '.')) for part in components)):
                     fail(f"unsafe or unexpected archive path: {name}")
                 lowered = name.lower()
+                if lowered == "mythicboost/notice-autobis.txt":
+                    fail(f"removed AutoBiS notice entered the archive: {name}")
                 if lowered.endswith(FORBIDDEN_SUFFIXES) or "__pycache__" in lowered:
                     fail(f"development file entered the archive: {name}")
                 if "mythicboostdesktop" in lowered or lowered.endswith("keystonetimer.lua"):
@@ -77,11 +84,14 @@ def main() -> None:
                 fail(f"TOC files are absent from ZIP: {', '.join(missing)}")
             if "Contracts.lua" not in entries:
                 fail("Contracts.lua is absent from release load order")
-            extra_lua = sorted(name for name in files if name.endswith(".lua")
+            extra_lua = sorted(name for name in files if name.lower().endswith(".lua")
                                and name.removeprefix("MythicBoost/") not in entries)
             if extra_lua:
                 fail(f"Lua files outside TOC entered ZIP: {', '.join(extra_lua)}")
-    except BadZipFile as error:
+            corrupt = package.testzip()
+            if corrupt:
+                fail(f"corrupt file in ZIP: {corrupt}")
+    except (BadZipFile, UnicodeDecodeError, RuntimeError, OSError) as error:
         fail(f"invalid ZIP: {error}")
 
     print(f"Release verification OK: MythicBoost {version}, {len(entries)} TOC entries")

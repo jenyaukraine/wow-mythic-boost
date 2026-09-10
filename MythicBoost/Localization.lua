@@ -9,6 +9,10 @@ local translations
 
 if locale == "deDE" then
     translations = {
+        ["Добыча: %s"] = "Beute: %s",
+        ["Добыча загружается"] = "Beute wird geladen",
+        ["Ещё предметов: %d"] = "%d weitere Gegenstände",
+        ["Целей: %d · BIS: %d"] = "Ziele: %d · BIS: %d",
         ["Все ключи сборки"] = "Alle Build-Durchläufe",
         ["Все ключи этой сборки"] = "Alle Durchläufe mit diesem Build",
         ["Карта и уровень"] = "Dungeon und Stufe",
@@ -132,7 +136,7 @@ if locale == "deDE" then
         ["65% времени"] = "65 % der Zeit",
         ["<нечитаемо>"] = "<unlesbar>",
         ["=== %d/%d   повторов: %d   впервые: %s   последний раз: %s ==="] = "=== %d/%d wiederholt: %d erstes Mal: ​​%s letztes Mal: ​​%s ===",
-        ["BIS Mythic+ по гайду Wowhead"] = "BIS Mythic+ laut Wowhead-Guide",
+        ["BIS по гайду Wowhead"] = "BIS laut Wowhead-Guide",
         ["BIS — список гайда Wowhead; TOP — самая частая экипировка сильных M+ игроков Murlok.io. Эффекты и твоя конкретная сборка всё равно требуют проверки."] = "BIS – Wowhead-Guide-Liste; TOP ist die häufigste Ausrüstung starker M+ Murlok.io-Spieler. Die Auswirkungen und Ihr spezifischer Build müssen noch überprüft werden.",
         ["Blizzard не принял приглашение. Попробуй ещё раз."] = "Blizzard nahm die Einladung nicht an. Versuchen Sie es erneut.",
         ["Blizzard не разрешил выполнить поиск сейчас."] = "Blizzard erlaubt derzeit keine Suche.",
@@ -803,6 +807,10 @@ if locale == "deDE" then
     }
 elseif locale ~= "ruRU" then
     translations = {
+        ["Добыча: %s"] = "Loot: %s",
+        ["Добыча загружается"] = "Loading loot",
+        ["Ещё предметов: %d"] = "%d more items",
+        ["Целей: %d · BIS: %d"] = "Targets: %d · BIS: %d",
         ["Все ключи сборки"] = "All build runs",
         ["Все ключи этой сборки"] = "All runs with this build",
         ["Карта и уровень"] = "Dungeon and level",
@@ -926,7 +934,7 @@ elseif locale ~= "ruRU" then
         ["65% времени"] = "65% of the time",
         ["<нечитаемо>"] = "<unreadable>",
         ["=== %d/%d   повторов: %d   впервые: %s   последний раз: %s ==="] = "=== %d/%d repeats: %d first time: %s last time: %s ===",
-        ["BIS Mythic+ по гайду Wowhead"] = "BIS Mythic+ according to Wowhead guide",
+        ["BIS по гайду Wowhead"] = "BIS according to Wowhead guide",
         ["BIS — список гайда Wowhead; TOP — самая частая экипировка сильных M+ игроков Murlok.io. Эффекты и твоя конкретная сборка всё равно требуют проверки."] = "BIS - Wowhead guide list; TOP is the most common equipment of strong M+ Murlok.io players. The effects and your specific build still require checking.",
         ["Blizzard не принял приглашение. Попробуй ещё раз."] = "Blizzard did not accept the invitation. Try again.",
         ["Blizzard не разрешил выполнить поиск сейчас."] = "Blizzard doesn't allow searching right now.",

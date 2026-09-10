@@ -1,6 +1,8 @@
 param(
     [string]$OutputDirectory,
-    [switch]$Force
+    [switch]$Force,
+    # Use only after reviewing changes and an already completed test run.
+    [switch]$SkipTests
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +40,7 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "Localization check failed. Release was not created."
 }
+if (-not $SkipTests) {
 & python $smokeTests
 if ($LASTEXITCODE -ne 0) {
     throw "Executable smoke tests failed. Release was not created."
@@ -85,13 +88,16 @@ if ($LASTEXITCODE -ne 0) { throw "Auction isolation/history tests failed. Releas
 & python (Join-Path $PSScriptRoot "TestHudPatch80.py")
 if ($LASTEXITCODE -ne 0) { throw "HUD positions/tooltips/auction layering tests failed. Release was not created." }
 
-foreach ($testName in @("TestRunStats.py", "TestPlayerNetwork.py", "TestPlayerMemoryUI.py",
+foreach ($testName in @("TestBiSIntegration.py", "TestRunStats.py", "TestPlayerNetwork.py", "TestPlayerMemoryUI.py",
     "TestPlayerDataIntegration.py", "TestUpgradeReasons.py", "TestTalentLab.py",
     "TestTalentLabUI.py", "TestTalentComparison.py", "TestTalentSources.py", "TestInformation.py", "TestListingSpam.py",
     "TestChatSpamCondenser.py", "TestReviewsUI.py", "TestSharedReviews.py", "TestAuctionPerformance.py",
-    "TestTimerTheme.py", "TestTalentTreeStats.py", "TestTalentPointValue.py", "TestGroupTools.py", "TestSearch106.py", "TestPolish109.py")) {
+    "TestTimerTheme.py", "TestTalentTreeStats.py", "TestTalentPointValue.py", "TestGroupTools.py", "TestSearch106.py",
+    "TestPolish109.py", "TestVerifyRelease.py", "TestRCLootBridge.py")) {
     & python (Join-Path $PSScriptRoot $testName)
     if ($LASTEXITCODE -ne 0) { throw "$testName failed. Release was not created." }
+}
+
 }
 
 if (-not $OutputDirectory) {

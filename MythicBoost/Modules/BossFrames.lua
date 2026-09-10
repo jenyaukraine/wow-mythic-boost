@@ -167,15 +167,19 @@ end
 function Bosses:Enable()
     if Settings().enabled == false then self:Disable(); return end
     if InCombatLockdown() and not self.frame then
+        self.pendingEnable = true
         if not self.bootstrap then
             self.bootstrap = CreateFrame("Frame")
             self.bootstrap:SetScript("OnEvent", function()
-                self.bootstrap:UnregisterAllEvents(); self:Enable()
+                self.bootstrap:UnregisterAllEvents()
+                if self.pendingEnable then self.pendingEnable = nil; self:Enable() end
             end)
         end
         self.bootstrap:RegisterEvent("PLAYER_REGEN_ENABLED")
         return
     end
+    self.pendingEnable = nil
+    if self.bootstrap then self.bootstrap:UnregisterAllEvents() end
     self.running = true; self:Create()
     if not self.frame then return end
     for _, row in ipairs(self.rows) do
@@ -193,6 +197,8 @@ function Bosses:Enable()
 end
 function Bosses:Disable()
     self.running = false
+    self.pendingEnable = nil
+    if self.bootstrap then self.bootstrap:UnregisterAllEvents() end
     if self.events then self.events:UnregisterAllEvents() end
     for _, row in ipairs(self.rows or {}) do row:UnregisterAllEvents() end
     if InCombatLockdown() then

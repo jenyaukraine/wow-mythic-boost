@@ -370,12 +370,15 @@ function R:Build(w,body)
     for i=1,8 do
         local b=UI.ActivityCard(cards); b:Hide(); self.groupChoices[i]=b
         b.label=UI.Text(b,"GameFontNormal","",UI.colors.text)
-        b.label:SetPoint("LEFT",80,0); b.label:SetPoint("RIGHT",-12,0); b.label:SetJustifyH("LEFT"); b.label:SetWordWrap(true)
+        b.label:SetPoint("LEFT",80,10); b.label:SetPoint("RIGHT",-12,10); b.label:SetJustifyH("LEFT"); b.label:SetWordWrap(true)
+        b.lootLabel=UI.Text(b,"GameFontHighlightSmall","",UI.colors.muted)
+        b.lootLabel:SetPoint("BOTTOMLEFT",80,12); b.lootLabel:SetPoint("RIGHT",-12,0); b.lootLabel:SetJustifyH("LEFT")
         b.label:SetShadowColor(0,0,0,1); b.label:SetShadowOffset(1,-1)
         b.selectedLine=b:CreateTexture(nil,"OVERLAY"); b.selectedLine:SetColorTexture(UI.Unpack(UI.colors.accent))
         b.selectedLine:SetHeight(3); b.selectedLine:SetPoint("BOTTOMLEFT",1,1); b.selectedLine:SetPoint("BOTTOMRIGHT",-1,1)
-        b:SetScript("OnEnter",function() b:SetBackdropBorderColor(UI.Unpack(UI.colors.accent)) end)
-        b:SetScript("OnLeave",function() b:SetBackdropBorderColor(UI.Unpack(b.selected and UI.colors.accent or UI.colors.hudEdge)) end)
+        b:SetScript("OnEnter",function() b:SetBackdropBorderColor(UI.Unpack(UI.colors.accent)); self:LootTooltip(b) end)
+        b:SetScript("OnLeave",function() b:SetBackdropBorderColor(UI.Unpack(b.selected and UI.colors.accent or UI.colors.hudEdge)); GameTooltip_Hide() end)
+        b:SetScript("OnHide",GameTooltip_Hide)
         b:SetScript("OnClick",function()
             self:Toggle(w,b.groupID)
         end)
@@ -395,9 +398,9 @@ function R:Build(w,body)
         b.label=UI.Text(b,"GameFontHighlightSmall","")
         b.label:SetPoint("LEFT",14,0); b.label:SetPoint("RIGHT",-100,0); b.label:SetJustifyH("LEFT"); b.label:SetWordWrap(false)
         b.hover=b:CreateTexture(nil,"OVERLAY"); b.hover:SetAllPoints(); b.hover:SetColorTexture(1,1,1,.06); b.hover:Hide()
-        b:SetScript("OnEnter",function() b.hovered=true; BossButtonVisual(b) end)
-        b:SetScript("OnLeave",function() b.hovered=false; BossButtonVisual(b) end)
-        b:SetScript("OnHide",function() b.hovered=false; b.hover:Hide() end)
+        b:SetScript("OnEnter",function() b.hovered=true; BossButtonVisual(b); self:LootTooltip(b) end)
+        b:SetScript("OnLeave",function() b.hovered=false; BossButtonVisual(b); GameTooltip_Hide() end)
+        b:SetScript("OnHide",function() b.hovered=false; b.hover:Hide(); GameTooltip_Hide() end)
         b:SetScript("OnClick",function()
             if not b.boss then return end
             local states=w.groupFilters.bossStates or {}; w.groupFilters.bossStates=states
@@ -405,6 +408,63 @@ function R:Build(w,body)
             self:Refresh(w); w:Refresh()
         end); b:Hide(); self.bossButtons[i]=b
     end
+end
+
+function R:RefreshLoot(w, groups)
+    local filters = w.groupFilters
+    -- Show one explicit difficulty when several search difficulties are enabled.
+    local difficulty = filters.difficultyMythic and 16 or (filters.difficultyHeroic and 15 or 14)
+    self.lootDifficulty = difficulty
+    local instances = {}
+    for _, group in ipairs(groups) do
+        instances[#instances + 1] = {mapID=group.id, instanceMapID=group.mapID, journalID=self:Journal(group)}
+    end
+    self.loot = {}
+    if JP.LootAdvisor then
+        local ok, results = pcall(JP.LootAdvisor.Analyze, JP.LootAdvisor, instances, nil, difficulty)
+        if ok then self.loot = results end
+    end
+end
+
+function R:LootTooltip(button)
+    if not button.groupID then return end
+    GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+    GameTooltip:SetText(button.boss or button.groupName or L("Рейды"))
+    local difficulty = self.lootDifficulty == 16 and L("Эпохальный")
+        or (self.lootDifficulty == 15 and L("Героический") or L("Обычный"))
+    GameTooltip:AddLine((L("Добыча: %s")):format(difficulty), .45, .75, 1)
+    local guide = JP.BiSData and JP.BiSData:GetSourceStatus()
+    if guide then GameTooltip:AddLine((guide.source or "Wowhead") .. " / " .. (guide.updatedAt or ""), .62, .68, .76) end
+    local result = self.loot and self.loot[button.groupID]
+    local shown = 0
+    for _, item in ipairs(result and result.upgrades or {}) do
+        if not button.boss or (button.encounterID and item.encounterID == button.encounterID) then
+            shown = shown + 1
+            if shown <= 10 then
+                local rec = item.recommendation
+                local label = (item.name or L("Предмет")) .. (rec and " |cffffb91f[BIS]|r" or "")
+                GameTooltip:AddLine(label, .90, .92, .96, true)
+                if JP.GroupSearchUI then
+                    local red, green, blue = JP.GroupSearchUI.LootDeltaColor(item)
+                    GameTooltip:AddLine(JP.GroupSearchUI.LootDelta(item), red, green, blue, true)
+                end
+                if rec then
+                    local encounterID = num(item.encounterID)
+                    local source = button.boss
+                        or (encounterID and str(Read(EJ_GetEncounterInfo, encounterID)))
+                        or button.groupName or str(rec.dropSource)
+                    GameTooltip:AddLine(L("BIS по гайду Wowhead") .. (source and (" / " .. source) or ""), .62, .68, .76, true)
+                end
+            end
+        end
+    end
+    if not result or result.pending or (button.boss and not button.encounterID) then
+        GameTooltip:AddLine(L("Добыча загружается"), .65, .75, .9)
+    elseif shown == 0 then
+        GameTooltip:AddLine(L("Подходящей добычи для текущей специализации не найдено."), .6, .6, .6, true)
+    end
+    if shown > 10 then GameTooltip:AddLine((L("Ещё предметов: %d")):format(shown - 10), .6, .7, .8) end
+    GameTooltip:Show()
 end
 
 function R:Refresh(w)
@@ -419,6 +479,7 @@ function R:Refresh(w)
     for key,e in pairs(self.fields) do e:SetText(tostring(w.groupFilters[key] or "")) end
     local selected,count=nil,0
     local groups=self:Discover()
+    self:RefreshLoot(w, groups)
     for _,g in ipairs(groups) do if self:IsSelected(w.groupFilters,g.id) then selected=g; count=count+1 end end
     if count~=1 then selected=nil end
     local gridHeight=UI.LayoutActivityCards(w.raidCards,self.groupChoices,math.min(8,#groups))
@@ -427,7 +488,11 @@ function R:Refresh(w)
     for i,b in ipairs(self.groupChoices) do
         local group=groups[i]; b:SetShown(group~=nil)
         if group then
-            b.groupID=group.id; b.label:SetText(group.name)
+            b.groupID=group.id; b.groupName=group.name; b.label:SetText(group.name)
+            local loot = self.loot and self.loot[group.id]
+            b.lootLabel:SetText(loot and (loot.total or 0)>0
+                and (L("Целей: %d · BIS: %d"):gsub("·", "/")):format(loot.useful or 0, loot.bisCount or 0)
+                or L("Добыча загружается"))
             local icon,art=self:Artwork(group)
             b.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_Map_01"); b.art:SetTexture(art)
             b.selected=self:IsSelected(w.groupFilters,group.id); b.selectedLine:SetShown(b.selected)
@@ -459,6 +524,9 @@ function R:Refresh(w)
         b:ClearAllPoints(); b:SetWidth(column)
         b:SetPoint("TOPLEFT",12+((i-1)%2)*(column+12),-hintY-22-math.floor((i-1)/2)*BOSS_ROW_STEP)
         b.boss=bosses[i]; b:SetShown(b.boss~=nil)
+        b.groupID=selected and selected.id
+        local details=selected and self.bossDetails[GroupKey(selected)]
+        b.encounterID=details and details[b.boss] and details[b.boss].id
         if b.boss then
             b.state=(w.groupFilters.bossStates or {})[b.boss]
             b.label:SetText(i..". "..b.boss)

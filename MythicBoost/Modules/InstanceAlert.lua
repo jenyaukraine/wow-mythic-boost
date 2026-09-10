@@ -21,21 +21,17 @@ function Alert:InContext()
         and JP.SafeOptionalBoolean(Read(IsInRaid)) == false
 end
 
--- These are public shard/phase signals, not range checks. Require the same
--- readable dungeon map as well: a party member elsewhere is not evidence.
--- GetInstanceInfo's instanceID is a map ID, NOT a unique dungeon-copy ID.
+-- Follow the public phase signal used by Blizzard's party indicator. A
+-- missing map (or a different dungeon floor) must not hide that signal.
+-- Map IDs and distance alone cannot identify a different dungeon copy.
 function Alert:FindOtherShard()
-    if InCombatLockdown() or not Enum or not Enum.PhaseReason
-        or not C_Map then return nil end
-    local map = JP.SafeNumber(Read(C_Map.GetBestMapForUnit, "player"))
-    if not map or map <= 0 then return nil end
+    if InCombatLockdown() or not Enum or not Enum.PhaseReason then return nil end
     for _, unit in ipairs(UNITS) do
         local phase = JP.SafeNumber(Read(UnitPhaseReason, unit))
         local separated = phase ~= nil and (phase == Enum.PhaseReason.Sharding or phase == Enum.PhaseReason.Phasing)
         if JP.SafeBoolean(Read(UnitExists, unit)) and JP.SafeBoolean(Read(UnitIsConnected, unit))
             and JP.SafeOptionalBoolean(Read(UnitIsDeadOrGhost, unit)) == false
-            and separated
-            and JP.SafeNumber(Read(C_Map.GetBestMapForUnit, unit)) == map then
+            and separated then
             return JP.SafeString(Read(UnitGUID, unit))
         end
     end
@@ -107,6 +103,7 @@ function Alert:Check()
     self:Render()
     if self.source then self:Schedule(3)
     elseif self.deadline and GetTime() < self.deadline then self:Schedule(1)
+    elseif self.candidateSince and GetTime() - self.candidateSince < 2 then self:Schedule(1)
     else self.deadline, self.candidate, self.candidateSince = nil, nil, nil end
 end
 
@@ -187,11 +184,11 @@ function Alert:ApplySettings()
     self.events:UnregisterAllEvents(); self:Reset()
     if not self.running or Settings().warnDifferentInstance ~= true then return end
     for _, event in ipairs({"PLAYER_ENTERING_WORLD", "PLAYER_LEAVING_WORLD", "GROUP_JOINED",
-        "GROUP_FORMED", "GROUP_LEFT", "GROUP_ROSTER_UPDATE", "PLAYER_REGEN_ENABLED",
+        "GROUP_FORMED", "GROUP_LEFT", "GROUP_ROSTER_UPDATE", "PARTY_MEMBER_ENABLE", "PARTY_MEMBER_DISABLE", "PLAYER_REGEN_ENABLED",
         "ZONE_CHANGED_NEW_AREA", "ENTERED_DIFFERENT_INSTANCE_FROM_PARTY"}) do
         self.events:RegisterEvent(event)
     end
-    for _, event in ipairs({"UNIT_PHASE", "UNIT_CONNECTION"}) do
+    for _, event in ipairs({"UNIT_PHASE", "UNIT_CONNECTION", "UNIT_FLAGS", "UNIT_OTHER_PARTY_CHANGED"}) do
         self.events:RegisterUnitEvent(event, "player", "party1", "party2", "party3", "party4")
     end
     if InDungeon() then self:StartChecks() end

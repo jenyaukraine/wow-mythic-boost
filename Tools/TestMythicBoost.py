@@ -1421,7 +1421,30 @@ def test_shared_protected_calls():
     ''')
 
 
+def test_atlas_icons_recover_after_initial_unavailability():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    jp = lua.table()
+    jp.L = lambda text: text
+    load(lua, "MythicBoost/Contracts.lua", jp)
+    load(lua, "MythicBoost/UI.lua", jp)
+    lua.globals().JP = jp
+    lua.execute('''
+        CreateAtlasMarkup=function(atlas,w,h) return atlas..':'..w..':'..h end
+        assert(JP.UI.RoleIcon('TANK',16):find('|cff',1,true))
+        local ready=false
+        local queries=0
+        C_Texture={GetAtlasInfo=function() queries=queries+1; return ready and {} or nil end}
+        assert(JP.UI.RoleIcon('TANK',16):find('|cff',1,true))
+        ready=true
+        assert(JP.UI.RoleIcon('TANK',16)=='roleicon-tiny-tank:16:16')
+        assert(JP.UI.RoleIcon('TANK',20)=='roleicon-tiny-tank:20:20')
+        assert(queries==2, 'confirmed atlases should remain cached across sizes')
+        assert(JP.UI.RoleIcon('UNKNOWN',16):find('?',1,true))
+    ''')
+
+
 if __name__ == "__main__":
+    test_atlas_icons_recover_after_initial_unavailability()
     test_shared_protected_calls()
     test_completion_api()
     test_safe_defaults()

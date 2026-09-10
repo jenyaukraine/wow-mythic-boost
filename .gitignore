@@ -1,7 +1,3 @@
-# Зависимости и сборки десктопного приложения (около 1.1 ГБ)
-MythicBoostDesktop/node_modules/
-MythicBoostDesktop/dist/
-
 # Архивы релизов аддона — собираются из MythicBoost/
 *.zip
 
@@ -11,3 +7,9 @@ release/
 /dist/
 __pycache__/
 *.py[cod]
+
+# Временные результаты локальных воркеров
+/bionic_manifest_*.json
+/subagent_results/
+.pytest_cache/
+.ruff_cache/

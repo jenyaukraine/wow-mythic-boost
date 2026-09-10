@@ -56,7 +56,9 @@ local function EquippedLevel(filterType, equipment)
 end
 
 local function EquipmentSnapshot()
-    local parts = {tostring(GetSpecialization and GetSpecialization() or 0)}
+    local specIndex = GetSpecialization and GetSpecialization()
+    local specID = specIndex and GetSpecializationInfo and GetSpecializationInfo(specIndex)
+    local parts = {tostring(specID or specIndex or 0)}
     local equipment = {levels={}, ids={}, loaded=0, total=0, pending=false}
     for _, slotID in ipairs(EQUIPMENT_SLOTS) do
         local itemID = GetInventoryItemID("player", slotID)
@@ -156,15 +158,15 @@ local function RestoreJournal(state)
     end
 end
 
-local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel)
+local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel, raidDifficulty)
     local instanceMapID = InstanceMapID(dungeon)
-    local journalID = instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID)
-    if not journalID or not EJ_SelectInstance or not EJ_GetNumLoot then return {percent=0,total=0,upgrades={},pending=false} end
+    local journalID = dungeon.journalID or (instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID))
+    if not journalID or not EJ_SelectInstance or not EJ_GetNumLoot then return {percent=0,total=0,upgrades={},pending=true} end
     EJ_SelectInstance(journalID)
     -- Selecting an instance can reset an unsupported previous difficulty.
     -- Apply ALL preview settings after the selection, for every dungeon.
-    if EJ_SetDifficulty then EJ_SetDifficulty(MYTHIC_PLUS_DIFFICULTY_ID) end
-    if C_EncounterJournal.SetPreviewMythicPlusLevel then C_EncounterJournal.SetPreviewMythicPlusLevel(keyLevel) end
+    if EJ_SetDifficulty then EJ_SetDifficulty(raidDifficulty or MYTHIC_PLUS_DIFFICULTY_ID) end
+    if not raidDifficulty and C_EncounterJournal.SetPreviewMythicPlusLevel then C_EncounterJournal.SetPreviewMythicPlusLevel(keyLevel) end
     local _, _, classID = UnitClass("player")
     local specIndex = GetSpecialization and GetSpecialization()
     local lootSpecID = specIndex and GetSpecializationInfo(specIndex)
@@ -173,11 +175,14 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     local total, upgrades, pending, totalGain = 0, {}, false, 0
     local usefulCount, upgradeCount, bisCount, topCount = 0, 0, 0, 0
     local upgradeSlots = {}
-    for lootIndex = 1, EJ_GetNumLoot() do
+    local lootCount = EJ_GetNumLoot()
+    if lootCount == 0 then pending = true end
+    local seen = {}
+    for lootIndex = 1, lootCount do
         local item = C_EncounterJournal.GetLootInfoByIndex(lootIndex)
-        if item and (not item.name or not item.link) then
+        if not item or not item.name or not item.link then
             pending = true
-            if item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
+            if item and item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
                 C_Item.RequestLoadItemDataByID(item.itemID)
             end
         end
@@ -188,9 +193,14 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
         if filterType ~= nil then equipped = EquippedLevel(filterType, equipment) end
         -- В знаменатель попадает только добыча, доступная текущему классу/спеку.
         -- Encounter Journal помечает неподходящие оружие и предметы этими ошибками.
-        if item and not item.handError and not item.weaponTypeError and filterType ~= nil and SLOT_IDS[filterType] then
+        local lootKey = item and item.itemID and (tostring(item.itemID) .. ":" .. tostring(item.encounterID or 0))
+        if item and lootKey and not seen[lootKey] and not item.handError and not item.weaponTypeError and filterType ~= nil and SLOT_IDS[filterType] then
+            seen[lootKey] = true
             total = total + 1
             local baseItemLevel = ItemLevel(item.link)
+            -- Raid bosses can drop different ilvls at the same difficulty.
+            -- Never use the Mythic+ reward table or one raid-wide level here.
+            local dropLevel = raidDifficulty and (baseItemLevel > 0 and baseItemLevel or nil) or dropLevel
             local scaledLink = dropLevel and baseItemLevel == dropLevel and item.link or nil
             -- A cached base/Heroic link may never become a scaled M+ link.
             -- The reward level still gives valid recommendations. Do not
@@ -202,7 +212,7 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
                 end
             end
             local recommendation = JP.BiSData and JP.BiSData.GetItem
-                and JP.BiSData:GetItem(specID, item.itemID)
+                and JP.BiSData:GetItem(specID, item.itemID, raidDifficulty and "raid" or "mplus")
             local isUpgrade = dropLevel and equipped ~= nil and dropLevel > equipped
             -- A different BIS can help at equal ilvl, but another copy of an
             -- already owned item at this level (or better) is not a goal.
@@ -226,6 +236,7 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
                     slot=item.slot or L("Слот"), equipped=equipped,
                     level=dropLevel, keyLevel=keyLevel, gain=gain, isUpgrade=isUpgrade,
                     recommendation=recommendation,
+                    encounterID=item.encounterID, difficultyID=raidDifficulty,
                 }
             end
         end
@@ -248,6 +259,7 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
         averageGain=upgradeCount>0 and math.floor(totalGain/upgradeCount+.5) or 0,
         pending=pending,
         keyLevel=keyLevel,
+        difficultyID=raidDifficulty,
         dropLevel=dropLevel,
         rewardUnknown=not dropLevel,
         equipmentLoaded=equipment.loaded, equipmentTotal=equipment.total,
@@ -255,12 +267,13 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     }
 end
 
-function LootAdvisor:Analyze(dungeons, requestedKeyLevel)
-    local keyLevel = PreviewKeyLevel(requestedKeyLevel)
-    local dropLevel = RewardItemLevel(keyLevel)
+function LootAdvisor:Analyze(dungeons, requestedKeyLevel, raidDifficulty)
+    if raidDifficulty and raidDifficulty ~= 14 and raidDifficulty ~= 15 and raidDifficulty ~= 16 then return {} end
+    local keyLevel = not raidDifficulty and PreviewKeyLevel(requestedKeyLevel) or nil
+    local dropLevel = keyLevel and RewardItemLevel(keyLevel)
     -- The startup request can precede the reward service being ready. Retry
     -- only while advice is requested, at most once per 30 sec (no polling timer).
-    if not dropLevel and GetTime and C_MythicPlus and C_MythicPlus.RequestRewards then
+    if not raidDifficulty and not dropLevel and GetTime and C_MythicPlus and C_MythicPlus.RequestRewards then
         local now = GetTime()
         if not self.rewardRequestAt or now-self.rewardRequestAt >= 30 then
             self.rewardRequestAt = now
@@ -272,9 +285,10 @@ function LootAdvisor:Analyze(dungeons, requestedKeyLevel)
     local signature = equipment.signature
     local dungeonIDs = {}
     for _, dungeon in ipairs(dungeons or {}) do
-        dungeonIDs[#dungeonIDs + 1] = tostring(dungeon.mapID) .. "@" .. tostring(InstanceMapID(dungeon))
+        dungeonIDs[#dungeonIDs + 1] = tostring(dungeon.mapID) .. "@" .. tostring(dungeon.journalID or InstanceMapID(dungeon))
     end
-    signature = signature .. ":" .. keyLevel .. ":" .. tostring(dropLevel) .. ":" .. table.concat(dungeonIDs, ",")
+    signature = signature .. (raidDifficulty and ":raid:" or ":mplus:") .. tostring(raidDifficulty or keyLevel)
+        .. ":" .. tostring(dropLevel) .. ":" .. table.concat(dungeonIDs, ",")
     -- Не закрепляем навсегда первый неполный ответ Encounter Journal. При
     -- открытии окна ссылки/уровни добычи часто ещё грузятся; такой кэш и давал
     -- ложное "Улучшений по ilvl не найдено" до следующего /reload.
@@ -289,14 +303,14 @@ function LootAdvisor:Analyze(dungeons, requestedKeyLevel)
     local owned, pending = OwnedItemLevels(equipment)
     local ok, err = pcall(function()
         for _, dungeon in ipairs(dungeons or {}) do
-            results[dungeon.mapID] = AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel)
+            results[dungeon.mapID] = AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel, raidDifficulty)
             pending = results[dungeon.mapID].pending or pending
         end
     end)
     -- Restore filters even when an asynchronous journal response is malformed.
     RestoreJournal(journalState)
     if not ok then error(err, 0) end
-    self.cache = {signature=signature,results=results,pending=pending or equipment.pending or not dropLevel}
+    self.cache = {signature=signature,results=results,pending=pending or equipment.pending or (not raidDifficulty and not dropLevel)}
     return results
 end
 

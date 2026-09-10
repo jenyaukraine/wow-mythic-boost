@@ -64,6 +64,10 @@ local function Encode(command, ...)
     return LibDeflate:EncodeForWoWAddonChannel(compressed)
 end
 
+local function ValidSession(session)
+    return type(session) == "number" and session > 0 and session < math.huge and session == math.floor(session)
+end
+
 local function Decode(payload)
     local decoded = LibDeflate:DecodeForWoWAddonChannel(payload)
     if not decoded then return end
@@ -76,14 +80,15 @@ end
 
 function RCLootBridge:Send(target, command, ...)
     if not LoadLibs() then return end
-    local encoded = Encode(command, ...)
+    local ok, encoded = pcall(Encode, command, ...)
+    if not ok then return end
     if not encoded then return end
     -- Ответ идёт лично мастеру лута, а не в группу: так делает и оригинал.
     if target and target ~= "group" then
-        AceComm:SendCommMessage(PREFIX, encoded, "WHISPER", target, "NORMAL")
+        return pcall(AceComm.SendCommMessage, AceComm, PREFIX, encoded, "WHISPER", target, "NORMAL")
     else
         local channel = IsInRaid() and "RAID" or "PARTY"
-        AceComm:SendCommMessage(PREFIX, encoded, channel, nil, "NORMAL")
+        return pcall(AceComm.SendCommMessage, AceComm, PREFIX, encoded, channel, nil, "NORMAL")
     end
 end
 
@@ -100,7 +105,7 @@ function RCLootBridge:Verdict(itemLink)
     if not itemID then return end
     local specID = JP.BiSData:GetCurrentSpecID()
     if not specID then return end
-    return JP.BiSData:GetItem(specID, itemID)
+    return JP.BiSData:GetItem(specID, itemID, "raid")
 end
 
 ---------------------------------------------------------------------------
@@ -167,9 +172,11 @@ function RCLootBridge:BuildRow(index)
         local button = UI.Button(row, label, width, 22, response == RESPONSE.NEED)
         button:SetPoint("RIGHT", -offset, 0)
         button:SetScript("OnClick", function()
-            RCLootBridge:Respond(row.session, response)
-            row.answered = true
-            row:SetAlpha(.45)
+            if row.answered then return end
+            if RCLootBridge:Respond(row.session, response) then
+                row.answered = true
+                row:SetAlpha(.45)
+            end
         end)
         return button
     end
@@ -181,35 +188,51 @@ function RCLootBridge:BuildRow(index)
     return row
 end
 
+local function NormalizeLootEntry(entry, fallbackSession)
+    local link, session
+    if type(entry) == "table" then
+        link = entry.link or entry.string
+        session = entry.session
+        if session == nil then session = fallbackSession end
+    elseif type(entry) == "string" then
+        link, session = entry, fallbackSession
+    end
+    if type(link) ~= "string" then link = nil end
+    if not ValidSession(session) then return end
+    return session, link
+end
+
 function RCLootBridge:ShowSessions(lootTable)
+    if type(lootTable) ~= "table" then return end
     local frame = self:BuildWindow()
     local shown = 0
     for index, entry in ipairs(lootTable or {}) do
-        local row = frame.rows[index] or self:BuildRow(index)
-        local link = entry.link or entry.string or entry
-        if type(link) ~= "string" then link = nil end
-        row.session, row.link, row.answered = entry.session or index, link, false
-        row:SetAlpha(1)
+        local session, link = NormalizeLootEntry(entry, index)
+        if session then
+            shown = shown + 1
+            local row = frame.rows[shown] or self:BuildRow(shown)
+            row.session, row.link, row.answered = session, link, false
+            row:SetAlpha(1)
 
-        local icon, name = 134400, link or L("Предмет")
-        if link and C_Item and C_Item.GetItemInfoInstant then
-            local ok, _, _, _, _, texture = pcall(C_Item.GetItemInfoInstant, link)
-            if ok and texture then icon = texture end
-        end
-        row.icon:SetTexture(icon)
-        row.name:SetText(name)
+            local icon, name = 134400, link or L("Предмет")
+            if link and C_Item and C_Item.GetItemInfoInstant then
+                local ok, _, _, _, _, texture = pcall(C_Item.GetItemInfoInstant, link)
+                if ok and texture then icon = texture end
+            end
+            row.icon:SetTexture(icon)
+            row.name:SetText(name)
 
-        local verdict = self:Verdict(link)
-        if verdict and verdict.label == "BIS" then
-            row.verdict:SetText(L("|cff4deb8fBIS для твоего спека|r   ") .. (verdict.slot or ""))
-        elseif verdict then
-            row.verdict:SetText((L("|cffb35cffTOP|r   носят %d%% лучших   %s"))
-                :format(math.floor(tonumber(verdict.share) or 0), verdict.slot or ""))
-        else
-            row.verdict:SetText(L("|cff6a7078в списках BiS не значится|r"))
+            local verdict = self:Verdict(link)
+            if verdict and verdict.label == "BIS" then
+                row.verdict:SetText(L("|cff4deb8fBIS для твоего спека|r   ") .. (verdict.slot or ""))
+            elseif verdict then
+                row.verdict:SetText((L("|cffb35cffTOP|r   носят %d%% лучших   %s"))
+                    :format(math.floor(tonumber(verdict.share) or 0), verdict.slot or ""))
+            else
+                row.verdict:SetText(L("|cff6a7078в списках BiS не значится|r"))
+            end
+            row:Show()
         end
-        row:Show()
-        shown = index
     end
     for index = shown + 1, #frame.rows do frame.rows[index]:Hide() end
     if shown == 0 then frame:Hide(); return end
@@ -222,12 +245,12 @@ end
 ---------------------------------------------------------------------------
 
 function RCLootBridge:Respond(session, response)
-    if not session or not self.masterLooter then return end
+    if not ValidSession(session) or type(self.masterLooter) ~= "string" or self.masterLooter == "" then return end
     -- Формат payload снят с их SendResponse: все поля кроме response
     -- необязательны, поэтому шлём только его. Гир и ilvl сознательно не
     -- прикладываем — это чужая зона ответственности, а лишнее поле не
     -- того типа испортило бы разбор у мастера лута.
-    self:Send(self.masterLooter, "response", session, { response = response })
+    return self:Send(self.masterLooter, "response", session, { response = response })
 end
 
 function RCLootBridge:OnComm(prefix, payload, _, sender)
@@ -236,12 +259,15 @@ function RCLootBridge:OnComm(prefix, payload, _, sender)
     if not ok or not command then return end
 
     if command == "lootTable" then
+        if type(sender) ~= "string" or sender == "" then return end
+        if type(data) ~= "table" or type(data[1]) ~= "table" then return end
         self.masterLooter = sender
         -- lootAck обязателен: без него мастер лута ждёт нас до таймаута и
         -- держит всю раздачу.
         self:Send(sender, "lootAck")
         self:ShowSessions(data and data[1])
-    elseif command == "session_end" then
+    elseif command == "session_end" and sender == self.masterLooter then
+        self.masterLooter = nil
         if self.frame then self.frame:Hide() end
     end
 end
@@ -269,7 +295,7 @@ end
 function RCLootBridge:Register()
     if self.registered then return true end
     if not LoadLibs() then return false end
-    AceComm.RegisterComm(self, PREFIX, function(_, prefix, payload, distribution, sender)
+    AceComm.RegisterComm(self, PREFIX, function(prefix, payload, distribution, sender)
         RCLootBridge:OnComm(prefix, payload, distribution, sender)
     end)
     self.registered = true

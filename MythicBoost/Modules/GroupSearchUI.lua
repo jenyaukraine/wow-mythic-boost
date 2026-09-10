@@ -1355,6 +1355,12 @@ end
 -- write SaveAdvancedFilter: its tables are also consumed by restricted UI.
 function GroupSearchUI:ImportNativeDungeons(welcome)
     if not welcome or not welcome.groupFilters or not C_LFGList.GetAdvancedFilter then return end
+    -- The native EditBox is also our query editor. Its Enter/category setup
+    -- runs a stock search, but does not mean the player changed dungeon cards.
+    if JP.GroupTools and (JP.GroupTools.edit or JP.GroupTools.openingQuery or JP.GroupTools.closingQuery) then
+        self:CaptureNativeExactSearch(welcome)
+        return
+    end
     local panel = _G.LFGListFrame and LFGListFrame.SearchPanel
     if not panel or panel.categoryID ~= 2 then return end
     local filter = SafeTable(C_LFGList.GetAdvancedFilter())
@@ -1459,12 +1465,11 @@ function GroupSearchUI:OnSearchResults(welcome)
     end
 end
 
--- В разных сборках Midnight завершение поиска приходит либо как
--- SEARCH_RESULTS_RECEIVED, либо только как UPDATE_SEARCH_RESULTS. Второе
--- событие может сработать до того, как таблицы результатов заполнятся, поэтому
--- даём клиенту небольшое время и схлопываем повторные события одного шага.
+-- UPDATE_SEARCH_RESULTS also fires while the new request is still pending.
+-- Only SEARCH_RESULTS_RECEIVED confirms that its result set is complete.
 function GroupSearchUI:QueueSearchResults(welcome, event)
     if not self.searchPending or not self.searchAwaitingResults then return end
+    if event ~= "LFG_LIST_SEARCH_RESULTS_RECEIVED" then return end
     local token, step = self.searchToken, self.searchStep
     if self.captureScheduledStep == step then return end
     self.captureScheduledStep = step
@@ -1652,7 +1657,16 @@ end
 function GroupSearchUI.LootDelta(item)
     if not item.level then return L("Уровень дропа пока недоступен") end
     if item.equipped == nil then return (L("Дроп: %d; уровень надетого предмета недоступен")):format(item.level) end
-    return ("%s  %d → %d  (%+d)"):format(item.slot or L("Слот"), item.equipped or 0, item.level, item.gain or 0)
+    return ("%s  %d -> %d  (%+d)"):format(item.slot or L("Слот"), item.equipped or 0, item.level, item.level - item.equipped)
+end
+
+function GroupSearchUI.LootDeltaColor(item)
+    local level, equipped = JP.SafeNumber(item.level), JP.SafeNumber(item.equipped)
+    if level and equipped then
+        if level > equipped then return .30, .92, .56 end
+        if level < equipped then return .98, .43, .43 end
+    end
+    return .62, .68, .76
 end
 
 function GroupSearchUI.ShowLootItemTooltip(button, loaded)
@@ -1673,11 +1687,13 @@ function GroupSearchUI.ShowLootItemTooltip(button, loaded)
     end
     if item.level then
         GameTooltip:AddLine((L("Дроп +%d: %d")):format(item.keyLevel, item.level), .62, .78, .92)
-        GameTooltip:AddLine(GroupSearchUI.LootDelta(item), .30, .92, .56)
+        GameTooltip:AddLine(GroupSearchUI.LootDelta(item), GroupSearchUI.LootDeltaColor(item))
     end
     local recommendation = item.recommendation
     if recommendation and recommendation.kind == "bis" then
-        GameTooltip:AddLine(L("BIS Mythic+ по гайду Wowhead"), 1, .72, .12)
+        GameTooltip:AddLine(L("BIS по гайду Wowhead"), 1, .72, .12)
+        if recommendation.variant then GameTooltip:AddLine(recommendation.variant, 1, .82, .4, true) end
+        if recommendation.dropSource then GameTooltip:AddLine(recommendation.dropSource, .62, .78, .92, true) end
         GameTooltip:AddLine((L("Сверено: %s")):format(recommendation.updatedAt or "—"), .62, .68, .76)
     elseif recommendation then
         GameTooltip:AddLine((L("TOP M+ игроков: %d%% из %d")):format(
@@ -1852,7 +1868,7 @@ local function CardTooltip(card)
                 or (" |cffb36cff[TOP %d%%]|r"):format(recommendation.share or 0)) or ""
             GameTooltip:AddDoubleLine(icon .. (item.name or L("Предмет")),
                 GroupSearchUI.LootDelta(item) .. marker,
-                .90, .92, .96, .25, 1, .55)
+                .90, .92, .96, GroupSearchUI.LootDeltaColor(item))
         end
         if not loot.rewardUnknown then
             GameTooltip:AddLine(L("Процент = полезные предметы / весь доступный твоему спеку пул. Это шанс апгрейда при условии, что предмет достался тебе."), .52, .68, .82, true)
@@ -2668,6 +2684,10 @@ local function BuildFilterPanel(welcome, body)
     -- поэтому поля гаснут вместе с состоянием флажка.
     local function UpdateUpgradeMode(refresh)
         local enabled = welcome.scoreUpgrade:GetChecked() and true or false
+        if refresh and enabled and JP.GroupTools then
+            JP.GroupTools:ClearQuery(welcome)
+            welcome.scoreUpgrade:SetChecked(true)
+        end
         welcome.groupFilters.scoreUpgrade = enabled
         for _, key in ipairs({ "keyMin", "keyMax" }) do
             if welcome.filterFields[key] then welcome.filterFields[key]:SetFieldEnabled(not enabled) end
@@ -3014,6 +3034,9 @@ function GroupSearchUI:Build(welcome, body)
             if GroupSearchUI.searchPending then
                 GroupSearchUI:QueueSearchResults(welcome, event)
             else
+                -- A queued UI refresh may still hold a batch captured before
+                -- this event. Never let it replace the newer live results.
+                GroupSearchUI.completedBatch = nil
                 GroupSearchUI:CaptureNativeExactSearch(welcome)
                 if event=="LFG_LIST_SEARCH_RESULTS_RECEIVED" then
                     GroupSearchUI.resultsExactLevel=welcome.groupFilters.category~="raid" and NativeExactLevel() or nil
