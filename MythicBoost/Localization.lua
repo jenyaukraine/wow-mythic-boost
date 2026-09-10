@@ -11,6 +11,8 @@ if locale == "deDE" then
     translations = {
         ["Добыча: %s"] = "Beute: %s",
         ["Добыча загружается"] = "Beute wird geladen",
+        ["Данные добычи недоступны"] = "Beutedaten nicht verfügbar",
+        ["Часть данных добычи недоступна"] = "Einige Beutedaten sind nicht verfügbar",
         ["Ещё предметов: %d"] = "%d weitere Gegenstände",
         ["Целей: %d · BIS: %d"] = "Ziele: %d · BIS: %d",
         ["Все ключи сборки"] = "Alle Build-Durchläufe",
@@ -817,6 +819,8 @@ elseif locale ~= "ruRU" then
     translations = {
         ["Добыча: %s"] = "Loot: %s",
         ["Добыча загружается"] = "Loading loot",
+        ["Данные добычи недоступны"] = "Loot data unavailable",
+        ["Часть данных добычи недоступна"] = "Some loot data is unavailable",
         ["Ещё предметов: %d"] = "%d more items",
         ["Целей: %d · BIS: %d"] = "Targets: %d · BIS: %d",
         ["Все ключи сборки"] = "All build runs",

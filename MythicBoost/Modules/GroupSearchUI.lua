@@ -1788,15 +1788,16 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
     end
     welcome.lootAnalysis = loot
 
-    local bestMapID, bestName, bestPercent, bestAverage, bestDropLevel, hasLootData, lootPending, rewardUnknown
+    local bestMapID, bestName, bestPercent, bestAverage, bestDropLevel, hasLootData, lootPending, rewardUnknown, lootUnavailable
     for _, dungeon in ipairs(data) do
         local dungeonLoot = loot[dungeon.mapID]
-        if dungeonLoot and (dungeonLoot.total or 0) > 0 then hasLootData = true end
-        if dungeonLoot and dungeonLoot.pending then lootPending = true end
+        if dungeonLoot and not dungeonLoot.unavailable and (dungeonLoot.total or 0) > 0 then hasLootData = true end
+        if dungeonLoot and dungeonLoot.unavailable then lootUnavailable = true end
+        if dungeonLoot and dungeonLoot.pending and not dungeonLoot.unavailable then lootPending = true end
         if dungeonLoot and dungeonLoot.rewardUnknown then rewardUnknown = true end
         local percent = dungeonLoot and dungeonLoot.percent or 0
         local average = dungeonLoot and dungeonLoot.averageGain or 0
-        if dungeonLoot and not dungeonLoot.pending and percent > 0
+        if dungeonLoot and not dungeonLoot.pending and not dungeonLoot.unavailable and percent > 0
             and (not bestPercent or percent > bestPercent or (percent == bestPercent and average > bestAverage)) then
             bestMapID, bestName, bestPercent, bestAverage, bestDropLevel = dungeon.mapID, dungeon.name, percent, average,
                 dungeonLoot and dungeonLoot.dropLevel
@@ -1835,12 +1836,14 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
             card.best:SetText(level > 0 and ("|cff43d17a+%d|r"):format(level) or "|cff687584—|r")
 
             local percent = card.lootData and card.lootData.percent or 0
-            local analyzed = card.lootData and not card.lootData.pending and (card.lootData.total or 0) > 0
+            local unavailable = card.lootData and card.lootData.unavailable
+            local analyzed = card.lootData and not card.lootData.pending and not unavailable and (card.lootData.total or 0) > 0
             card.isLootBest = bestMapID == dungeon.mapID
-            card.hasUsefulLoot = percent > 0
-            card.loot:SetText(card.lootData and card.lootData.rewardUnknown
-                and "" or (analyzed and (percent .. "%") or "..."))
-            if percent >= 50 then card.loot:SetTextColor(UI.Unpack(C.amber))
+            card.hasUsefulLoot = not unavailable and percent > 0
+            card.loot:SetText(unavailable and "—" or (card.lootData and card.lootData.rewardUnknown
+                and "" or (analyzed and (percent .. "%") or "...")))
+            if unavailable then card.loot:SetTextColor(UI.Unpack(C.faint))
+            elseif percent >= 50 then card.loot:SetTextColor(UI.Unpack(C.amber))
             elseif percent > 0 then card.loot:SetTextColor(.73, .48, 1, 1)
             else card.loot:SetTextColor(UI.Unpack(C.faint)) end
 
@@ -1861,14 +1864,19 @@ function GroupSearchUI:RefreshDungeonCards(welcome)
     welcome.dungeonSummary:SetText(("%d / %d"):format(displayedActive, #data))
     if welcome.lootSummary then
         local bestLoot = bestMapID and loot[bestMapID]
-        welcome.lootSummary:SetText(bestName
+        local summary = bestName
             and (bestLoot.rewardUnknown and ""
             or (L("|cff8a939fДроп +%d: %d  лучший шанс|r  |cffffb93d%s|r  |cffb36cff%d%% (%d из %d)|r"))
                 :format(bestLoot.keyLevel, bestDropLevel or bestLoot.dropLevel or 0, bestName, bestPercent, bestLoot.useful or 0, bestLoot.total or 0)
             )
-            or (lootPending and L("|cff8aa8c4Загружаю уровни предметов...|r")
+            or (lootUnavailable and (hasLootData and L("Часть данных добычи недоступна") or L("Данные добычи недоступны"))
+                or (lootPending and L("|cff8aa8c4Загружаю уровни предметов...|r")
                 or (rewardUnknown and ""
                 or (hasLootData and L("|cff687584Улучшений по ilvl не найдено|r") or L("|cff687584Загружаю таблицу лута...|r")))))
+        if bestName and lootUnavailable then
+            summary = (summary ~= "" and (summary .. "  |  ") or "") .. L("Часть данных добычи недоступна")
+        end
+        welcome.lootSummary:SetText(summary)
     end
 end
 
@@ -1878,7 +1886,9 @@ local function CardTooltip(card)
     GameTooltip:SetText(card.title:GetText() or "", 1, .82, 0)
 
     local loot = card.lootData
-    if loot and (loot.total or 0) > 0 then
+    if loot and loot.unavailable then
+        GameTooltip:AddLine(L("Данные добычи недоступны"), .72, .78, .86, true)
+    elseif loot and (loot.total or 0) > 0 then
         GameTooltip:AddLine((L("Экипировка прочитана: %d/%d")):format(loot.equipmentLoaded or 0, loot.equipmentTotal or 0), .72, .78, .86)
         GameTooltip:AddDoubleLine((loot.rewardUnknown and L("Цели BIS/TOP +%d") or L("Шанс полезного предмета +%d")):format(loot.keyLevel),
             loot.rewardUnknown and tostring(loot.useful or 0) or (loot.percent .. "%"),

@@ -90,6 +90,7 @@ local function OwnedItemLevels(equipment)
             -- Never hide a possible upgrade on an incomplete item response.
             pending = true
             owned[itemID] = owned[itemID] or 0 -- Ownership is known even without ilvl.
+            LootAdvisor.awaitedItemIDs[itemID] = true
             if C_Item and C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
         end
     end
@@ -146,11 +147,32 @@ local function ConfigureJournal()
         instanceID = EncounterJournal and EncounterJournal.instanceID,
         encounterID = EncounterJournal and EncounterJournal.encounterID,
     }
+    if EncounterJournal then
+        state.frame = EncounterJournal
+        state.tab = EncounterJournal.encounter and EncounterJournal.encounter.info.tab
+        state.children = {}
+        for _, child in ipairs({EncounterJournal:GetChildren()}) do
+            state.children[#state.children + 1] = {frame=child, shown=child:IsShown()}
+        end
+    end
     return state
+end
+
+local function SelectJournalInstance(journalID)
+    -- Difficulty changes synchronously refresh Blizzard's Lua selection.
+    -- Keep that selection aligned with the native API during this transaction.
+    if EncounterJournal then
+        EncounterJournal.instanceID = journalID
+        EncounterJournal.encounterID = nil
+    end
+    EJ_SelectInstance(journalID)
 end
 
 local function RestoreJournal(state)
     if not state then return end
+    if state.frame then
+        state.frame.instanceID, state.frame.encounterID = state.instanceID, state.encounterID
+    end
     if state.instanceID and EJ_SelectInstance then EJ_SelectInstance(state.instanceID) end
     if state.difficulty and EJ_SetDifficulty then EJ_SetDifficulty(state.difficulty) end
     if EJ_SetLootFilter and state.classID then EJ_SetLootFilter(state.classID, state.specID or 0) end
@@ -160,6 +182,13 @@ local function RestoreJournal(state)
     -- Filter/difficulty events can reselect the visible journal's encounter.
     if state.instanceID and EJ_SelectInstance then EJ_SelectInstance(state.instanceID) end
     if state.encounterID and EJ_SelectEncounter then EJ_SelectEncounter(state.encounterID) end
+    if state.frame then
+        if state.instanceID and EncounterJournal_Refresh then EncounterJournal_Refresh() end
+        local tabName = ({"overviewTab", "lootTab", "bossTab", "modelTab"})[state.tab]
+        local info = state.frame.encounter and state.frame.encounter.info
+        if state.instanceID and tabName and info and info[tabName] then info[tabName]:Click() end
+        for _, child in ipairs(state.children) do child.frame:SetShown(child.shown) end
+    end
 end
 
 local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel, raidDifficulty)
@@ -167,9 +196,9 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     local journalID = dungeon.journalID or (instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID))
     if not UsableNumber(journalID) or journalID <= 0 or not EJ_SelectInstance
         or not EJ_GetNumLoot or not EJ_GetEncounterInfoByIndex then
-        return {percent=0,total=0,upgrades={},pending=true}
+        return {percent=0,total=0,upgrades={},pending=true,pendingReason="journal_missing"}
     end
-    EJ_SelectInstance(journalID)
+    SelectJournalInstance(journalID)
     -- Selecting an instance can reset an unsupported previous difficulty.
     -- Apply ALL preview settings after the selection, for every dungeon.
     if EJ_SetDifficulty then EJ_SetDifficulty(raidDifficulty or MYTHIC_PLUS_DIFFICULTY_ID) end
@@ -181,9 +210,10 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     if C_EncounterJournal.ResetSlotFilter then C_EncounterJournal.ResetSlotFilter() end
     -- EJ_DIFFICULTY_UPDATE refreshes Blizzard's visible journal synchronously
     -- and can select its old boss again. Select our instance AFTER those events.
-    EJ_SelectInstance(journalID)
+    SelectJournalInstance(journalID)
     if EJ_GetDifficulty and EJ_GetDifficulty() ~= (raidDifficulty or MYTHIC_PLUS_DIFFICULTY_ID) then
-        return {percent=0,total=0,upgrades={},pending=true}
+        return {percent=0,total=0,upgrades={},pending=true,pendingReason="difficulty_mismatch",
+            journalID=journalID,actualDifficulty=EJ_GetDifficulty(),requestedDifficulty=raidDifficulty or MYTHIC_PLUS_DIFFICULTY_ID}
     end
     local encounters = {}
     local encounterIndex = 1
@@ -194,10 +224,11 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
         encounterIndex = encounterIndex + 1
     end
     local total, upgrades, pending, totalGain = 0, {}, false, 0
+    local pendingReason, rejectedItemID, rejectedEncounterID
     local usefulCount, upgradeCount, bisCount, topCount = 0, 0, 0, 0
     local upgradeSlots = {}
     local lootCount = EJ_GetNumLoot()
-    if lootCount == 0 then pending = true end
+    if lootCount == 0 then pending, pendingReason = true, "loot_empty" end
     local seen = {}
     for lootIndex = 1, lootCount do
         local item = C_EncounterJournal.GetLootInfoByIndex(lootIndex)
@@ -205,11 +236,15 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
         -- Do not cache a foreign boss's BiS item under every dungeon card.
         if item and not encounters[item.encounterID] then
             pending = true
+            pendingReason = "foreign_or_unknown_source"
+            rejectedItemID, rejectedEncounterID = item.itemID, item.encounterID
             item = nil
         end
         if not item or not item.name or not item.link then
             pending = true
+            pendingReason = pendingReason or "item_loading"
             if item and item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
+                LootAdvisor.awaitedItemIDs[item.itemID] = true
                 C_Item.RequestLoadItemDataByID(item.itemID)
             end
         end
@@ -235,6 +270,7 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
             if baseItemLevel <= 0 then
                 pending = true
                 if item.itemID and C_Item and C_Item.RequestLoadItemDataByID then
+                    LootAdvisor.awaitedItemIDs[item.itemID] = true
                     C_Item.RequestLoadItemDataByID(item.itemID)
                 end
             end
@@ -285,6 +321,9 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
         bisCount=bisCount, topCount=topCount, slotCount=slotCount, upgrades=upgrades,
         averageGain=upgradeCount>0 and math.floor(totalGain/upgradeCount+.5) or 0,
         pending=pending,
+        pendingReason=pendingReason,
+        journalID=journalID, actualDifficulty=EJ_GetDifficulty and EJ_GetDifficulty(),
+        rejectedItemID=rejectedItemID, rejectedEncounterID=rejectedEncounterID,
         keyLevel=keyLevel,
         difficultyID=raidDifficulty,
         dropLevel=dropLevel,
@@ -316,6 +355,9 @@ function LootAdvisor:Analyze(dungeons, requestedKeyLevel, raidDifficulty)
     end
     signature = signature .. (raidDifficulty and ":raid:" or ":mplus:") .. tostring(raidDifficulty or keyLevel)
         .. ":" .. tostring(dropLevel) .. ":" .. table.concat(dungeonIDs, ",")
+    if self.requestSignature ~= signature then
+        self.requestSignature, self.pendingRetries = signature, 0
+    end
     -- Не закрепляем навсегда первый неполный ответ Encounter Journal. При
     -- открытии окна ссылки/уровни добычи часто ещё грузятся; такой кэш и давал
     -- ложное "Улучшений по ilvl не найдено" до следующего /reload.
@@ -327,7 +369,9 @@ function LootAdvisor:Analyze(dungeons, requestedKeyLevel, raidDifficulty)
     local journalState = ConfigureJournal()
     if not journalState then return results end
     local specID = JP.BiSData and JP.BiSData.GetCurrentSpecID and JP.BiSData:GetCurrentSpecID()
+    self.awaitedItemIDs = {}
     local owned, pending = OwnedItemLevels(equipment)
+    self.analyzing = true
     local ok, err = pcall(function()
         for _, dungeon in ipairs(dungeons or {}) do
             results[dungeon.mapID] = AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropLevel, raidDifficulty)
@@ -335,10 +379,45 @@ function LootAdvisor:Analyze(dungeons, requestedKeyLevel, raidDifficulty)
         end
     end)
     -- Restore filters even when an asynchronous journal response is malformed.
-    RestoreJournal(journalState)
+    local restored, restoreError = pcall(RestoreJournal, journalState)
+    self.analyzing = nil
     if not ok then error(err, 0) end
+    if not restored then error(restoreError, 0) end
+    if MythicBoostDB then
+        local diagnostics = {}
+        for mapID, result in pairs(results) do
+            diagnostics[mapID] = {journalID=result.journalID, difficulty=result.actualDifficulty,
+                pendingReason=result.pendingReason, total=result.total,
+                rejectedItemID=result.rejectedItemID, rejectedEncounterID=result.rejectedEncounterID}
+        end
+        MythicBoostDB.lootAdvisorDebug = diagnostics
+    end
     self.cache = {signature=signature,results=results,pending=pending or equipment.pending or (not raidDifficulty and not dropLevel)}
+    if self.cache.pending and (self.pendingRetries or 0) >= 6 then
+        for _, result in pairs(results) do
+            if result.pending or equipment.pending or (not raidDifficulty and not dropLevel) then
+                result.pending, result.unavailable = false, true
+            end
+        end
+        self.cache.pending, self.cache.incomplete = false, true
+    else
+        self:QueueRetry()
+    end
     return results
+end
+
+function LootAdvisor:QueueRetry()
+    if not self.cache.pending or self.refreshQueued then return end
+    self.refreshQueued = true
+    local signature = self.requestSignature
+    C_Timer.After(.5, function()
+        self.refreshQueued = nil
+        local welcome = JP.modules.Welcome
+        if self.requestSignature ~= signature or not self.cache.pending
+            or not welcome or not welcome.frame or not welcome.frame:IsShown() then return end
+        self.pendingRetries = (self.pendingRetries or 0) + 1
+        self:Invalidate()
+    end)
 end
 
 function LootAdvisor:Invalidate()
@@ -366,18 +445,16 @@ function LootAdvisor:Create()
     self.events:RegisterEvent("CHALLENGE_MODE_MAPS_UPDATE")
     self.events:SetScript("OnEvent", function(_, event, unit)
         if event == "EJ_LOOT_DATA_RECIEVED" or event == "GET_ITEM_INFO_RECEIVED" then
-            -- Данные о предметах приходят пачками, и каждый ответ обнулял кэш,
-            -- вызывая новый полный обход журнала. Если после нескольких попыток
-            -- таблица так и не собралась, перестаём гоняться за ней: пересчёт
-            -- всё равно случится при смене экипировки или специализации.
-            if not self.cache.pending or self.refreshQueued then return end
-            self.pendingRetries = (self.pendingRetries or 0) + 1
-            if self.pendingRetries > 6 then return end
-            self.refreshQueued = true
-            C_Timer.After(.25, function()
-                self.refreshQueued = nil
+            if self.analyzing then return end
+            if self.cache.incomplete then
+                -- A genuinely late response can recover an exhausted attempt.
+                if not self.awaitedItemIDs or not self.awaitedItemIDs[unit] then return end
+                self.awaitedItemIDs[unit] = nil
+                self.pendingRetries = 0
                 self:Invalidate()
-            end)
+            else
+                self:QueueRetry()
+            end
         elseif event ~= "PLAYER_SPECIALIZATION_CHANGED" or unit == "player" then
             if event == "PLAYER_ENTERING_WORLD" then self.rewardRequestAt = nil end
             self.pendingRetries = 0
