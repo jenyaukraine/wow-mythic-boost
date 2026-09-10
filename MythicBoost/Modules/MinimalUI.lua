@@ -2146,24 +2146,49 @@ end
 
 function MinimalUI:StyleStanceBar(enabled)
     if InCombatLockdown() then return end
-    local frames = { _G.StanceBar, _G.StanceBarFrame }
     self.stanceBarLayouts = self.stanceBarLayouts or UI.WeakKeys()
-    for _, frame in ipairs(frames) do
+    self.stanceMouseState = self.stanceMouseState or UI.WeakKeys()
+    local function SuppressMouse(frame)
+        if not self.stanceMouseState[frame] then
+            local click, motion = frame:IsMouseEnabled(), frame:IsMouseEnabled()
+            if frame.IsMouseClickEnabled then click = frame:IsMouseClickEnabled() end
+            if frame.IsMouseMotionEnabled then motion = frame:IsMouseMotionEnabled() end
+            self.stanceMouseState[frame] = { click = click, motion = motion }
+        end
+        -- Alpha does not remove hit targets. Blizzard can show the bar again
+        -- on a form change, so suppress input on the children as well.
+        frame:EnableMouse(false)
+        for _, child in ipairs({ frame:GetChildren() }) do SuppressMouse(child) end
+    end
+    for _, name in ipairs({ "StanceBar", "StanceBarFrame" }) do
+        local frame = _G[name]
         if frame and type(frame.SetShown) == "function" then
-            if not self.stanceBarLayouts[frame] then
+            if enabled and not self.stanceBarLayouts[frame] then
                 self.stanceBarLayouts[frame] = { shown = frame:IsShown(), alpha = frame:GetAlpha() }
             end
             local state = self.stanceBarLayouts[frame]
             if enabled then
+                SuppressMouse(frame)
                 frame:Hide()
                 frame:SetAlpha(0)
-            else
+            elseif state then
                 frame:SetAlpha(state.alpha or 1)
                 frame:SetShown(state.shown)
             end
         end
     end
-    if not enabled then wipe(self.stanceBarLayouts) end
+    if not enabled then
+        for frame, state in pairs(self.stanceMouseState) do
+            if frame.SetMouseClickEnabled and frame.SetMouseMotionEnabled then
+                frame:SetMouseClickEnabled(state.click)
+                frame:SetMouseMotionEnabled(state.motion)
+            else
+                frame:EnableMouse(state.click or state.motion)
+            end
+        end
+        wipe(self.stanceBarLayouts)
+        wipe(self.stanceMouseState)
+    end
 end
 
 function MinimalUI:SetMinimapEnabled(enabled)
