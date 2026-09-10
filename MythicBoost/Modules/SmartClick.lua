@@ -583,6 +583,7 @@ function SmartClick:Create()
         "UNIT_PHASE",
         "UNIT_CONNECTION",
         "UNIT_FLAGS",
+        "UNIT_HEALTH",
         "UNIT_AURA",
         "UNIT_SPELLCAST_SUCCEEDED",
     }) do
@@ -592,12 +593,27 @@ function SmartClick:Create()
     -- вместе с переучиванием заклинаний, и собирать макрос десять раз подряд
     -- незачем.
     local queued, applyQueued = false, false
+    local deadStates = {}
     self.events:SetScript("OnEvent", function(_, event, unit, _, spellID)
         -- UNIT_AURA's payload can be restricted even while our known group
         -- buff IDs remain public. Refresh without inspecting that payload.
         if event ~= "UNIT_AURA" and event:sub(1, 5) == "UNIT_" then
             if issecretvalue(unit) or type(unit) ~= "string" then return end
             if unit ~= "player" and not unit:match("^party%d+$") and not unit:match("^raid%d+$") then return end
+        end
+        if event == "UNIT_HEALTH" then
+            -- Buff removal is reported while the member is dead. Resurrection
+            -- with no auras need not emit UNIT_AURA, so recheck on the alive edge.
+            -- Do not read health values or rescan buffs on ordinary damage/healing.
+            local dead = UnitIsDeadOrGhost(unit)
+            if issecretvalue(dead) or type(dead) ~= "boolean" then
+                deadStates[unit] = nil -- Recheck once the state becomes public again.
+                return
+            end
+            if deadStates[unit] == dead then return end
+            deadStates[unit] = dead
+        elseif event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
+            wipe(deadStates) -- Party/raid unit tokens may now name other members.
         end
         if event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" and not InCombatLockdown() then
             local _, class = UnitClass("player")
