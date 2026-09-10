@@ -38,7 +38,10 @@ function Effects:ConfigureAuras(frame, enabled)
     if enabled and not frame.healAuras and AuraContainerInbound and AnchorUtil then
         frame.healAuras = {}
         for i = 1, 5 do
-            local holder = CreateFrame("Frame", nil, frame)
+            -- A child of a secure button is not itself an explicitly protected
+            -- frame. Secure Show/Hide on its handle fails in combat unless the
+            -- holder is protected too, aborting the heal-target state snippet.
+            local holder = CreateFrame("Frame", nil, frame, "SecureFrameTemplate")
             holder:SetSize(BUFFS * ICON + (BUFFS - 1) * GAP, ICON)
             holder:SetPoint("TOPLEFT", 45, -29); holder:EnableMouse(false); holder:Hide()
             local container = CreateFrame("AuraContainer", nil, holder, "CustomAuraContainerTemplate")

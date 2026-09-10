@@ -12,7 +12,7 @@ local C = UI.colors
 -- экипировка, рейтинг и нужен ли он группе прямо сейчас.
 
 local PARTY_ROWS, PARTY_ROW_HEIGHT = 5, 26
-local PARTY_TOP, PARTY_SECTION_BOTTOM = -52, -190
+local PARTY_TOP, PARTY_SECTION_BOTTOM = -88, -226
 
 -- Возможность помечается как потенциальная: часть диспелов и контроля зависит
 -- от специализации/таланта, которых LFG API не раскрывает. Гарантированными
@@ -84,7 +84,7 @@ local function EvidenceForPlayer(name, cells, mapID, targetLevel)
     local samplePenalty = runs and runs > 0 and (.35 / math.sqrt(runs)) or 0
     return {
         name = name, strength = level + timerBonus - samplePenalty,
-        known = true, level = level, runs = runs,
+        known = true, level = level, runs = runs, upgrades = upgrades,
     }
 end
 
@@ -333,21 +333,65 @@ function ApplicantBoard:Build(welcome, page)
     self.page = page
     self.welcome = welcome
 
-    local partyTitle = UI.Text(page, "GameFontNormalSmall", L("ТВОЯ ПАТИ"), C.accent)
-    partyTitle:SetPoint("TOPLEFT", 16, -14)
+    local summary = CreateFrame("Frame", nil, page, "BackdropTemplate")
+    summary:SetPoint("TOPLEFT", 12, -4)
+    summary:SetPoint("TOPRIGHT", -12, -4)
+    summary:SetHeight(60)
+    UI.Backdrop(summary, C.panel, C.hudEdge)
+    local partyTitle = UI.Text(summary, "GameFontNormalSmall", L("ТВОЯ ПАТИ"), C.accent)
+    partyTitle:SetPoint("TOPLEFT", 10, -12)
 
-    self.partyPower = UI.Text(page, "GameFontHighlightSmall", "", C.muted)
-    self.partyPower:SetPoint("LEFT", partyTitle, "RIGHT", 14, 0)
-    self.partyPower:SetJustifyH("LEFT")
+    self.launchBadge = CreateFrame("Frame", nil, summary, "BackdropTemplate")
+    self.launchBadge:SetPoint("TOPLEFT", 116, -5)
+    self.launchBadge:SetPoint("TOPRIGHT", -78, -5)
+    self.launchBadge:SetHeight(25)
+    UI.Backdrop(self.launchBadge, C.surface, C.hudEdge)
+    self.launchLabel = UI.Text(self.launchBadge, "GameFontNormalSmall", "", C.amber)
+    self.launchLabel:SetPoint("LEFT", 10, 0)
+    self.launchLabel:SetPoint("RIGHT", -10, 0)
+    self.launchLabel:SetJustifyH("LEFT")
+    self.launchLabel:SetWordWrap(false)
+    self.launchBadge:EnableMouse(true)
+    self.launchBadge:SetScript("OnEnter", function(frame)
+        UI.Tooltip(frame, self.launchAdvice or L("Прогноз готовности группы"))
+    end)
+    self.launchBadge:SetScript("OnLeave", GameTooltip_Hide)
+
+    self.partyMetrics = {}
+    for index, geometry in ipairs({ { 10, 78 }, { 94, 154 }, { 254, 144 }, { 404, 142 } }) do
+        local text = UI.Text(summary, "GameFontHighlightSmall", "", C.muted)
+        text:SetPoint("TOPLEFT", geometry[1], -39)
+        text:SetWidth(geometry[2]); text:SetJustifyH("LEFT"); text:SetWordWrap(false)
+        self.partyMetrics[index] = text
+    end
+    self.partyRisk = CreateFrame("Frame", nil, summary, "BackdropTemplate")
+    self.partyRisk:SetPoint("TOPLEFT", 552, -33)
+    self.partyRisk:SetPoint("BOTTOMRIGHT", -7, 5)
+    UI.Backdrop(self.partyRisk, { .20, .11, .035, .75 }, { .58, .36, .12, .85 })
+    self.partyRisk:EnableMouse(true)
+    self.partyRisk.label = UI.Text(self.partyRisk, "GameFontHighlightSmall", "", C.amber)
+    self.partyRisk.label:SetPoint("LEFT", 8, 0)
+    self.partyRisk.label:SetPoint("RIGHT", -8, 0)
+    self.partyRisk.label:SetJustifyH("LEFT"); self.partyRisk.label:SetWordWrap(false)
+    self.partyRisk:SetScript("OnEnter", function(frame)
+        frame:SetBackdropBorderColor(1, .72, .25, 1)
+        self:ShowPartyRiskTooltip(frame)
+    end)
+    self.partyRisk:SetScript("OnLeave", function(frame)
+        frame:SetBackdropBorderColor(.58, .36, .12, .85)
+        GameTooltip_Hide()
+    end)
+    self.partyRisk:Hide()
 
     self.forecastHelp = HeaderIconButton(page,
         "Interface\\Icons\\INV_Relics_Hourglass",
         L("Прогноз готовности группы"), {
             L("Опыт: текущее подземелье."),
             L("Модель: 55% слабейший / 30% второй / 15% медиана."),
-            L("Малая выборка снижает уверенность. Прогноз не является гарантией."),
+            L("Данные показывают долю участников с записанным прохождением, а не шанс успеха."),
+            L("Прогноз не гарантирует прохождение в таймер."),
         })
-    self.forecastHelp:SetPoint("TOPRIGHT", -14, -5)
+    self.forecastHelp:SetPoint("TOPRIGHT", -18, -8)
 
     self.utilityHelp = HeaderIconButton(page,
         "Interface\\Icons\\Spell_Holy_AuraMastery",
@@ -372,7 +416,7 @@ function ApplicantBoard:Build(welcome, page)
     }
     for _, data in ipairs(partyHeaders) do
         local label = UI.Text(page, "GameFontNormalSmall", data.text, C.faint)
-        label:SetPoint("TOPLEFT", data.x, -34)
+        label:SetPoint("TOPLEFT", data.x, -70)
         label:SetWidth(data.width)
         label:SetJustifyH(data.justify or "CENTER")
     end
@@ -381,7 +425,7 @@ function ApplicantBoard:Build(welcome, page)
     for index = 1, 8 do
         local header = CreateFrame("Frame", nil, page, "BackdropTemplate")
         header:SetSize(20, 20)
-        header:SetPoint("TOPLEFT", 391 + (index - 1) * 58, -29)
+        header:SetPoint("TOPLEFT", 391 + (index - 1) * 58, -65)
         header:EnableMouse(true)
         UI.Backdrop(header, { C.surface[1], C.surface[2], C.surface[3], 1 }, { .18, .38, .48, .85 })
         header.icon = header:CreateTexture(nil, "ARTWORK")
@@ -667,14 +711,32 @@ function ApplicantBoard:RefreshParty()
     for _, strength in ipairs(memberStrengths) do forecast = forecast + strength end
     if #memberStrengths > 0 then forecast = math.max(2, math.floor(forecast / #memberStrengths)) end
     local safeLevel, weakest, confidence = TeamReadiness(self.partyEvidence)
+    self.partyMetrics[1]:SetText((L("Группа: %d/5")):format(members))
+    self.partyMetrics[1]:SetTextColor(.88, .91, .94)
+    self.partyMetrics[2]:SetText(("|cff%s%s|r"):format(JP.GroupSearchUI:GetPartyRatingColor(average),
+        (L("Средний RIO: %d")):format(math.floor(average + .5))))
+    self.partyMetrics[3]:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+    self.partyRiskRecord, self.partyRiskTarget, self.partyRiskDungeon = weakest, ownLevel, nil
+    for _, column in ipairs(columns) do
+        if ownMapID and tonumber(column.key) == tonumber(ownMapID) then
+            self.partyRiskDungeon = column.name
+            break
+        end
+    end
     if ownMapID and ownLevel and #self.partyEvidence > 0 then
-        self.partyPowerBaseText = (L("|cff8a939fучастников|r %d   |cff%sсредний RIO %d|r   |cff28c8f5безопасно ~+%d|r   |cff8a939fуверенность %d%%|r   |cffff9966риск: %s|r")):format(
-            members, JP.GroupSearchUI:GetPartyRatingColor(average), math.floor(average + .5), safeLevel, confidence,
-            weakest and weakest.name or "—")
+        self.partyMetrics[3]:SetText((L("Прогноз: ~+%d")):format(safeLevel))
+        local evidenceCount = 0
+        for _, record in ipairs(self.partyEvidence) do if record.known then evidenceCount = evidenceCount + 1 end end
+        self.partyMetrics[4]:SetText((L("Данные: %d/%d")):format(evidenceCount, members))
+        self.partyRisk.label:SetText((weakest and not weakest.known and L("Нет данных: %s")
+            or weakest and weakest.strength < ownLevel and L("Риск: %s")
+            or L("Опыт: %s")):format(weakest and weakest.name or "—"))
+        self.partyRisk:Show()
         self.forecastHelp:Show()
     else
-        self.partyPowerBaseText = (L("|cff8a939fучастников|r %d   |cff8a939fсумма RIO|r %d   |cff%sсредний %d|r   |cff8a939fнайдено|r %d/%d   |cff28c8f5общий прогноз ~+%d|r")):format(
-            members, math.floor(total + .5), JP.GroupSearchUI:GetPartyRatingColor(average), math.floor(average + .5), known, members, forecast)
+        self.partyMetrics[3]:SetText((L("Общий: ~+%d")):format(forecast))
+        self.partyMetrics[4]:SetText((L("Данные: %d/%d")):format(known, members))
+        self.partyRisk:Hide()
         self.forecastHelp:Hide()
     end
 
@@ -691,7 +753,37 @@ function ApplicantBoard:RefreshParty()
     self.utilityCoveredText = #covered > 0 and table.concat(covered, ", ") or L("ничего не подтверждено")
     self.utilityMissingText = #missingUtility > 0 and table.concat(missingUtility, ", ") or L("основные возможности закрыты")
     self.partyMemberCount, self.partySafeLevel, self.partyConfidence = members, safeLevel, confidence
-    self.partyPower:SetText(self.partyPowerBaseText or "")
+end
+
+function ApplicantBoard:ShowPartyRiskTooltip(frame)
+    local record = self.partyRiskRecord
+    if not record then return end
+    GameTooltip:SetOwner(frame, "ANCHOR_TOP")
+    GameTooltip:SetText(record.name or L("Игрок"), 1, .78, .30)
+    if self.partyRiskDungeon then GameTooltip:AddLine(self.partyRiskDungeon, .70, .83, .90) end
+    if self.partyRiskTarget then
+        GameTooltip:AddDoubleLine(L("ТВОЙ КЛЮЧ"), "+" .. self.partyRiskTarget, 1, 1, 1, 1, .78, .30)
+    end
+    if record.known then
+        GameTooltip:AddDoubleLine(L("Лучший ключ"), "+" .. record.level, 1, 1, 1, .30, .90, .65)
+        if (record.upgrades or 0) > 0 then
+            GameTooltip:AddDoubleLine(L("Повышение ключа"), "+" .. record.upgrades, 1, 1, 1, .30, .90, .65)
+        else
+            GameTooltip:AddDoubleLine(L("Таймер"), L("не закрыт"), 1, 1, 1, 1, .65, .35)
+        end
+        if record.runs and record.runs > 0 then
+            GameTooltip:AddLine((L("Записанных прохождений: %d")):format(record.runs), .70, .75, .80)
+        end
+        GameTooltip:AddLine(L("У этого участника самая низкая оценка опыта в выбранном подземелье среди текущего состава."), .85, .85, .85, true)
+        if self.partyRiskTarget and record.level < self.partyRiskTarget then
+            GameTooltip:AddLine((L("Лучшее записанное прохождение на %d ур. ниже твоего ключа.")):format(self.partyRiskTarget - record.level), 1, .70, .35, true)
+        end
+    else
+        GameTooltip:AddLine(L("Нет записанного прохождения этого подземелья. Это недостаток данных, а не доказательство плохой игры."), 1, .75, .40, true)
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(L("Прогноз не гарантирует прохождение в таймер."), .65, .72, .78, true)
+    GameTooltip:Show()
 end
 
 function ApplicantBoard:UpdateLaunchDecision(entries)
@@ -760,7 +852,12 @@ function ApplicantBoard:UpdateLaunchDecision(entries)
         end
     end
     self.launchAdvice = advice
-    self.partyPower:SetText(("|c%s%s|r   -   %s"):format(color, advice, self.partyPowerBaseText or ""))
+    self.launchLabel:SetText(advice)
+    local r, g, b = tonumber(color:sub(3, 4), 16) / 255, tonumber(color:sub(5, 6), 16) / 255,
+        tonumber(color:sub(7, 8), 16) / 255
+    self.launchLabel:SetTextColor(r, g, b)
+    self.launchBadge:SetBackdropColor(r * .12, g * .12, b * .12, 1)
+    self.launchBadge:SetBackdropBorderColor(r, g, b, .55)
 end
 
 function ApplicantBoard:Render()

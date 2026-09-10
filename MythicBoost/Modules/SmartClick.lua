@@ -516,16 +516,18 @@ end
 
 function SmartClick:RefreshBuffButton()
     local settings = self:GetSettings()
+    local welcome = JP.modules and JP.modules.Welcome
+    local windowOpen = welcome and welcome.frame and welcome.frame:IsShown()
     if InCombatLockdown() then
         local missing
-        if settings and settings.buff then missing = self:MissingBuff() end
+        if settings and settings.buff and not windowOpen then missing = self:MissingBuff() end
         self:RefreshCombatReminder(missing)
         return
     end
     self:RefreshCombatReminder(nil)
-    if not settings or not settings.buff then
+    if not settings or not settings.buff or windowOpen then
         if self.buffButton then
-            self.buffButton:SetAttribute("mb-enabled", false)
+            self.buffButton:SetAttribute("mb-enabled", settings and settings.buff == true)
             self.buffButton:SetAttribute("mb-visible", false)
             self.buffButton:Hide()
         end

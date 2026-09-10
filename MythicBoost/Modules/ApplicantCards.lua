@@ -4,7 +4,7 @@ local Cards = {}
 JP.ApplicantCards = Cards
 
 local POOL_SIZE, MAX_MEMBERS = 14, 5
-local TOP, GAP, HEADER, MEMBER_HEIGHT = -230, 8, 56, 36
+local TOP, GAP, HEADER, MEMBER_HEIGHT = -266, 8, 56, 36
 local STATUS = {
     best = { label = L("ЛУЧШИЙ"), color = C.amber },
     needed = { label = L("ПОДХОДИТ"), color = { .62, .40, .95, 1 } },

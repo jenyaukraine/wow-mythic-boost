@@ -199,8 +199,6 @@ if locale == "deDE" then
         ["|cff8a939fрейтинг|r  |cffffb93d%d|r     |cff8a939filvl|r  |cffd4dbe4%.0f|r"] = "|cff8a939frating|r |cffffb93d%d|r |cff8a939filvl|r |cffd4dbe4%.0f|r",
         ["|cff8a939fтвой ключ|r  |cff43d17a+%d|r  %s"] = "|cff8a939fIhr Schlüssel|r |cff43d17a+%d|r %s",
         ["|cff8a939fтвой ключ|r  |cff5b6470нет|r"] = "|cff8a939fIhr Schlüssel|r |cff5b6470nein|r",
-        ["|cff8a939fучастников|r %d   |cff%sсредний RIO %d|r   |cff28c8f5безопасно ~+%d|r   |cff8a939fуверенность %d%%|r   |cffff9966риск: %s|r"] = "|cff8a939fTeilnehmer|r %d |cff%sdurchschnittliches RIO %d|r |cff28c8f5sicher ~+%d|r |cff8a939fVertrauen %d%%|r |cffff9966Risiko: %s|r",
-        ["|cff8a939fучастников|r %d   |cff8a939fсумма RIO|r %d   |cff%sсредний %d|r   |cff8a939fнайдено|r %d/%d   |cff28c8f5общий прогноз ~+%d|r"] = "|cff8a939fTeilnehmer|r %d |cff8a939fgesamt RIO|r %d |cff%sDurchschnitt %d|r |cff8a939fgefunden|r %d/%d |cff28c8f5Gesamtprognose ~+%d|r",
         ["|cff8aa8c4Загружаю уровни предметов...|r"] = "|cff8aa8c4Laden der Artikelebenen...|r",
         ["|cffb35cffTOP|r   носят %d%% лучших   %s"] = "|cffb35cffTOP|r tragen %d%% am besten %s",
         ["|cffff6b6bДА — повторный каст ничего не покажет|r"] = "|cffff6b6bYES – bei wiederholtem Casting wird nichts angezeigt|r",
@@ -393,7 +391,6 @@ if locale == "deDE" then
         ["МОЖНО БРАТЬ"] = "SIE KÖNNEN NEHMEN",
         ["МОЖНО ЗАПУСКАТЬ, НО ЕСТЬ РИСК"] = "KANN GESTARTET WERDEN, ABER ES BESTEHT EIN RISIKO",
         ["Макрос MBSmartClick готов: "] = "Das MBSmartClick-Makro ist fertig:",
-        ["Малая выборка снижает уверенность. Прогноз не является гарантией."] = "Eine kleine Stichprobe verringert das Vertrauen. Die Prognose ist keine Garantie.",
         ["Мана, критическое здоровье цели и эффект для рассеивания"] = "Mana, kritische Zielgesundheit und ein bannbarer Effekt",
         ["Между шкалами"] = "Zwischen Skalen",
         ["Места для всей пати"] = "Plätze für die ganze Party",
@@ -1008,8 +1005,6 @@ elseif locale ~= "ruRU" then
         ["|cff8a939fрейтинг|r  |cffffb93d%d|r     |cff8a939filvl|r  |cffd4dbe4%.0f|r"] = "|cff8a939frating|r |cffffb93d%d|r |cff8a939filvl|r |cffd4dbe4%.0f|r",
         ["|cff8a939fтвой ключ|r  |cff43d17a+%d|r  %s"] = "|cff8a939fyour key|r |cff43d17a+%d|r %s",
         ["|cff8a939fтвой ключ|r  |cff5b6470нет|r"] = "|cff8a939fyour key|r |cff5b6470no|r",
-        ["|cff8a939fучастников|r %d   |cff%sсредний RIO %d|r   |cff28c8f5безопасно ~+%d|r   |cff8a939fуверенность %d%%|r   |cffff9966риск: %s|r"] = "|cff8a939fparticipants|r %d |cff%saverage RIO %d|r |cff28c8f5safe ~+%d|r |cff8a939fconfidence %d%%|r |cffff9966risk: %s|r",
-        ["|cff8a939fучастников|r %d   |cff8a939fсумма RIO|r %d   |cff%sсредний %d|r   |cff8a939fнайдено|r %d/%d   |cff28c8f5общий прогноз ~+%d|r"] = "|cff8a939fparticipants|r %d |cff8a939ftotal RIO|r %d |cff%saverage %d|r |cff8a939ffound|r %d/%d |cff28c8f5total forecast ~+%d|r",
         ["|cff8aa8c4Загружаю уровни предметов...|r"] = "|cff8aa8c4Loading item levels...|r",
         ["|cffb35cffTOP|r   носят %d%% лучших   %s"] = "|cffb35cffTOP|r wear %d%% best %s",
         ["|cffff6b6bДА — повторный каст ничего не покажет|r"] = "|cffff6b6bYES - repeat casting will not show anything|r",
@@ -1202,7 +1197,6 @@ elseif locale ~= "ruRU" then
         ["МОЖНО БРАТЬ"] = "YOU CAN TAKE",
         ["МОЖНО ЗАПУСКАТЬ, НО ЕСТЬ РИСК"] = "CAN BE LAUNCHED, BUT THERE IS A RISK",
         ["Макрос MBSmartClick готов: "] = "The MBSmartClick macro is ready:",
-        ["Малая выборка снижает уверенность. Прогноз не является гарантией."] = "A small sample reduces confidence. The forecast is not a guarantee.",
         ["Мана, критическое здоровье цели и эффект для рассеивания"] = "Mana, critical target health, and a dispellable effect",
         ["Между шкалами"] = "Between scales",
         ["Места для всей пати"] = "Places for the whole party",
@@ -2722,4 +2716,40 @@ if translations then
         ["Следующий по атласу: %s"] = "Next in the Adventure Guide: %s",
     }
     for key,value in pairs(extra) do translations[key]=value end
+end
+
+-- Party readiness strip and its per-player evidence tooltip.
+if translations then
+    local extra = locale == "deDE" and {
+        ["Группа: %d/5"] = "Gruppe: %d/5",
+        ["Средний RIO: %d"] = "Ø RIO: %d",
+        ["Прогноз: ~+%d"] = "Prognose: ~+%d",
+        ["Общий: ~+%d"] = "Gesamt: ~+%d",
+        ["Данные: %d/%d"] = "Daten: %d/%d",
+        ["Риск: %s"] = "Risiko: %s",
+        ["Опыт: %s"] = "Erfahrung: %s",
+        ["Нет данных: %s"] = "Keine Daten: %s",
+        ["Данные показывают долю участников с записанным прохождением, а не шанс успеха."] = "Die Daten zeigen den Anteil der Mitglieder mit einem erfassten Lauf, nicht die Erfolgschance.",
+        ["Прогноз не гарантирует прохождение в таймер."] = "Die Prognose garantiert keinen Abschluss innerhalb des Zeitlimits.",
+        ["Записанных прохождений: %d"] = "Erfasste Läufe: %d",
+        ["У этого участника самая низкая оценка опыта в выбранном подземелье среди текущего состава."] = "Dieses Mitglied hat in der aktuellen Gruppe die niedrigste Erfahrungseinschätzung für den gewählten Dungeon.",
+        ["Лучшее записанное прохождение на %d ур. ниже твоего ключа."] = "Der beste erfasste Lauf liegt %d Stufen unter deinem Schlüsselstein.",
+        ["Нет записанного прохождения этого подземелья. Это недостаток данных, а не доказательство плохой игры."] = "Für diesen Dungeon wurde kein Lauf erfasst. Fehlende Daten sind kein Beleg für schlechtes Spiel.",
+    } or {
+        ["Группа: %d/5"] = "Party: %d/5",
+        ["Средний RIO: %d"] = "Average RIO: %d",
+        ["Прогноз: ~+%d"] = "Forecast: ~+%d",
+        ["Общий: ~+%d"] = "Overall: ~+%d",
+        ["Данные: %d/%d"] = "Data: %d/%d",
+        ["Риск: %s"] = "Risk: %s",
+        ["Опыт: %s"] = "Experience: %s",
+        ["Нет данных: %s"] = "No data: %s",
+        ["Данные показывают долю участников с записанным прохождением, а не шанс успеха."] = "Data shows the share of members with a recorded run, not the chance of success.",
+        ["Прогноз не гарантирует прохождение в таймер."] = "The forecast does not guarantee a timed completion.",
+        ["Записанных прохождений: %d"] = "Recorded runs: %d",
+        ["У этого участника самая низкая оценка опыта в выбранном подземелье среди текущего состава."] = "This member has the lowest estimated experience for the selected dungeon in the current party.",
+        ["Лучшее записанное прохождение на %d ур. ниже твоего ключа."] = "Their best recorded run is %d levels below your key.",
+        ["Нет записанного прохождения этого подземелья. Это недостаток данных, а не доказательство плохой игры."] = "No run is recorded for this dungeon. Missing data is not evidence of poor play.",
+    }
+    for key, value in pairs(extra) do translations[key] = value end
 end

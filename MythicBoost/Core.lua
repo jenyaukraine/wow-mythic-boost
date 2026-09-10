@@ -650,6 +650,7 @@ local function DumpSearchResults()
     }
     local search = JP.GroupSearchUI
     local welcome = JP.modules.Welcome
+    local decisions = {}
     if search and welcome then
         snapshot.searchState = {
             pending = search.searchPending == true,
@@ -660,7 +661,51 @@ local function DumpSearchResults()
             excluded = #(welcome.excludedMatches or {}),
         }
         snapshot.filters = DescribeTable(welcome.groupFilters)
+        local rejectionCounts = {}
+        for _, list in ipairs({welcome.eligibleMatches or {}, welcome.excludedMatches or {}}) do
+            for _, match in ipairs(list) do
+                local id = JP.SafeNumber(match.searchResultID)
+                if id then
+                    decisions[id] = DescribeTable({
+                        rejected = match.rejected,
+                        rejectionReason = match.rejectionReason,
+                        mapID = match.mapID,
+                        keyLevel = match.keyLevel,
+                    })
+                    local reason = JP.SafeString(match.rejectionReason)
+                    if reason then rejectionCounts[reason] = (rejectionCounts[reason] or 0) + 1 end
+                end
+            end
+        end
+        snapshot.searchState.rejectionCounts = rejectionCounts
     end
+    -- Capture the current role demand separately from the stored UI decisions:
+    -- a finished dungeon party can still occupy every role during a new search.
+    local party = {roles = {TANK = 0, HEALER = 0, DAMAGER = 0}, units = {}}
+    party.inGroup = JP.SafeOptionalBoolean(IsInGroup and IsInGroup())
+    party.inRaid = JP.SafeOptionalBoolean(IsInRaid and IsInRaid())
+    local count = party.inGroup and not party.inRaid
+        and JP.SafeNumber(GetNumSubgroupMembers and GetNumSubgroupMembers()) or 0
+    for index = 0, math.min(4, count or 0) do
+        local unit = index == 0 and "player" or ("party" .. index)
+        if JP.SafeBoolean(UnitExists(unit)) then
+            local assigned = JP.SafeString(UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit))
+            local role = assigned
+            if index == 0 then
+                if JP.GroupTools and JP.GroupTools.applyRole then
+                    role = JP.SafeString(JP.GroupTools:GetRole())
+                else
+                    local spec = JP.SafeNumber(GetSpecialization and GetSpecialization())
+                    role = spec and JP.SafeString(GetSpecializationRole and GetSpecializationRole(spec)) or nil
+                    if not party.roles[role or ""] then role = assigned end
+                end
+            end
+            if not party.roles[role or ""] then role = "DAMAGER" end
+            party.roles[role] = party.roles[role] + 1
+            party.units[unit] = {assignedRole = assigned, filterRole = role}
+        end
+    end
+    snapshot.currentParty = party
     if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown then
         local ok, restricted = pcall(C_ChatInfo.InChatMessagingLockdown)
         snapshot.chatMessagingLockdown = ok and DescribeValue(restricted) or {type="error"}
@@ -670,6 +715,7 @@ local function DumpSearchResults()
         local resultID = JP.SafeNumber(resultIDs[index])
         local info = resultID and C_LFGList.GetSearchResultInfo(resultID)
         local entry = { searchResultInfo = DescribeTable(info) }
+        entry.filterDecision = resultID and decisions[resultID] or nil
 
         info = JP.SafeTable(info)
         local ids = info and JP.SafeTable(info.activityIDs)

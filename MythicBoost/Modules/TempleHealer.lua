@@ -85,7 +85,8 @@ function Healer:Apply()
         -- Unregistering a driver retains its last state attribute. Reset it
         -- so leaving preview/reapplying cannot hide an unchanged boss forever.
         f:SetAttribute("state-healtarget", "none")
-        f:Hide(); RegisterStateDriver(f, "healtarget", TARGETS)
+        f:Hide(); f:SetAttribute("unit", "boss1")
+        RegisterStateDriver(f, "healtarget", TARGETS)
         self:Update()
     end
     if not self.running then self.events:UnregisterAllEvents() end
@@ -119,18 +120,19 @@ function Healer:Create()
     f:SetAttribute("_onstate-healtarget", [[
         local active = self:GetAttribute("mb-enabled") and (newstate == "boss1" or newstate == "boss2"
             or newstate == "boss3" or newstate == "boss4" or newstate == "boss5")
-        for i = 1, 5 do
-            local holder = self:GetFrameRef("healAuras" .. i)
-            if holder then
-                if active and newstate == "boss" .. i then holder:Show() else holder:Hide() end
-            end
-        end
+        -- Establish the heal target before updating its decorative aura rows.
         if active then
             self:SetAttribute("unit", newstate)
             self:Show()
         else
             self:Hide()
-            self:SetAttribute("unit", nil)
+            self:SetAttribute("unit", "boss1")
+        end
+        for i = 1, 5 do
+            local holder = self:GetFrameRef("healAuras" .. i)
+            if holder then
+                if active and newstate == "boss" .. i then holder:Show() else holder:Hide() end
+            end
         end
     ]])
     BuildVisuals(f)
@@ -156,8 +158,12 @@ function Healer:Create()
     f:SetScript("OnLeave", GameTooltip_Hide)
     -- Same public integration as our player/target frames. No edits to
     -- DandersFrames/Clique internals or the user's click-cast assignments.
-    ClickCastFrames = ClickCastFrames or {}; ClickCastFrames[f] = true
     f:Hide()
+    -- Click-cast addons register only frames with a unit. Keep a fixed boss
+    -- token while hidden so bindings are ready before the first pull, even
+    -- when the click-cast addon finishes loading after this module.
+    f:SetAttribute("unit", "boss1")
+    ClickCastFrames = ClickCastFrames or {}; ClickCastFrames[f] = true
 end
 
 function Healer:SetUnlocked(value)

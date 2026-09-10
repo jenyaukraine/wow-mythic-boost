@@ -373,11 +373,13 @@ function Welcome:Create()
     end)
     frame:SetScript("OnShow", function()
         GameTooltip_Hide()
+        if JP.SmartClick then JP.SmartClick:RefreshBuffButton() end
         JP.GroupSearchUI:HideBlizzardResultTooltip()
         self:Refresh()
     end)
     frame:SetScript("OnHide", function()
         if JP.GroupSearchUI.groupTooltip then JP.GroupSearchUI.groupTooltip:Hide() end
+        if JP.SmartClick then JP.SmartClick:RefreshBuffButton() end
     end)
 
     frame:Hide()
