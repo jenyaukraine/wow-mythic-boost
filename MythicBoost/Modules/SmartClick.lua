@@ -312,9 +312,9 @@ end
 ---------------------------------------------------------------------------
 -- Кнопка баффа по центру экрана
 --
--- Вне боя появляется, когда бафф кому-то действительно нужен. В бою
--- доступна постоянно: secure-видимость не меняется по чтению аур. Это своя
--- кнопка, а не юнит-фрейм, поэтому
+-- Вне боя появляется кнопка каста, когда бафф кому-то действительно нужен.
+-- В бою открытые ауры обновляют отдельное некликабельное напоминание;
+-- secure-кнопка остаётся скрыта. Это своя кнопка, а не юнит-фрейм, поэтому
 -- клик-каст DandersFrames её не трогает — все прошлые попытки разбивались
 -- именно об это.
 --
@@ -367,11 +367,11 @@ function SmartClick:MissingBuff()
     local missing = {}
     for _, unit in ipairs(units) do
         if CanReceiveBuff(unit, buffID) then
-            local found = false
+            local found, unavailable = false, false
             if SafeUnitAura then
                 for spellID in pairs(wanted) do
                     local data, blocked = SafeUnitAura(unit, spellID)
-                    if blocked then return nil, true end
+                    if blocked then unavailable = true end
                     if data then found = true; break end
                 end
             else
@@ -379,13 +379,15 @@ function SmartClick:MissingBuff()
                 -- API. UI.SafeAura itself refuses this path in restricted combat.
                 for index = 1, 40 do
                     local data, blocked = SafeAura(unit, index, "HELPFUL")
-                    if blocked then return nil, true end
+                    if blocked then unavailable = true; break end
                     if not data then break end
                     local spellID = data.spellId
                     if not issecretvalue(spellID) and wanted[spellID] then found = true; break end
                 end
             end
-            if not found then
+            -- Unknown data for one member must not erase confirmed missing
+            -- buffs on others, or falsely accuse this member of missing one.
+            if not found and not unavailable then
                 local name = UnitName(unit)
                 missing[#missing + 1] = (not issecretvalue(name) and name) or unit
             end
@@ -393,6 +395,49 @@ function SmartClick:MissingBuff()
     end
     if #missing == 0 then return nil end
     return missing
+end
+
+function SmartClick:RefreshCombatReminder(missing)
+    local reminder = self.combatReminder
+    if not missing then
+        if reminder then reminder:Hide() end
+        return
+    end
+    local _, class = UnitClass("player")
+    local buffID = class and BUFF[class]
+    local name = buffID and SpellName(buffID)
+    if not name then
+        if reminder then reminder:Hide() end
+        return
+    end
+    if not reminder then
+        -- An ordinary visual, independent of the secure cast button. It has
+        -- no protected parent, attributes, click bindings or mouse capture.
+        reminder = CreateFrame("Frame", "MythicBoostCombatBuffReminder", UIParent, "BackdropTemplate")
+        reminder:SetSize(260, 44)
+        reminder:SetFrameStrata("HIGH")
+        reminder:EnableMouse(false)
+        if _G.UIErrorsFrame then reminder:SetPoint("TOP", _G.UIErrorsFrame, "BOTTOM", 0, -10)
+        else reminder:SetPoint("TOP", UIParent, "TOP", 0, -180) end
+        UI.Backdrop(reminder, C.surface, C.edge)
+        reminder.icon = reminder:CreateTexture(nil, "ARTWORK")
+        reminder.icon:SetSize(36, 36); reminder.icon:SetPoint("LEFT", 4, 0)
+        reminder.icon:SetTexCoord(.07, .93, .07, .93)
+        reminder.title = UI.Text(reminder, "GameFontNormal", "", C.amber)
+        reminder.title:SetPoint("TOPLEFT", 48, -5)
+        reminder.title:SetPoint("TOPRIGHT", -6, -5)
+        reminder.title:SetJustifyH("LEFT")
+        reminder.label = UI.Text(reminder, "GameFontNormalSmall", "", C.text)
+        reminder.label:SetPoint("BOTTOMLEFT", 48, 6)
+        reminder.label:SetPoint("BOTTOMRIGHT", -6, 6)
+        reminder.label:SetJustifyH("LEFT")
+        self.combatReminder = reminder
+    end
+    local texture = C_Spell and C_Spell.GetSpellTexture and UI.SafeNumber(JP.SafeCall(C_Spell.GetSpellTexture, buffID))
+    reminder.icon:SetTexture(texture or 134400)
+    reminder.title:SetText(name)
+    reminder.label:SetText(L("без баффа: ") .. (#missing > 1 and tostring(#missing) or missing[1]))
+    reminder:Show()
 end
 
 function SmartClick:BuildBuffButton()
@@ -470,11 +515,14 @@ function SmartClick:BuildBuffButton()
 end
 
 function SmartClick:RefreshBuffButton()
-    -- This is a missing-buff reminder, not an always-visible combat shortcut.
-    -- The secure combat driver hides it and invalidates the old reminder.
-    -- Recheck public aura data after combat before showing the button again.
-    if InCombatLockdown() then return end
     local settings = self:GetSettings()
+    if InCombatLockdown() then
+        local missing
+        if settings and settings.buff then missing = self:MissingBuff() end
+        self:RefreshCombatReminder(missing)
+        return
+    end
+    self:RefreshCombatReminder(nil)
     if not settings or not settings.buff then
         if self.buffButton then
             self.buffButton:SetAttribute("mb-enabled", false)
@@ -543,7 +591,9 @@ function SmartClick:Create()
     -- незачем.
     local queued, applyQueued = false, false
     self.events:SetScript("OnEvent", function(_, event, unit, _, spellID)
-        if event:sub(1, 5) == "UNIT_" then
+        -- UNIT_AURA's payload can be restricted even while our known group
+        -- buff IDs remain public. Refresh without inspecting that payload.
+        if event ~= "UNIT_AURA" and event:sub(1, 5) == "UNIT_" then
             if issecretvalue(unit) or type(unit) ~= "string" then return end
             if unit ~= "player" and not unit:match("^party%d+$") and not unit:match("^raid%d+$") then return end
         end

@@ -71,6 +71,13 @@ end
 function UI.SafeUnitAura(unit, spellID)
     if not C_UnitAuras or type(C_UnitAuras.GetUnitAuraBySpellID) ~= "function"
         or not UI.UsableNumber(spellID) then return nil, true end
+    -- A restricted aura lookup may return nil without throwing. Check this
+    -- spell's current secrecy so that nil cannot become a false missing buff.
+    -- AuraIsPrivate below describes private-aura presentation, not secrecy.
+    if C_Secrets and type(C_Secrets.ShouldSpellAuraBeSecret) == "function" then
+        local ok, secret = pcall(C_Secrets.ShouldSpellAuraBeSecret, spellID)
+        if not ok or JP.SafeOptionalBoolean(secret) ~= false then return nil, true end
+    end
     if type(C_UnitAuras.AuraIsPrivate) == "function" then
         local ok, private = pcall(C_UnitAuras.AuraIsPrivate, spellID)
         if not ok or JP.SafeOptionalBoolean(private) ~= false then return nil, true end
