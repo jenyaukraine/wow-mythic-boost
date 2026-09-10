@@ -475,9 +475,28 @@ local function LayoutStats(display, hasPower)
     display.power:SetPoint("TOPRIGHT", display.health, "BOTTOMRIGHT", 0, -2)
 end
 
+local function DisplayPowerType(unit)
+    local powerType, token = UnitPowerType(unit)
+    if unit ~= "player" or type(GetShapeshiftFormID) ~= "function" then return powerType, token end
+    if UnitHasVehicleUI and not IsBoolean(UnitHasVehicleUI(unit), false) then return powerType, token end
+    local specAPI = C_SpecializationInfo
+    local specIndex = specAPI and specAPI.GetSpecialization and specAPI.GetSpecialization()
+    local specID = UI.UsableNumber(specIndex) and specAPI.GetSpecializationInfo
+        and specAPI.GetSpecializationInfo(specIndex)
+    if not UI.UsableNumber(specID) or specID ~= 105 then return powerType, token end
+    local form = GetShapeshiftFormID()
+    if issecretvalue(form) or (form ~= nil and not UI.UsableNumber(form)) then return powerType, token end
+    -- Restoration needs its healing resource outside cat/bear, including
+    -- moonkin. Do not let a transient/native alternate power replace mana.
+    local types = Enum.PowerType
+    if form == (CAT_FORM or 1) then return types.Energy, "ENERGY" end
+    if form == (BEAR_FORM or 5) then return types.Rage, "RAGE" end
+    return types.Mana, "MANA"
+end
+
 local function UpdatePower(display)
     if IsBoolean(UnitExists(display.unit), false) then return end
-    local powerType, token = UnitPowerType(display.unit)
+    local powerType, token = DisplayPowerType(display.unit)
     local current, maximum = UnitPower(display.unit, powerType), UnitPowerMax(display.unit, powerType)
     local targetIsPlayer = IsBoolean(UnitIsPlayer(display.unit), true)
     if (UI.UsableNumber(maximum) and maximum <= 0)
@@ -2133,6 +2152,7 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         for _, action in pairs(pending) do action(self) end
         if self.pendingUnlock ~= nil then self:SetUnlocked(self.pendingUnlock) end
         for _, display in pairs(self.displays or {}) do
+            if self.container and self.container:IsShown() then self:RefreshPowerType(display) end
             -- Do not clear/recreate PlayerModel during the combat transition;
             -- this races OnModelLoaded and leaves the 2D fallback visible.
             if display.portrait and display.portrait.unit ~= display.unit then
@@ -2149,8 +2169,8 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         if self.displays.player and self.displays.player.debuffRow then RefreshAuras(self.displays.player) end
         if self.displays.target then RefreshAuras(self.displays.target) end
     elseif event == "UPDATE_SHAPESHIFT_FORM" or event == "RUNE_POWER_UPDATE" then
-        UpdateResourcePips(self.displays.player)
         if event == "UPDATE_SHAPESHIFT_FORM" then self:RefreshPowerType(self.displays.player) end
+        UpdateResourcePips(self.displays.player)
         if event == "UPDATE_SHAPESHIFT_FORM" and self.displays.player.portrait then
             self:QueuePortraitRefresh(self.displays.player)
         end
@@ -2167,6 +2187,7 @@ function UnitFrames:OnEvent(event, unit, updateInfo)
         if event:find("^UNIT_SPELLCAST") then self:UpdateCast(display, event)
         elseif event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then UpdateHealth(display); UpdateState(display)
         elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then UpdateAbsorbs(display)
+        elseif event == "UNIT_POWER_FREQUENT" then UpdatePower(display)
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER"
             or event == "UNIT_POWER_POINT_CHARGE" then
             if event == "UNIT_DISPLAYPOWER" then self:RefreshPowerType(display)
@@ -2192,6 +2213,7 @@ function UnitFrames:Enable()
     events:RegisterEvent("PLAYER_REGEN_ENABLED")
     events:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
     events:RegisterEvent("RUNE_POWER_UPDATE")
+    events:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
     for _, event in ipairs({
         "UNIT_HEALTH", "UNIT_MAXHEALTH", "UNIT_POWER_UPDATE", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER",
         "UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_NAME_UPDATE",
