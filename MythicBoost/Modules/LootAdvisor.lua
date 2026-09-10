@@ -195,7 +195,7 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     local instanceMapID = InstanceMapID(dungeon)
     local journalID = dungeon.journalID or (instanceMapID and C_EncounterJournal.GetInstanceForGameMap(instanceMapID))
     if not UsableNumber(journalID) or journalID <= 0 or not EJ_SelectInstance
-        or not EJ_GetNumLoot or not EJ_GetEncounterInfoByIndex then
+        or not EJ_GetNumLoot or not EJ_GetEncounterInfo then
         return {percent=0,total=0,upgrades={},pending=true,pendingReason="journal_missing"}
     end
     SelectJournalInstance(journalID)
@@ -215,16 +215,9 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
         return {percent=0,total=0,upgrades={},pending=true,pendingReason="difficulty_mismatch",
             journalID=journalID,actualDifficulty=EJ_GetDifficulty(),requestedDifficulty=raidDifficulty or MYTHIC_PLUS_DIFFICULTY_ID}
     end
-    local encounters = {}
-    local encounterIndex = 1
-    while true do
-        local name, _, encounterID = EJ_GetEncounterInfoByIndex(encounterIndex, journalID)
-        if not name then break end
-        if UsableNumber(encounterID) and encounterID > 0 then encounters[encounterID] = true end
-        encounterIndex = encounterIndex + 1
-    end
+    local encounterSources = {}
     local total, upgrades, pending, totalGain = 0, {}, false, 0
-    local pendingReason, rejectedItemID, rejectedEncounterID
+    local pendingReason, rejectedItemID, rejectedEncounterID, rejectedJournalID
     local usefulCount, upgradeCount, bisCount, topCount = 0, 0, 0, 0
     local upgradeSlots = {}
     local lootCount = EJ_GetNumLoot()
@@ -232,12 +225,26 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
     local seen = {}
     for lootIndex = 1, lootCount do
         local item = C_EncounterJournal.GetLootInfoByIndex(lootIndex)
+        local sourceID
+        if item and UsableNumber(item.encounterID) and item.encounterID > 0 then
+            sourceID = encounterSources[item.encounterID]
+            if sourceID == nil then
+                -- Loot supplies a journal encounter ID. Its sixth return is
+                -- the journal instance; the seventh is a different combat ID.
+                -- Boss-list enumeration can be empty in the M+ preview even
+                -- when the loot rows and their encounter metadata are loaded.
+                local _, _, _, _, _, instanceID = EJ_GetEncounterInfo(item.encounterID)
+                sourceID = UsableNumber(instanceID) and instanceID > 0 and instanceID or false
+                encounterSources[item.encounterID] = sourceID
+            end
+        end
         -- Loaded item data alone does not prove the global loot list is ours.
         -- Do not cache a foreign boss's BiS item under every dungeon card.
-        if item and not encounters[item.encounterID] then
+        if item and sourceID ~= journalID then
             pending = true
             pendingReason = "foreign_or_unknown_source"
             rejectedItemID, rejectedEncounterID = item.itemID, item.encounterID
+            rejectedJournalID = sourceID or nil
             item = nil
         end
         if not item or not item.name or not item.link then
@@ -324,6 +331,7 @@ local function AnalyzeDungeon(dungeon, specID, owned, equipment, keyLevel, dropL
         pendingReason=pendingReason,
         journalID=journalID, actualDifficulty=EJ_GetDifficulty and EJ_GetDifficulty(),
         rejectedItemID=rejectedItemID, rejectedEncounterID=rejectedEncounterID,
+        rejectedJournalID=rejectedJournalID,
         keyLevel=keyLevel,
         difficultyID=raidDifficulty,
         dropLevel=dropLevel,
@@ -388,7 +396,8 @@ function LootAdvisor:Analyze(dungeons, requestedKeyLevel, raidDifficulty)
         for mapID, result in pairs(results) do
             diagnostics[mapID] = {journalID=result.journalID, difficulty=result.actualDifficulty,
                 pendingReason=result.pendingReason, total=result.total,
-                rejectedItemID=result.rejectedItemID, rejectedEncounterID=result.rejectedEncounterID}
+                rejectedItemID=result.rejectedItemID, rejectedEncounterID=result.rejectedEncounterID,
+                rejectedJournalID=result.rejectedJournalID}
         end
         MythicBoostDB.lootAdvisorDebug = diagnostics
     end
