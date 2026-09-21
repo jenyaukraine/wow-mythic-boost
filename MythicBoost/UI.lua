@@ -229,6 +229,14 @@ function UI.HUDBar(parent, height, color)
 end
 
 -- Fixed protected action; only the decorative low-health border fades.
+function UI.SecureAction(name)
+    local button = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate")
+    button:SetSize(1, 1); button:Hide()
+    button:RegisterForClicks("AnyDown", "AnyUp")
+    button:SetAttribute("useOnKeyDown", false)
+    return button
+end
+
 function UI.SurvivalButton(parent, name, size)
     local button = UI.HUDPanel(parent, name, size, size, "SecureActionButtonTemplate")
     button:RegisterForClicks("AnyDown", "AnyUp")
@@ -433,6 +441,51 @@ function UI.Button(parent, label, width, height, primary)
     button:SetScript("OnMouseDown", function(self) if self:IsEnabled() then self.label:SetPoint("CENTER", 0, -1) end end)
     button:SetScript("OnMouseUp", function(self) self.label:SetPoint("CENTER", 0, 0) end)
     ButtonVisual(button)
+    return button
+end
+
+function UI.SearchBox(parent, width, placeholder)
+    local holder = UI.Panel(parent, C.field, { .16, .23, .29, .8 })
+    holder:SetSize(width, 28)
+    local field = CreateFrame("EditBox", nil, holder)
+    field:SetPoint("TOPLEFT", 10, -2); field:SetPoint("BOTTOMRIGHT", -10, 2)
+    field:SetFontObject("GameFontHighlightSmall"); field:SetAutoFocus(false)
+    field:SetTextColor(UI.Unpack(C.text))
+    local hint = UI.Text(holder, "GameFontHighlightSmall", placeholder, C.muted)
+    hint:SetPoint("LEFT", 10, 0); hint:SetPoint("RIGHT", -10, 0); hint:SetJustifyH("LEFT")
+    local function RefreshHint() hint:SetShown((field:GetText() or "") == "" and not field:HasFocus()) end
+    field:HookScript("OnTextChanged", RefreshHint)
+    field:HookScript("OnEditFocusGained", RefreshHint)
+    field:HookScript("OnEditFocusLost", RefreshHint)
+    field.placeholder = hint
+    return field, holder
+end
+
+function UI.SearchResult(parent)
+    local row = CreateFrame("Button", nil, parent)
+    row:SetHeight(42)
+    local hover = row:CreateTexture(nil, "BACKGROUND")
+    hover:SetAllPoints(); hover:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], .10)
+    hover:Hide()
+    row:SetScript("OnEnter", function()
+        hover:Show()
+        UI.Tooltip(row, row.label:GetText(), row.category:GetText())
+    end)
+    row:SetScript("OnLeave", function() hover:Hide(); GameTooltip_Hide() end)
+    row.label = UI.Text(row, "GameFontHighlightSmall", "", C.text)
+    row.label:SetPoint("TOPLEFT", 10, -5); row.label:SetPoint("TOPRIGHT", -10, -5)
+    row.label:SetJustifyH("LEFT"); row.label:SetWordWrap(false)
+    row.category = UI.Text(row, "GameFontNormalSmall", "", C.muted)
+    row.category:SetPoint("BOTTOMLEFT", 10, 5); row.category:SetPoint("BOTTOMRIGHT", -10, 5)
+    row.category:SetJustifyH("LEFT"); row.category:SetWordWrap(false)
+    return row
+end
+
+function UI.SettingsButton(parent, label, width, height, primary)
+    local button = UI.Button(parent, label, width, height, primary)
+    button:HookScript("OnEnter", function(self) UI.SettingsGlow(self, self.settingsCapture and "capture" or "hover") end)
+    button:HookScript("OnLeave", function(self) UI.SettingsGlow(self, self.settingsCapture and "capture" or nil) end)
+    button:HookScript("OnDisable", function(self) UI.SettingsGlow(self, nil) end)
     return button
 end
 
@@ -744,23 +797,62 @@ end
 
 local function TabVisual(tab)
     local active = tab.active
-    tab:SetBackdropColor(
-        active and .090 or (tab.hovered and .070 or .045),
-        active and .140 or (tab.hovered and .092 or .058),
-        active and .185 or (tab.hovered and .120 or .076), 1)
-    tab:SetBackdropBorderColor(
-        active and .18 or .12, active and .58 or .16, active and .78 or .21, 1)
-    tab.label:SetTextColor(
-        active and C.text[1] or (tab.hovered and .78 or .58),
-        active and C.text[2] or (tab.hovered and .83 or .64),
-        active and C.text[3] or (tab.hovered and .89 or .71), 1)
+    if tab.settingsTheme then
+        tab:SetBackdropColor(active and .075 or (tab.hovered and .062 or .045),
+            active and .105 or (tab.hovered and .085 or .058), active and .135 or (tab.hovered and .108 or .076), .96)
+        tab:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], active and .48 or (tab.hovered and .28 or .16))
+        tab.label:SetTextColor(active and C.text[1] or (tab.hovered and .86 or .69),
+            active and C.text[2] or (tab.hovered and .90 or .74),
+            active and C.text[3] or (tab.hovered and .98 or .83), 1)
+        if UI.SettingsGlow then UI.SettingsGlow(tab, active and "active" or (tab.hovered and "hover" or nil)) end
+    else
+        tab:SetBackdropColor(
+            active and .090 or (tab.hovered and .070 or .045),
+            active and .140 or (tab.hovered and .092 or .058),
+            active and .185 or (tab.hovered and .120 or .076), 1)
+        tab:SetBackdropBorderColor(
+            active and .18 or .12, active and .58 or .16, active and .78 or .21, 1)
+        tab.label:SetTextColor(
+            active and C.text[1] or (tab.hovered and .78 or .58),
+            active and C.text[2] or (tab.hovered and .83 or .64),
+            active and C.text[3] or (tab.hovered and .89 or .71), 1)
+    end
     tab.underline:SetShown(active)
 end
 
-function UI.Tab(parent, label, width)
+-- Fixed, quiet settings glow for hover, selection, and key capture.
+function UI.SettingsGlow(widget, state)
+    if not widget then return end
+    local strength = state == "capture" and 1 or state == "active" and .66 or state == "hover" and .36 or 0
+    if not widget.__mbSettingsGlows then
+        widget.__mbSettingsGlows = {}
+        for index, layer in ipairs({
+            { inset = 4, edge = 5, alpha = .025 },
+            { inset = 2, edge = 3, alpha = .06 },
+            { inset = 0, edge = 1, alpha = .12 },
+        }) do
+            local glow = CreateFrame("Frame", nil, widget, "BackdropTemplate")
+            glow:SetPoint("TOPLEFT", widget, "TOPLEFT", -layer.inset, layer.inset)
+            glow:SetPoint("BOTTOMRIGHT", widget, "BOTTOMRIGHT", layer.inset, -layer.inset)
+            glow:SetFrameLevel(widget:GetFrameLevel() + index)
+            glow:EnableMouse(false)
+            glow:SetBackdrop({ edgeFile = WHITE, edgeSize = layer.edge })
+            glow:SetBackdropColor(0, 0, 0, 0)
+            glow.glowAlpha = layer.alpha
+            widget.__mbSettingsGlows[index] = glow
+        end
+    end
+    for _, glow in ipairs(widget.__mbSettingsGlows) do
+        glow:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], glow.glowAlpha * strength)
+        glow:SetShown(strength > 0)
+    end
+end
+
+function UI.Tab(parent, label, width, settingsTheme)
     local tab = CreateFrame("Button", nil, parent, "BackdropTemplate")
     tab:SetSize(width or 150, 26)
     UI.Backdrop(tab, C.raised, C.line)
+    tab.settingsTheme = settingsTheme == true
     tab.label = UI.Text(tab, "GameFontNormalSmall", label)
     tab.label:SetPoint("CENTER", 0, 0)
     tab.underline = tab:CreateTexture(nil, "OVERLAY")

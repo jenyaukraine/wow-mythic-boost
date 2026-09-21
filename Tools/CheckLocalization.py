@@ -28,6 +28,18 @@ INPUT_PATTERNS = {
     ("Modules/ChatSpamCondenser.lua", " услугу "),
     ("Modules/ChatSpamCondenser.lua", " за золото "),
 }
+# Search dictionaries and character-folding tables are internal match data,
+# not text shown to players. Keep these exact literals out of the UI catalog.
+METADATA_VALUES = {
+    "Modules/SettingsHub.lua": {
+        "А", "Б", "В", "Г", "Д", "Е", "Ё", "Ж", "З", "И", "Й", "К", "Л", "М", "Н", "О", "П", "Р", "С", "Т", "У", "Ф", "Х", "Ц", "Ч", "Ш", "Щ", "Ъ", "Ы", "Ь", "Э", "Ю", "Я",
+        "а", "б", "в", "г", "д", "е", "ё", "ж", "з", "и", "й", "к", "л", "м", "н", "о", "п", "р", "с", "т", "у", "ф", "х", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я",
+        "задания", "квесты", "призыв", "воскрешение", "рес", "серые предметы", "мусор", "ремонт", "ключ", "ключ приглашения", "эпохальный ключ", "сумки", "рамки игрока", "рамки цели", "бафы", "ауры", "отсутствующий баф", "сейв", "защита", "деф", "контроль", "добыча", "аукцион", "цены", "ошибки", "журнал",
+    },
+    "Modules/InterruptAssistUI.lua": {
+        "контроль", "цепочка контроля", "фокус", "кик", "прерывание", "сейв", "сейвы", "защита", "деф", "камень", "зелье",
+    },
+}
 
 
 def source_strings() -> tuple[set[str], list[str]]:
@@ -44,6 +56,8 @@ def source_strings() -> tuple[set[str], list[str]]:
             raise SystemExit(f"Lua syntax check failed in {relative}: {error}") from error
         for node in ast.walk(tree):
             if isinstance(node, astnodes.String) and CYRILLIC.search(node.raw):
+                if node.raw in METADATA_VALUES.get(relative, set()):
+                    continue
                 if (relative, node.raw) in INPUT_PATTERNS:
                     continue
                 values.add(node.raw)

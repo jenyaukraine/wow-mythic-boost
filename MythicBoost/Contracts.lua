@@ -8,7 +8,8 @@ JP.Contracts = {
 }
 
 JP.Limits = {
-    SURVIVAL_BUTTONS = 3,
+    SURVIVAL_BUTTONS = 4,
+    SURVIVAL_SEQUENCE_RESET = 60,
     SURVIVAL_HP_MIN = 10,
     SURVIVAL_HP_MAX = 50,
     LOG_ENTRIES = 200,

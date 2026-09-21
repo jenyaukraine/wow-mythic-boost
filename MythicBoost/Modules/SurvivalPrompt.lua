@@ -19,9 +19,12 @@ local SURVIVAL_SPELLS = {
     DEMONHUNTER={{198589,203720},{196555,187827}},
     EVOKER={{363916},{374348,361469}},
 }
--- Prefer a healthstone, otherwise the strongest carried healing potion.
+-- Keep healthstones and healing potions as separate actions.
 -- No inventory-dependent secure action is changed while combat is locked.
-local ITEMS = {224464,5512,271884,271883,241304,241303,211880,211879,211878}
+local ITEM_GROUPS = {
+    {224464,5512}, -- Demonic Healthstone / Healthstone; count remaining uses.
+    {271884,271883,241304,241305,211880,211879,211878},
+}
 
 function Prompt:Settings()
     local s = JP.Settings("survivalPrompt", DEFAULTS)
@@ -56,18 +59,38 @@ function Prompt:CacheActions()
         end
     end
     if self:Settings().showPotions then
-        for _, id in ipairs(ITEMS) do
-            local count = JP.SafeNumber(C_Item.GetItemCount(id, false, false)) or 0
-            local usable = JP.SafeBoolean(C_Item.IsUsableItem(id))
-            if count > 0 and usable then
-                self.actions[#self.actions+1] = {kind="item", id=id}; break
+        for _, items in ipairs(ITEM_GROUPS) do
+            for _, id in ipairs(items) do
+                local count = JP.SafeNumber(C_Item.GetItemCount(id, false, true)) or 0
+                -- Temporary usability (full HP, form, cooldown) must not remove
+                -- an owned consumable from the pre-combat secure configuration.
+                if count > 0 then
+                    self.actions[#self.actions+1] = {kind="item", id=id}; break
+                end
             end
         end
     end
+    local sequence = {}
+    for i, action in ipairs(self.actions) do
+        if action.kind == "item" then
+            sequence[#sequence+1] = "item:"..action.id
+        elseif i == 1 then
+            local name = JP.SafeString(C_Spell.GetSpellName(action.id))
+            if name then sequence[#sequence+1] = name end
+        end
+    end
+    local macro = #sequence > 0 and ("/castsequence [@player] reset="
+        ..JP.Limits.SURVIVAL_SEQUENCE_RESET.." "..table.concat(sequence, ", ")) or nil
+    -- Reapplying an identical macro would reset the player's sequence progress.
+    if self.sequenceMacro ~= macro then
+        self.sequence:SetAttribute("macrotext", macro)
+        self.sequenceMacro = macro
+    end
+    self.sequence:SetAttribute("type", self.running and macro and "macro" or nil)
     for i, button in ipairs(self.buttons) do
         local action = self.actions[i]
         button.action = action
-        button:SetAttribute("type", action and action.kind or nil)
+        button:SetAttribute("type", self.running and action and action.kind or nil)
         button:SetAttribute("unit", "player")
         button:SetAttribute("spell", action and action.kind == "spell" and action.id or nil)
         button:SetAttribute("item", action and action.kind == "item" and ("item:"..action.id) or nil)
@@ -80,6 +103,19 @@ function Prompt:CacheActions()
         end
     end
     self.frame:SetWidth(16 + (#self.actions > 0 and 64 or 0) + math.max(0, #self.actions-1)*56)
+end
+
+function Prompt:ActionInfo(index)
+    local action = self.actions and self.actions[index]
+    if not action then return nil end
+    if action.kind == "spell" then
+        local name = C_Spell and C_Spell.GetSpellName and JP.SafeString(C_Spell.GetSpellName(action.id))
+        local texture = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(action.id)
+        return {kind=action.kind, id=action.id, name=name or tostring(action.id), texture=texture}
+    end
+    local name = C_Item and C_Item.GetItemNameByID and JP.SafeString(C_Item.GetItemNameByID(action.id))
+    local texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(action.id)
+    return {kind=action.kind, id=action.id, name=name or tostring(action.id), texture=texture}
 end
 
 function Prompt:Update()
@@ -105,7 +141,7 @@ function Prompt:Update()
                 local cd = JP.API.SurvivalItemCooldown(action.id)
                 if cd then button.cooldown:SetCooldown(cd.start, cd.duration)
                 else button.cooldown:Clear() end
-                local count = JP.SafeNumber(C_Item.GetItemCount(action.id, false, false))
+                local count = JP.SafeNumber(C_Item.GetItemCount(action.id, false, true))
                 -- Keep an exhausted item visible until combat ends; no invisible hitbox.
                 button.texture:SetDesaturated(count ~= nil and count == 0)
             end
@@ -134,6 +170,7 @@ function Prompt:Create()
     self.frame:SetPoint("TOP", UIParent, "TOP", 0, -240)
     self.frame:SetFrameStrata("HIGH"); self.frame:EnableMouse(false)
     self.frame:Hide(); self.buttons = {}
+    self.sequence = UI.SecureAction("MythicBoostSurvivalSequence")
     for i = 1, JP.Limits.SURVIVAL_BUTTONS do
         local button = UI.SurvivalButton(self.frame, "MythicBoostSurvivalAction"..i, i == 1 and 64 or 48)
         button:SetPoint("LEFT", i == 1 and 8 or 80+(i-2)*56, 0)
@@ -184,6 +221,7 @@ function Prompt:Disable()
     if self.frame then
         UnregisterStateDriver(self.frame, "visibility")
         self.frame:Hide()
+        self.sequence:SetAttribute("type", nil)
         for _, button in ipairs(self.buttons) do button:SetAttribute("type", nil) end
         self:Update()
     end

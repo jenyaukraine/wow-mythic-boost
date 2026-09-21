@@ -59,7 +59,7 @@ def test_information_copy_and_support_contract_are_static():
     assert PROJECT_URL in info
     assert 'SetHyperlink' not in info and 'OpenExternal' not in info
     assert 'informationPage' in settings and '"information"' in settings
-    assert 'information", L("Информация")' in settings
+    assert 'SwitchCategory("information")' in settings and 'L("Помощь")' in settings
     assert 'L("Лаборатория талантов")' in settings
 
 

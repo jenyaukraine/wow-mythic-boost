@@ -22,7 +22,7 @@ combat=true; w:ShowCombatGuide(); assert(not w.combatGuide)
 combat=false; w:ShowCombatGuide(); assert(w.combatGuide.shown)
 local n=allocations
 buttons['Настроить клавиши'].scripts.OnClick()
-assert(opened.page=='settings' and opened.category=='interrupts' and opened.section==2)
+assert(opened.page=='settings' and opened.category=='bindings' and opened.section==2)
 assert(MythicBoostDB.combatGuideSeen and not w.combatGuide.shown)
 w:ShowCombatGuide(); assert(not w.combatGuide.shown and allocations==n)
 w:ShowCombatGuide(true); assert(w.combatGuide.shown and allocations==n)

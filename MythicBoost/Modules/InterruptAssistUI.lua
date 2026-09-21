@@ -8,8 +8,19 @@ function A:Build(parent)
         return self:BindingKey(focus)
     end
     local function RefreshBindings()
-        for focus, entry in pairs(bindingButtons) do
-            entry.button.label:SetText(entry.label..": "..(CurrentKey(focus) or L("Нет")))
+        for kind, entry in pairs(bindingButtons) do
+            entry.key:SetText(CurrentKey(kind) or L("Нет"))
+            if entry.survivalIndex then
+                local info = JP.SurvivalPrompt and JP.SurvivalPrompt.ActionInfo
+                    and JP.SurvivalPrompt:ActionInfo(entry.survivalIndex)
+                entry.label = info and (L("Сейв: %s")):format(info.name)
+                    or ((L("Клавиша сейва %d")):format(entry.survivalIndex))
+                entry.action:SetText((info and info.texture and ("|T"..info.texture..":18:18|t ") or "")..entry.label)
+                if JP.SettingsHub and JP.SettingsHub.RegisterSearchControl then
+                    JP.SettingsHub:RegisterSearchControl(tostring(kind), entry.label, entry.row,
+                        {"сейв", "сейвы", "защита", "деф", "survival", "defensive"}, "bindings")
+                end
+            end
         end
     end
     -- The page scrolls even at minimum window size; the footer stays visible.
@@ -17,6 +28,10 @@ function A:Build(parent)
     scroll:SetPoint("TOPLEFT", 24, -124); scroll:SetPoint("BOTTOMRIGHT", -32, 56)
     local page = CreateFrame("Frame", nil, scroll)
     page:SetSize(560, 520); scroll:SetScrollChild(page)
+    if JP.SettingsHub then
+        JP.SettingsHub.pageRoots.bindings = page
+        JP.SettingsHub.scrollFrames.bindings = scroll
+    end
     scroll:SetScript("OnSizeChanged", function(_,w) page:SetWidth(math.max(200,w)) end)
     local status = UI.Text(parent,"GameFontHighlightSmall","",UI.colors.accent)
     status:SetPoint("BOTTOMLEFT",24,14); status:SetPoint("BOTTOMRIGHT",-24,14); status:SetHeight(36)
@@ -41,8 +56,17 @@ function A:Build(parent)
         end
         f:Hide()
     end)
-    capture:SetScript("OnShow",function(f) f:EnableKeyboard(true); f:SetPropagateKeyboardInput(false) end)
-    capture:SetScript("OnHide",function(f) f:EnableKeyboard(false) end)
+    capture:SetScript("OnShow",function(f)
+        f:EnableKeyboard(true); f:SetPropagateKeyboardInput(false)
+        if f.uiButton then f.uiButton.settingsCapture = true end
+        if f.uiButton and UI.SettingsGlow then UI.SettingsGlow(f.uiButton, "capture") end
+    end)
+    capture:SetScript("OnHide",function(f)
+        f:EnableKeyboard(false)
+        if f.uiButton then f.uiButton.settingsCapture = nil end
+        if f.uiButton and UI.SettingsGlow then UI.SettingsGlow(f.uiButton, nil) end
+        f.uiButton = nil
+    end)
     capture:RegisterEvent("PLAYER_REGEN_DISABLED")
     capture:RegisterEvent("UPDATE_BINDINGS")
     capture:SetScript("OnEvent",function(f,event)
@@ -73,6 +97,35 @@ function A:Build(parent)
             fn(b)
         end)
         return Track(b)
+    end
+    local function BindingRow(kind, label, y, aliases, icon)
+        y = y + origin
+        local row = UI.Panel(page, UI.colors.field, UI.colors.lineSoft)
+        row:SetHeight(30); row:SetPoint("TOPLEFT", 0, y); row:SetPoint("TOPRIGHT", page, "TOPRIGHT", -8, y)
+        local action = UI.Text(row, "GameFontHighlightSmall", (icon and ("|T"..icon..":18:18|t ") or "")..label, UI.colors.text)
+        action:SetPoint("LEFT", 6, 0); action:SetPoint("RIGHT", row, "RIGHT", -252, 0); action:SetJustifyH("LEFT")
+        local key = UI.Text(row, "GameFontHighlightSmall", CurrentKey(kind) or L("Нет"), UI.colors.muted)
+        key:SetPoint("LEFT", action, "RIGHT", 10, 0); key:SetPoint("RIGHT", row, "RIGHT", -126, 0); key:SetJustifyH("CENTER")
+        local assign = UI.SettingsButton(row, L("Назначить"), 112, 26)
+        assign:SetPoint("RIGHT", -4, 0)
+        assign:SetScript("OnClick", function()
+            if InCombatLockdown() then status:SetText(L("Доступно вне боя")); return end
+            capture:Hide()
+            capture.focusAction, capture.label, capture.uiButton = kind, bindingButtons[kind].label, assign
+            capture:Show(); status:SetText(L("Нажми сочетание клавиш. Esc — отмена. Занятые клавиши сохраняются."))
+        end)
+        Track(row)
+        bindingButtons[kind] = {key=key, label=label, row=row, action=action}
+        if tostring(kind):match("^survival") then
+            bindingButtons[kind].survivalIndex = tonumber(tostring(kind):match("%d+$"))
+        end
+        row.searchReveal = function()
+            if self.SelectSettingsSection then self.SelectSettingsSection(2) end
+        end
+        if JP.SettingsHub and JP.SettingsHub.RegisterSearchControl then
+            JP.SettingsHub:RegisterSearchControl(tostring(kind), label, row, aliases, "bindings")
+        end
+        return row
     end
     local function Check(label,key,y,fn)
         y = y + origin
@@ -109,54 +162,33 @@ function A:Build(parent)
     Check(L("Звук начала каста фокуса"),"sound",-254)
     Text(L("Звук сообщает о начале каста, даже если прерывание недоступно. Текст учитывает готовность."),-290)
     Text(L("Для оглушения звук отключён: он не различает касты со щитком."),-340)
-    activeSection, origin = 2, 385
-    Text(L("2. Горячие клавиши"),-385)
     local fallbackLabels={target=L("Без фокуса: текущая цель"),none=L("Без фокуса: ничего"),nearby=L("Без фокуса: ближайший враг")}
-    local order={target="none",none="nearby",nearby="target"}
-    Button(fallbackLabels[s.fallback] or fallbackLabels.target,-415,function(b)
-        s.fallback=order[s.fallback] or "target"; b.label:SetText(fallbackLabels[s.fallback]); self:UpdateActions()
+    local fallbackOrder={target="none",none="nearby",nearby="target"}
+    Button(fallbackLabels[s.fallback] or fallbackLabels.target,-378,function(b)
+        s.fallback=fallbackOrder[s.fallback] or "target"; b.label:SetText(fallbackLabels[s.fallback]); self:UpdateActions()
     end)
-    Text(L("Ближайший враг: временно переключает цель, затем возвращает её. Выбор кастера не гарантирован."),-452)
-    Check(L("Останавливать своё заклинание для прерывания"),"stopCasting",-496)
-    Text(L("Наведи мышь на врага и нажми фокус. Alt с этой кнопкой снимает фокус."),-536)
+    Text(L("Ближайший враг: временно переключает цель, затем возвращает её. Выбор кастера не гарантирован."),-414)
+    Check(L("Останавливать своё заклинание для прерывания"),"stopCasting",-452)
+    activeSection, origin = 2, 385
     for i,focus in ipairs({true,false}) do
-        local label=focus and L("Назначить клавишу фокуса") or L("Назначить клавишу прерывания")
-        local keySetting=focus and "focusKey" or "interruptKey"
-        local bindButton
-        bindButton=Button(label..": "..(CurrentKey(focus) or L("Нет")),-568-i*36,function()
-            capture.button=self.actions[focus]
-            capture.focusAction=focus
-            capture.keySetting=keySetting
-            capture.label=label
-            capture.uiButton=bindButton
-            capture:Show(); status:SetText(L("Одинаковая клавиша объединит фокус и прерывание. Esc — отмена."))
-        end)
-        bindingButtons[focus]={button=bindButton,label=label}
+        local label=focus and L("Фокус") or L("Прерывание")
+        BindingRow(focus, label, -385-(i-1)*42, focus and {"фокус", "focus"} or {"кик", "прерывание", "interrupt", "kick"})
     end
-    Text(L("Общая клавиша: враг под мышью становится фокусом и сразу прерывается. Без наведения — прерывание по фокусу.")
-        .. " " .. L("Без фокуса: текущая цель") .. ".", -657)
-    Text(L("Клавиша не блокируется, если враг не кастует. Нажимай по подсказке."), -713)
-    local controlLabel = L("Назначить клавишу цепочки контроля")
-    local controlBind = Button(controlLabel, -776, function()
-        local controls = JP.ControlAssist
-        if not controls or not controls.sequence then return end
-        capture.button = controls.sequence; capture.focusAction = "control"
-        capture.keySetting = "controlKey"; capture.label = controlLabel
-        capture:Show(); status:SetText(L("Нажми сочетание клавиш. Esc — отмена. Занятые клавиши сохраняются."))
-    end)
-    bindingButtons.control = {button=controlBind, label=controlLabel}
-    Text(L("Контроль своего класса и расы. Один успешный каст на шаг; КД не пропускаются. Сброс через 60 сек. Вихрь друида — у ног; остальные области — вручную."), -818)
+    BindingRow("control", L("Цепочка контроля"), -469, {"контроль", "цепочка контроля", "cc", "crowd control"})
+    BindingRow("survivalSequence", L("Цепочка сейвов"), -511, {"сейв", "камень", "зелье", "sequence", "healthstone", "potion"})
     for i = 1, JP.Limits.SURVIVAL_BUTTONS do
         local kind = "survival"..i
-        local label = (L("Клавиша сейва %d")):format(i)
-        local button = Button(label, -888-(i-1)*36, function()
-            capture.focusAction=kind; capture.label=label
-            capture:Show()
-            status:SetText(L("Нажми сочетание клавиш. Esc — отмена. Занятые клавиши сохраняются."))
-        end)
-        bindingButtons[kind] = {button=button, label=label}
+        local info = JP.SurvivalPrompt and JP.SurvivalPrompt.ActionInfo and JP.SurvivalPrompt:ActionInfo(i)
+        local label = info and (L("Сейв: %s")):format(info.name) or ((L("Клавиша сейва %d")):format(i))
+        BindingRow(kind, label, -553-(i-1)*42, {"сейв", "сейвы", "защита", "деф", "survival", "defensive"}, info and info.texture)
     end
-    Text(L("Сейвы: кнопки слева направо. Назначь удобные клавиши; состав зависит от класса и предметов в сумках."), -1006)
+    local notesY = -553-JP.Limits.SURVIVAL_BUTTONS*42-8
+    Text(L("Цепочка: основной сейв, камень, зелье. Один успешный шаг на нажатие; КД не пропускаются. Сброс после 60 сек. без нажатий."), notesY)
+    Text(L("Сейвы: кнопки слева направо. Назначь удобные клавиши; состав зависит от класса и предметов в сумках."), notesY-54)
+    Text(L("Общая клавиша: враг под мышью становится фокусом и сразу прерывается. Без наведения — прерывание по фокусу."), notesY-108)
+    Text(L("Наведи мышь на врага и нажми фокус. Alt с этой кнопкой снимает фокус."), notesY-162)
+    Text(L("Клавиша не блокируется, если враг не кастует. Нажимай по подсказке."), notesY-216)
+    Text(L("Контроль своего класса и расы. Один успешный каст на шаг; КД не пропускаются. Сброс через 60 сек. Вихрь друида — у ног; остальные области — вручную."), notesY-270)
     RefreshBindings()
     activeSection, origin = 3, 810
     Text(L("3. Метки группы"),-810)
@@ -176,27 +208,45 @@ function A:Build(parent)
             for _, widget in ipairs(widgets) do widget:SetShown(i==index) end
             tabs[i]:SetEnabled(i~=index)
         end
-        page:SetHeight(index == 2 and 740 or 520)
+        page:SetHeight(index == 2 and (-notesY-385+330) or 520)
         scroll:SetVerticalScroll(0)
     end
     self.SelectSettingsSection = SelectSection
-    local labels={L("1. Подсказка"),L("2. Горячие клавиши"),L("3. Метки группы")}
-    for i,label in ipairs(labels) do
+    local labels={{2,L("Клавиши")},{1,L("Подсказка")},{3,L("Метки")}}
+    for _,item in ipairs(labels) do
+        local section,label=item[1],item[2]
         local tab=UI.Button(parent,label,170,32)
-        tabs[i]=tab
+        tabs[section]=tab
         tab.label:ClearAllPoints(); tab.label:SetPoint("LEFT",6,0); tab.label:SetPoint("RIGHT",-6,0)
         tab.label:SetWordWrap(false)
-        tab:SetScript("OnClick",function() SelectSection(i) end)
+        tab:SetScript("OnClick",function() SelectSection(section) end)
     end
     local function LayoutTabs()
         local width=math.max(90,((parent:GetWidth() or 560)-60)/3)
-        for i,tab in ipairs(tabs) do
-            tab:ClearAllPoints(); tab:SetPoint("TOPLEFT",24+(i-1)*(width+6),-80); tab:SetWidth(width)
+        for index,item in ipairs(labels) do
+            local tab=tabs[item[1]]
+            tab:ClearAllPoints(); tab:SetPoint("TOPLEFT",24+(index-1)*(width+6),-80); tab:SetWidth(width)
         end
     end
     parent:HookScript("OnSizeChanged",LayoutTabs)
     LayoutTabs()
-    SelectSection(1)
+    -- The category opens on bindings; advanced hint/group tools remain one tab away.
+    SelectSection(2)
+    local refreshFrame = UI.EventFrame(function(_, event)
+        if event == "PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" or event == "BAG_UPDATE_DELAYED" then
+            if C_Timer and C_Timer.After then C_Timer.After(.05, RefreshBindings) else RefreshBindings() end
+        end
+    end)
+    local function SetRefreshEvents(enabled)
+        refreshFrame:UnregisterAllEvents()
+        if enabled then
+            refreshFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+            refreshFrame:RegisterEvent("SPELLS_CHANGED")
+            refreshFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+        end
+    end
+    parent:HookScript("OnShow", function() SetRefreshEvents(true); RefreshBindings() end)
+    parent:HookScript("OnHide", function() SetRefreshEvents(false) end)
     function self:RefreshPanel()
         marker.label:SetText(L("Моя метка: ")..(s.marker==0 and L("Нет") or "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_"..s.marker..":18|t "..s.marker))
         local rows={}

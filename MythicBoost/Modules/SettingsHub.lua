@@ -30,6 +30,170 @@ function SettingsHub:GetSettings()
     return JP.Settings("convenience", DEFAULTS) or {}
 end
 
+local SEARCH_ALIASES = {
+    autoQuests={"задания", "квесты", "quests", "quest"}, summon={"призыв", "summon", "summons"},
+    resurrection={"воскрешение", "рес", "rez", "res"}, sellJunk={"серые предметы", "мусор", "vendor junk"},
+    repair={"ремонт", "repair gear"}, inviteKeyword={"ключ приглашения", "invite keyword", "whisper invite"},
+    autoKeystone={"ключ", "эпохальный ключ", "keystone"}, hideBags={"сумки", "bags"},
+    unitFrames={"рамки игрока", "рамки цели", "player frame", "target frame"},
+    positiveAuraEnabled={"бафы", "ауры", "buffs", "auras"}, positiveAuraMissing={"отсутствующий баф", "missing buff"},
+    survivalPrompt={"сейв", "защита", "деф", "defensive", "survival"}, controlAssist={"контроль", "cc", "crowd control"},
+    lootUI={"добыча", "loot", "loot window"}, auctionMarket={"аукцион", "цены", "auction", "market"},
+    errorGuard={"ошибки", "журнал", "error log", "errors"},
+}
+
+local SEARCH_CASE_MAP = {
+    ["А"]="а",["Б"]="б",["В"]="в",["Г"]="г",["Д"]="д",["Е"]="е",["Ё"]="ё",["Ж"]="ж",["З"]="з",
+    ["И"]="и",["Й"]="й",["К"]="к",["Л"]="л",["М"]="м",["Н"]="н",["О"]="о",["П"]="п",["Р"]="р",
+    ["С"]="с",["Т"]="т",["У"]="у",["Ф"]="ф",["Х"]="х",["Ц"]="ц",["Ч"]="ч",["Ш"]="ш",["Щ"]="щ",
+    ["Ъ"]="ъ",["Ы"]="ы",["Ь"]="ь",["Э"]="э",["Ю"]="ю",["Я"]="я",
+}
+local function SearchLower(value)
+    -- Lua's string.lower is ASCII-only in WoW; fold Cyrillic capitals too.
+    for from, to in pairs(SEARCH_CASE_MAP) do value = value:gsub(from, to) end
+    -- Calling string.lower on a UTF-8 byte sequence can corrupt high bytes
+    -- under Windows code pages, so fold only ASCII A-Z after Cyrillic.
+    for byte = 65, 90 do
+        local upper = string.char(byte)
+        value = value:gsub(upper, string.char(byte + 32))
+    end
+    return value
+end
+SettingsHub.SearchLower = SearchLower
+
+local LEGACY_CATEGORY_ROUTE = {screenshots="interface", interrupts="bindings", buffs="auras"}
+function SettingsHub.NormalizeCategory(key, pages)
+    key = LEGACY_CATEGORY_ROUTE[key] or key or "main"
+    if pages and not pages[key] then return "main" end
+    return key
+end
+
+local function FindPageKey(self, widget)
+    local node = widget
+    while node do
+        for key, root in pairs(self.pageRoots or {}) do
+            if node == root then return key end
+        end
+        node = node.GetParent and node:GetParent()
+    end
+end
+
+function SettingsHub:RegisterSearchControl(key, label, widget, aliases, pageKey)
+    if not widget or type(label) ~= "string" then return end
+    pageKey = pageKey or FindPageKey(self, widget)
+    if not pageKey then return end
+    local terms = {label, key}
+    for _, alias in ipairs(SEARCH_ALIASES[key] or {}) do terms[#terms + 1] = alias end
+    for _, alias in ipairs(aliases or {}) do terms[#terms + 1] = alias end
+    local foldedTerms = {}
+    for _, term in ipairs(terms) do foldedTerms[#foldedTerms + 1] = SearchLower(term) end
+    for _, entry in ipairs(self.searchEntries or {}) do
+        if entry.widget == widget then
+            entry.label, entry.pageKey, entry.terms, entry.foldedTerms = label, pageKey, terms, foldedTerms
+            return entry
+        end
+    end
+    local entry = {key=key, label=label, widget=widget, pageKey=pageKey, terms=terms, foldedTerms=foldedTerms}
+    table.insert(self.searchEntries, entry)
+    return entry
+end
+
+function SettingsHub:BuildSearch(parent, holder, field)
+    local resultPanel = UI.Panel(parent, C.panel, { .16, .23, .29, .8 })
+    resultPanel:SetFrameLevel(parent:GetFrameLevel() + 30)
+    resultPanel:SetPoint("TOPLEFT", holder, "BOTTOMLEFT", 0, -4)
+    resultPanel:SetPoint("TOPRIGHT", holder, "BOTTOMRIGHT", 0, -4)
+    resultPanel:Hide()
+    self.searchResultPanel, self.searchResultButtons = resultPanel, {}
+    local emptyText = UI.Text(resultPanel, "GameFontHighlightSmall", L("Ничего не найдено"), C.muted)
+    emptyText:SetPoint("TOPLEFT", 10, -9); emptyText:SetPoint("TOPRIGHT", -10, -9)
+    emptyText:SetJustifyH("CENTER"); emptyText:Hide()
+    self.searchEmptyText = emptyText
+    local pageLabels = {
+        main=L("Основное"), automation=L("Удобства"), groups=L("Группы и ключи"),
+        bindings=L("Кнопки и клавиши"), interface=L("Панели и мини-карта"), frames=L("Рамки игроков"),
+        auras=L("Трекер и подсказки"), aurafilters=L("Условия"), loot=L("Добыча"), profiles=L("Профили"),
+        system=L("Журнал"), information=L("Помощь"),
+    }
+    for i = 1, 6 do
+        local button = UI.SearchResult(resultPanel)
+        button:SetPoint("TOPLEFT", 4, -4-(i-1)*42)
+        button:SetPoint("TOPRIGHT", -4, -4-(i-1)*42)
+        button:HookScript("OnClick", function(owner)
+            local entry = owner.searchEntry
+            if not entry then return end
+            self.SwitchCategory(entry.pageKey)
+            resultPanel:Hide()
+            field:ClearFocus()
+            local function Jump()
+                local widget, route = entry.widget, entry.pageKey
+                if entry.reveal then entry.reveal() end
+                local node = widget
+                while node and node ~= self.pageRoots[route] do
+                    if node.searchReveal then node:searchReveal() end
+                    node = node.GetParent and node:GetParent()
+                end
+                local scroll, root = self.scrollFrames[route], self.pageRoots[route]
+                if scroll and root and widget.GetTop and root.GetTop then
+                    local topDelta = (root:GetTop() or 0) - (widget:GetTop() or 0) - 42
+                    local maximum = scroll:GetVerticalScrollRange() or 0
+                    scroll:SetVerticalScroll(math.max(0, math.min(maximum, topDelta)))
+                end
+                if self.searchHighlighted then UI.SettingsGlow(self.searchHighlighted, nil) end
+                if widget and UI.SettingsGlow then
+                    UI.SettingsGlow(widget, "active")
+                    self.searchHighlighted = widget
+                end
+            end
+            if C_Timer and C_Timer.After then C_Timer.After(.05, Jump) else Jump() end
+        end)
+        self.searchResultButtons[i] = button
+    end
+    local function SearchChanged()
+        if self.searchHighlighted then UI.SettingsGlow(self.searchHighlighted, nil); self.searchHighlighted = nil end
+        local query = SearchLower(field:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if query == "" or not field:HasFocus() then resultPanel:Hide(); return end
+        local words, matches = {}, {}
+        for word in query:gmatch("%S+") do words[#words+1] = word end
+        for _, entry in ipairs(self.searchEntries) do
+            local all = true
+            for _, word in ipairs(words) do
+                local found = false
+                for index, term in ipairs(entry.terms) do
+                    if ((entry.foldedTerms and entry.foldedTerms[index]) or SearchLower(term)):find(word, 1, true) then found = true; break end
+                end
+                if not found then all = false; break end
+            end
+            if all then matches[#matches+1] = entry end
+        end
+        table.sort(matches, function(a,b) return a.label < b.label end)
+        for index, button in ipairs(self.searchResultButtons) do
+            local entry = matches[index]
+            button.searchEntry = entry
+            button:SetShown(entry ~= nil)
+            if entry then
+                button.label:SetText(entry.label)
+                button.category:SetText(pageLabels[entry.pageKey] or entry.pageKey)
+            end
+        end
+        emptyText:SetShown(#matches == 0)
+        resultPanel:SetHeight(#matches == 0 and 36 or math.min(6, #matches)*42+8)
+        resultPanel:SetShown(true)
+    end
+    field:SetScript("OnTextChanged", SearchChanged)
+    field:SetScript("OnEditFocusGained", SearchChanged)
+    field:SetScript("OnEscapePressed", function() resultPanel:Hide(); field:ClearFocus() end)
+    parent:HookScript("OnHide", function() resultPanel:Hide(); field:ClearFocus() end)
+    field:SetScript("OnEnterPressed", function()
+        if not resultPanel:IsShown() then field:ClearFocus(); return end
+        for _, button in ipairs(self.searchResultButtons) do
+            if button:IsShown() and button.searchEntry then button:Click(); break end
+        end
+        field:ClearFocus()
+    end)
+    field:SetScript("OnEditFocusLost", function() if field:GetText() == "" then resultPanel:Hide() end end)
+end
+
 local function Heading(parent, text, x, y, width)
     local label = UI.Text(parent, "GameFontNormalLarge", text, C.accent)
     label:SetPoint("TOPLEFT", x, y)
@@ -131,6 +295,7 @@ function SettingsHub:AddStoredCheck(parent, settings, key, label, x, y, callback
     check:SetPoint("TOPLEFT", x, y)
     check:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -28, y)
     self.checks[checkKey or key] = check
+    self:RegisterSearchControl(checkKey or key, label, check)
     return check
 end
 
@@ -151,6 +316,7 @@ function SettingsHub:AddColumnCheck(parent, settings, key, label, right, y, call
     ColumnAnchor(check, parent, right, y, right and 28 or 28 + (indent or 0))
     self.checks[checkKey or key] = check
     self.frameCheckKeys[checkKey or key] = key
+    self:RegisterSearchControl(checkKey or key, label, check)
     return check
 end
 
@@ -203,6 +369,7 @@ function SettingsHub:AddStepper(parent, settings, key, label, right, y,
     plus:SetScript("OnClick", function() row:SetValue((row.value or minimum) + step) end)
     row:SetValue(settings[key], true)
     self.steppers[controlKey or key] = { control = row, settings = settings, key = key }
+    self:RegisterSearchControl(controlKey or key, label, row)
     return row
 end
 
@@ -360,6 +527,7 @@ end
 function SettingsHub:Build(_, parent)
     if self.page then return end
     self.page, self.checks, self.steppers, self.frameCheckKeys = parent, {}, {}, {}
+    self.searchEntries, self.pageRoots, self.scrollFrames = {}, {}, {}
     -- One always-visible mover, independent of the selected settings page.
     local toolbar = CreateFrame("Frame", nil, parent)
     toolbar:SetPoint("TOPLEFT", 14, -10); toolbar:SetPoint("TOPRIGHT", -14, -10)
@@ -387,10 +555,15 @@ function SettingsHub:Build(_, parent)
     end)
     move:HookScript("OnLeave", GameTooltip_Hide)
     self.moveStatus = UI.Text(toolbar, "GameFontHighlightSmall", "", C.muted)
-    self.moveStatus:SetPoint("LEFT", 4, 0)
-    self.moveStatus:SetPoint("RIGHT", move, "LEFT", -12, 0)
     self.moveStatus:SetJustifyH("LEFT")
     self:RefreshMoveButton()
+    local searchField, searchHolder = UI.SearchBox(toolbar, 260, L("Найти настройку"))
+    searchHolder:SetPoint("LEFT", 0, 0)
+    searchHolder:SetWidth(260)
+    searchField:SetMaxLetters(64)
+    self.searchField = searchField
+    self.moveStatus:SetPoint("LEFT", searchHolder, "RIGHT", 12, 0)
+    self.moveStatus:SetPoint("RIGHT", move, "LEFT", -12, 0)
 
     local sidebar = UI.Panel(parent, {C.raised[1], C.raised[2], C.raised[3], .35}, C.lineSoft)
     sidebar:SetPoint("TOPLEFT", parent, "TOPLEFT", 14, -54)
@@ -404,26 +577,34 @@ function SettingsHub:Build(_, parent)
     local content = UI.Panel(parent, {C.raised[1], C.raised[2], C.raised[3], .25}, C.lineSoft)
     content:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 10, 0)
     content:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -14, 14)
-    local interfaceKeys = {interface=true, frames=true, auras=true, aurafilters=true, loot=true}
+    local pageTopCategory = {
+        main="main", automation="groups", groups="groups", bindings="bindings", interrupts="bindings",
+        interface="interface", frames="interface", auras="buffs", aurafilters="buffs",
+        buffs="buffs", loot="loot", profiles="profiles",
+    }
     local subnav = CreateFrame("Frame", nil, content)
     subnav:SetPoint("TOPLEFT", 12, -8); subnav:SetPoint("TOPRIGHT", -12, -8)
     subnav:SetHeight(30); subnav:Hide()
 
     local function MakePage(key, pageTitle, description)
         local viewport = CreateFrame("Frame", nil, content)
-        viewport:SetPoint("TOPLEFT", 0, interfaceKeys[key] and -44 or 0)
+        local hasSubnav = key == "groups" or key == "automation" or key == "interface" or key == "frames"
+            or key == "auras" or key == "aurafilters"
+        viewport:SetPoint("TOPLEFT", 0, hasSubnav and -44 or 0)
         viewport:SetPoint("BOTTOMRIGHT")
         viewport:Hide()
         local page = viewport
         -- Interrupts has its own tabbed scroll area. Other categories share
         -- one clipped canvas so fixed-position controls remain reachable.
-        if key ~= "interrupts" then
+        if key ~= "bindings" then
             local scroll = CreateFrame("ScrollFrame", nil, viewport, "UIPanelScrollFrameTemplate")
             scroll:SetPoint("TOPLEFT", 0, 0)
             scroll:SetPoint("BOTTOMRIGHT", -26, 8)
             page = CreateFrame("Frame", nil, scroll)
             page:SetSize(600, 600)
             scroll:SetScrollChild(page)
+            self.pageRoots[key] = page
+            self.scrollFrames[key] = scroll
             scroll:SetScript("OnSizeChanged", function(_, width)
                 page:SetWidth(math.max(1, width))
             end)
@@ -436,6 +617,7 @@ function SettingsHub:Build(_, parent)
                 page:SetWidth(math.max(1, scroll:GetWidth()))
             end)
         end
+        self.pageRoots[key] = self.pageRoots[key] or page
         local heading = UI.Text(page, "GameFontNormalLarge", pageTitle, C.accent)
         heading:SetPoint("TOPLEFT", 28, -22)
         local summary = UI.Text(page, "GameFontHighlightSmall", description, C.muted)
@@ -455,7 +637,7 @@ function SettingsHub:Build(_, parent)
         L("Приглашения, эпохальные ключи и умный клик"))
     local interfacePage = MakePage("interface", L("ИНТЕРФЕЙС"),
         L("Общий внешний вид и расположение элементов"))
-    local framesPage = MakePage("frames", L("КАПСУЛА И РЕСУРСЫ"),
+    local framesPage = MakePage("frames", L("РАМКИ ИГРОКОВ"),
         L("Точная настройка карточек игрока и цели, ресурсов и аур"))
     local auraPage = MakePage("auras", L("ТРЕКЕР БАФОВ"),
         L("Мини-трекер разрешённых положительных аур на персонаже"))
@@ -472,18 +654,31 @@ function SettingsHub:Build(_, parent)
 
     local function SwitchCategory(key)
         if key == "screenshots" then key = "interface" end
+        if key == "interrupts" then key = "bindings" end
+        if key == "buffs" then key = "auras" end
         if not self.categoryPages[key] then key = "main" end
-        for name, page in pairs(self.categoryPages) do page:SetShown(name == key) end
-        for name, tab in pairs(self.categoryTabs) do
-            tab:SetActive(name == key or (name == "interface" and interfaceKeys[key] == true))
+        local changed = self.currentPageKey ~= key
+        if changed and self.searchHighlighted then
+            UI.SettingsGlow(self.searchHighlighted, nil)
+            self.searchHighlighted = nil
         end
-        subnav:SetShown(interfaceKeys[key] == true)
+        for name, page in pairs(self.categoryPages) do page:SetShown(name == key) end
+        local topCategory = pageTopCategory[key] or key
+        for name, tab in pairs(self.categoryTabs) do tab:SetActive(name == topCategory) end
+        subnav:SetShown(topCategory == "interface" or topCategory == "buffs" or topCategory == "groups")
         for name, tab in pairs(self.interfaceTabs or {}) do tab:SetActive(name == key) end
+        for name, tab in pairs(self.buffTabs or {}) do tab:SetActive(name == key) end
+        for name, tab in pairs(self.groupTabs or {}) do tab:SetActive(name == key) end
+        for _, tab in pairs(self.interfaceTabs or {}) do tab:SetShown(topCategory == "interface") end
+        for _, tab in pairs(self.buffTabs or {}) do tab:SetShown(topCategory == "buffs") end
+        for _, tab in pairs(self.groupTabs or {}) do tab:SetShown(topCategory == "groups") end
+        if changed and self.scrollFrames[key] then self.scrollFrames[key]:SetVerticalScroll(0) end
+        self.currentPageKey = key
         MythicBoostDB.settingsCategory = key
     end
     self.SwitchCategory = SwitchCategory
 
-    local interruptPage = MakePage("interrupts", L("Прерывания"), L("Фокус, подсказки и клавиши прерывания"))
+    local interruptPage = MakePage("bindings", L("КНОПКИ И КЛАВИШИ"), L("Фокус, прерывание, контроль и сейвы"))
     -- Build the optional page only when opened, after login. A failure must
     -- be logged but must never abort construction of every settings category.
     interruptPage:HookScript("OnShow", function(page)
@@ -502,16 +697,15 @@ function SettingsHub:Build(_, parent)
     end)
     local tabOrder = {
         { "main", L("Основное") },
-        { "automation", L("Автоматизация") },
+        { "bindings", L("Кнопки и клавиши") },
         { "groups", L("Группы и ключи") },
-        { "interrupts", L("Прерывания") },
         { "interface", L("Интерфейс") },
+        { "buffs", L("Бафы и подсказки") },
+        { "loot", L("Добыча") },
         { "profiles", L("Профили") },
-        { "system", L("Система") },
-        { "information", L("Информация") },
     }
     for index, item in ipairs(tabOrder) do
-        local tab = UI.Tab(sidebar, item[2], 150)
+        local tab = UI.Tab(sidebar, item[2], 150, true)
         tab.categoryKey = item[1]
         tab:SetHeight(36)
         tab:SetPoint("TOPLEFT", 12, -40 - (index - 1) * 40)
@@ -525,26 +719,38 @@ function SettingsHub:Build(_, parent)
         tab:SetScript("OnClick", function(button) SwitchCategory(button.categoryKey) end)
         self.categoryTabs[item[1]] = tab
     end
-    self.interfaceTabs = {}
-    local sections = {{"interface", L("Панели")}, {"frames", L("Капсула")},
-        {"auras", L("Трекер бафов")}, {"aurafilters", L("Условия")},
-        {"loot", L("Добыча")} }
-    local function LayoutSubnav()
-        local width = math.max(1, (subnav:GetWidth() - (#sections-1)*6) / #sections)
-        for index, item in ipairs(sections) do
-            local tab = self.interfaceTabs[item[1]]
+    self.interfaceTabs, self.buffTabs, self.groupTabs = {}, {}, {}
+    local sections = {
+        groups = {{"groups", L("Поиск и ключи")}, {"automation", L("Удобства")}},
+        interface = {{"interface", L("Панели и мини-карта")}, {"frames", L("Рамки игроков")}},
+        buffs = {{"auras", L("Трекер и подсказки")}, {"aurafilters", L("Условия")}},
+    }
+    local function LayoutSubnav(groupName)
+        local items = sections[groupName]
+        if not items then return end
+        local width = math.max(1, (subnav:GetWidth() - (#items-1)*6) / #items)
+        local tabs = groupName == "interface" and self.interfaceTabs
+            or groupName == "buffs" and self.buffTabs or self.groupTabs
+        for index, item in ipairs(items) do
+            local tab = tabs[item[1]]
             tab:ClearAllPoints(); tab:SetWidth(width)
             tab:SetPoint("TOPLEFT", (index - 1) * (width + 6), 0)
         end
     end
-    for _, item in ipairs(sections) do
-        local key = item[1]
-        local tab = UI.Tab(subnav, item[2], 140)
-        tab:SetHeight(28); tab:SetScript("OnClick", function() SwitchCategory(key) end)
-        self.interfaceTabs[key] = tab
+    for groupName, items in pairs(sections) do
+        local tabs = groupName == "interface" and self.interfaceTabs
+            or groupName == "buffs" and self.buffTabs or self.groupTabs
+        for _, item in ipairs(items) do
+            local key = item[1]
+        local tab = UI.Tab(subnav, item[2], 140, true)
+            tab:SetHeight(28); tab:SetScript("OnClick", function() SwitchCategory(key) end)
+            tabs[key] = tab
+        end
     end
-    subnav:SetScript("OnSizeChanged", LayoutSubnav)
-    LayoutSubnav()
+    subnav:SetScript("OnSizeChanged", function()
+        LayoutSubnav("groups"); LayoutSubnav("interface"); LayoutSubnav("buffs")
+    end)
+    LayoutSubnav("groups"); LayoutSubnav("interface"); LayoutSubnav("buffs")
     JP.LayoutPresets:Build(profilesPage)
     JP.AuraFilters:Build(auraFiltersPage)
     if JP.Information then JP.Information:Build(informationPage) end
@@ -827,6 +1033,23 @@ function SettingsHub:Build(_, parent)
         return control
     end
     local auraDisplayHeading = Heading(auraPage, L("ОТОБРАЖЕНИЕ"), 28, -84, 764)
+    local combatHints = UI.SettingsButton(auraPage, L("Подсказки боя и сейвы"), 220, 26)
+    combatHints:SetPoint("TOPRIGHT", -28, -78)
+    combatHints:SetScript("OnClick", function()
+        local target = self.checks.survivalPrompt or self.checks.controlAssist
+        if not target then return end
+        SwitchCategory("interface")
+        local function Jump()
+            local scroll, root = self.scrollFrames.interface, self.pageRoots.interface
+            if scroll and root and target.GetTop and root.GetTop then
+                local offset = (root:GetTop() or 0) - (target:GetTop() or 0) - 42
+                scroll:SetVerticalScroll(math.max(0, math.min(scroll:GetVerticalScrollRange() or 0, offset)))
+            end
+            UI.SettingsGlow(target, "active")
+            self.searchHighlighted = target
+        end
+        if C_Timer and C_Timer.After then C_Timer.After(.05, Jump) else Jump() end
+    end)
     local auraEnabled = self:AddStoredCheck(auraPage, auraSettings, "enabled",
         L("Включить мини-трекер положительных аур"), 28, -118, function()
             JP:ReloadModule("PositiveAuraTracker")
@@ -1235,7 +1458,37 @@ function SettingsHub:Build(_, parent)
     automationInfo:SetPoint("TOPRIGHT", -28, -432)
     automationInfo:SetJustifyH("LEFT")
 
-    SwitchCategory(MythicBoostDB.settingsCategory or "main")
+    local help = UI.SettingsButton(sidebar, L("Помощь"), 66, 26)
+    help:SetPoint("BOTTOMLEFT", 12, 12)
+    help:SetScript("OnClick", function() SwitchCategory("information") end)
+    local log = UI.SettingsButton(sidebar, L("Журнал"), 66, 26)
+    log:SetPoint("LEFT", help, "RIGHT", 6, 0)
+    log:SetScript("OnClick", function() SwitchCategory("system") end)
+
+    -- Build the small binding page once so every action is present in search
+    -- before the player opens that category.
+    if not interruptPage.interruptBuilt then
+        interruptPage.interruptBuilt = true
+        local ok, err = xpcall(function() JP.InterruptAssist:Build(interruptPage) end, function(message)
+            return tostring(message) .. "\n" .. (debugstack and debugstack(2, 12, 0) or "")
+        end)
+        if not ok then geterrorhandler()(err) end
+    end
+    for key, check in pairs(self.checks) do
+        if check and check.label and check.label.GetText then
+            self:RegisterSearchControl(key, check.label:GetText() or key, check)
+        end
+    end
+    for key, binding in pairs(self.steppers) do
+        local control = binding and binding.control
+        if control and control.caption and control.caption.GetText then
+            self:RegisterSearchControl(key, control.caption:GetText() or key, control)
+        end
+    end
+    self:BuildSearch(parent, searchHolder, searchField)
+
+    local stored = SettingsHub.NormalizeCategory(MythicBoostDB.settingsCategory, self.categoryPages)
+    SwitchCategory(stored)
     self:RefreshDependencies()
 end
 

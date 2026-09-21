@@ -7,7 +7,7 @@ source = (root / 'MythicBoost/Modules/SettingsHub.lua').read_text(encoding='utf-
 factory = source.split('    local function MakePage(', 1)[1].split('\n    self.categoryTabs', 1)[0]
 lua = LuaRuntime()
 lua.execute('''
-frames={}; self={categoryPages={}}; C={}; content={}; interfaceKeys={frames=true,auras=true,interface=true,loot=true,aurafilters=true}
+frames={}; self={categoryPages={},pageRoots={},scrollFrames={}}; C={}; content={}; interfaceKeys={frames=true,auras=true,interface=true,loot=true,aurafilters=true}
 function CreateFrame(kind, name, parent, template)
  local f={kind=kind,parent=parent,template=template,scripts={},width=700,height=400,offset=0}
  setmetatable(f,{__index=function() return function() end end})
@@ -41,8 +41,8 @@ scroll.height=900; scroll.scripts.OnMouseWheel(scroll,-1); assert(scroll.offset=
 local before=#frames
 for i=1,1000 do viewport.scripts.OnShow() end
 assert(#frames==before, 'reopening must not allocate frames')
-local interrupt=makePage('interrupts','Title','Description')
-assert(interrupt==self.categoryPages.interrupts, 'do not nest interrupt scroll views')
+local bindings=makePage('bindings','Title','Description')
+assert(bindings==self.categoryPages.bindings, 'binding view keeps its own scroll layout')
 ''')
 print('Settings scroll: clipping hierarchy, resize, wheel bounds, bottom reachability and reuse passed')
 

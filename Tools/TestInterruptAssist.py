@@ -35,6 +35,7 @@ function MakeFrame(name)
  function f:RegisterEvent(e) self.events[e]=true end
  function f:RegisterUnitEvent(e) self.events[e]=true end
  function f:UnregisterAllEvents() self.events={} end
+ function f:GetWidth() return 800 end
  function f:SetScript(k,v) self.scripts[k]=v end
  function f:Show() self.shown=true end
  function f:Hide() self.shown=false end
@@ -59,7 +60,7 @@ function MakeFrame(name)
 end
 function CreateFrame(_,name) frames=frames+1; return MakeFrame(name) end
 UIParent=MakeFrame(); GameFontNormal={GetFont=function() return 'font' end}; unpack=table.unpack
-JP={L=function(x) return x end, UI={}, Limits={SURVIVAL_BUTTONS=3}, RegisterModule=function() end,
+JP={L=function(x) return x end, UI={}, Limits={SURVIVAL_BUTTONS=4}, RegisterModule=function() end,
  Settings=function(_,defaults) for k,v in pairs(defaults) do if db[k]==nil then db[k]=v end end return db end}
 ''')
 loader = lua.eval("function(code) assert(load(code))('MythicBoost',JP) end")
@@ -217,11 +218,15 @@ function MakeText(text)
  function f:GetText() return self.value end
  return f
 end
-JP.UI.colors={text={},accent={}}
-JP.UI.Text=function(_,_,text) return MakeText(text) end
+JP.UI.colors={text={},accent={},field={},lineSoft={},muted={}}
+rows={}; assignButtons={}
+JP.UI.Panel=function() local f=MakeFrame(); f.texts={}; rows[#rows+1]=f; return f end
+JP.UI.EventFrame=function(fn) local f=MakeFrame(); f:SetScript("OnEvent",fn); return f end
+JP.UI.Text=function(parent,_,text) local f=MakeText(text); if type(parent.texts)=="table" then parent.texts[#parent.texts+1]=f end; return f end
 JP.UI.Button=function(_,label)
  local f=MakeFrame(); f.label=MakeText(label); buttons[label]=f; return f
 end
+JP.UI.SettingsButton=function(parent,label) local f=JP.UI.Button(parent,label); f.row=parent; assignButtons[#assignButtons+1]=f; return f end
 JP.UI.CheckBox=function() return MakeFrame() end
 function IsShiftKeyDown() return false end
 function IsControlKeyDown() return false end
@@ -245,27 +250,27 @@ lua.execute('A:Build(MakeFrame())')
 lua.execute("known=0; A.frame.scripts.OnEvent(nil,'SPELLS_CHANGED'); assert(A.status.value=='Прерывание или оглушение не изучено для текущей специализации')")
 lua.execute("known=57994; A.frame.scripts.OnEvent(nil,'SPELLS_CHANGED'); assert(A.status.value=='Wind Shear')")
 lua.execute('capture=created[3]')  # scroll, scroll child, keyboard capture
-lua.execute("assert(buttons['1. Подсказка'].enabled==false)")
-lua.execute("assert(buttons['Предпросмотр и перемещение'].shown and not buttons['Назначить клавишу фокуса: Нет'].shown)")
-lua.execute("buttons['2. Горячие клавиши'].scripts.OnClick(); assert(buttons['Назначить клавишу фокуса: Нет'].shown and not buttons['Предпросмотр и перемещение'].shown)")
-lua.execute("local count=#created; for i=1,1000 do buttons['3. Метки группы'].scripts.OnClick(); buttons['2. Горячие клавиши'].scripts.OnClick() end; assert(#created==count, 'section switching must reuse widgets')")
-lua.execute("buttons['Назначить клавишу фокуса: Нет'].scripts.OnClick(); assert(capture.button==A.actions[true])")
+lua.execute("assert(buttons['Клавиши'].enabled==false)")
+lua.execute("assert(not buttons['Предпросмотр и перемещение'].shown and assignButtons[1].row.shown)")
+lua.execute("buttons['Клавиши'].scripts.OnClick(); assert(assignButtons[1].row.shown and not buttons['Предпросмотр и перемещение'].shown)")
+lua.execute("local count=#created; for i=1,1000 do buttons['Метки'].scripts.OnClick(); buttons['Клавиши'].scripts.OnClick() end; assert(#created==count, 'section switching must reuse widgets')")
+lua.execute("assignButtons[1].scripts.OnClick(); assert(capture.focusAction==true)")
 lua.execute("capture.scripts.OnKeyDown(capture,'X'); assert(bound.X==nil)")
-lua.execute("buttons['Назначить клавишу фокуса: Нет'].scripts.OnClick(); capture.scripts.OnKeyDown(capture,'F'); assert(bound.F=='CLICK MythicBoostFocusAction:LeftButton')")
-lua.execute("buttons['Назначить клавишу фокуса: Нет'].scripts.OnClick(); capture.scripts.OnKeyDown(capture,'G'); assert(bound.F==nil and bound.G=='CLICK MythicBoostFocusAction:LeftButton')")
+lua.execute("assignButtons[1].scripts.OnClick(); capture.scripts.OnKeyDown(capture,'F'); assert(bound.F=='CLICK MythicBoostFocusAction:LeftButton')")
+lua.execute("assignButtons[1].scripts.OnClick(); capture.scripts.OnKeyDown(capture,'G'); assert(bound.F==nil and bound.G=='CLICK MythicBoostFocusAction:LeftButton')")
 lua.execute("combat=true; capture.scripts.OnKeyDown(capture,'H'); assert(bound.H==nil); combat=false")
-lua.execute("db.interruptKey='OEM1'; bound[';']='CLICK MythicBoostInterruptAction:LeftButton'; capture.scripts.OnEvent(capture,'UPDATE_BINDINGS'); assert(buttons['Назначить клавишу прерывания: Нет'].label.value=='Назначить клавишу прерывания: ;')")
-lua.execute("bound[';']=nil; capture.scripts.OnEvent(capture,'UPDATE_BINDINGS'); assert(buttons['Назначить клавишу прерывания: Нет'].label.value=='Назначить клавишу прерывания: Нет')")
+lua.execute("db.interruptKey='OEM1'; bound[';']='CLICK MythicBoostInterruptAction:LeftButton'; capture.scripts.OnEvent(capture,'UPDATE_BINDINGS'); assert(rows[2].texts[2].value==';')")
+lua.execute("bound[';']=nil; capture.scripts.OnEvent(capture,'UPDATE_BINDINGS'); assert(rows[2].texts[2].value=='Нет')")
 lua.execute(r'''
 local focusCommand='CLICK MythicBoostFocusAction:LeftButton'
 local kickCommand='CLICK MythicBoostInterruptAction:LeftButton'
 local sharedCommand='CLICK MythicBoostFocusInterruptAction:LeftButton'
 bound={}; assert(A:BindAction(false,'R')); assert(A:BindAction(true,'ALT-R'))
-buttons['Назначить клавишу фокуса: Нет'].scripts.OnClick(); capture.scripts.OnKeyDown(capture,'R')
+assignButtons[1].scripts.OnClick(); capture.scripts.OnKeyDown(capture,'R')
 assert(bound.R==sharedCommand and bound['ALT-R']==nil)
 assert(A:BindingKey(true)=='R' and A:BindingKey(false)=='R' and db.focusKey=='R' and db.interruptKey=='R')
-assert(buttons['Назначить клавишу фокуса: Нет'].label.value=='Назначить клавишу фокуса: R')
-assert(buttons['Назначить клавишу прерывания: Нет'].label.value=='Назначить клавишу прерывания: R')
+assert(rows[1].texts[2].value=='R')
+assert(rows[2].texts[2].value=='R')
 assert(A.actions.shared.attrs.type=='macro' and A.actions.shared.attrs.macrotext:find('/focus [@mouseover,harm,nodead]',1,true))
 assert(not A.actions.shared.attrs.macrotext:find('clearfocus',1,true), 'Alt may be part of the shared key')
 assert(A:BindAction(true,'F')); assert(bound.R==kickCommand and bound.F==focusCommand)
@@ -365,8 +370,8 @@ units.mouseover.casting=true; A.frame.scripts.OnEvent(nil,'UNIT_SPELLCAST_START'
 assert(sounds==1 and A.frame.shown)
 units.mouseover.dead=true; A:Update(); assert(A:HintUnit()=='focus' and A.frame.shown)
 units.mouseover=nil; units.focus=nil; A:Update(); assert(A:HintUnit()=='target' and A.frame.shown)
-db.fallback='none'; A:Update(); assert(A:HintUnit()==nil and not A.frame.shown)
-db.fallback='nearby'; A:Update(); assert(A:HintUnit()==nil, 'unknown nearby caster is not inferred')
+db.fallback='none'; A:Update(); assert(A:HintUnit()=='target' and A.frame.shown)
+db.fallback='nearby'; A:Update(); assert(A:HintUnit()=='target', 'shared action falls back to the current target without a focus')
 bound={}; units.focus={harm=true,casting=false}; db.fallback='target'
 A:Update(); assert(not A.frame.shown)
 UnitExists, UnitCanAttack, UnitIsDeadOrGhost, UnitCastingInfo, PlaySound = oldExists, oldAttack, oldDead, oldCast, oldSound

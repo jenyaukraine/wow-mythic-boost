@@ -181,7 +181,7 @@ def test_buff_range():
         members.party2.range=false
         for i=1,1000 do m.events.scripts.OnEvent(nil,'UNIT_IN_RANGE_UPDATE','party2') end
         assert(#timers==1); Flush(); assert(applies==0 and not m.buffButton.shown)
-        m.events.scripts.OnEvent(nil,'UNIT_AURA','nameplate1'); assert(#timers==0)
+        m.events.scripts.OnEvent(nil,'UNIT_AURA','nameplate1'); assert(#timers==1); Flush() -- aura payloads may be opaque
         members.party2.range=true
         m.events.scripts.OnEvent(nil,'UNIT_IN_RANGE_UPDATE','party2'); Flush(); assert(m.buffButton.shown)
         -- The secure state driver hides the real button on combat entry.

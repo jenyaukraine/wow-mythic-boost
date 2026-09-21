@@ -178,7 +178,7 @@ function Welcome:ShowCombatGuide(force)
         local title = UI.Text(card, "GameFontNormalLarge", L("Настрой прерывания и сейвы"), C.accent)
         title:SetPoint("TOPLEFT", 24, -22)
         local body = UI.Text(card, "GameFontHighlight", L("Подсказка прерывания показывает, когда остановить каст врага. Клавиши фокуса и прерывания настраиваются отдельно; одна общая клавиша ставит фокус под мышью и прерывает.")
-            .. "\n\n" .. L("Новая панель сейвов включена по умолчанию: нажми иконку или назначенную клавишу. При HP ниже 30% кнопки выделяются красной рамкой.")
+            .. "\n\n" .. L("Новая панель сейвов включена по умолчанию: нажми иконку или назначенную клавишу. При HP ниже выбранного порога кнопки выделяются красной рамкой.")
             .. "\n\n" .. L("Перед подземельем проверь привязки и переназначь их под себя. Если стоит «Нет», клавиша ещё не назначена. Чужие привязки автоматически не заменяются."), C.text)
         body:SetPoint("TOPLEFT", 24, -62); body:SetPoint("TOPRIGHT", -24, -62)
         body:SetHeight(190); body:SetJustifyH("LEFT"); body:SetWordWrap(true)
@@ -188,7 +188,7 @@ function Welcome:ShowCombatGuide(force)
         setup:SetScript("OnClick", function()
             if InCombatLockdown() then return end
             Dismiss(); self:SwitchPage("settings")
-            if JP.SettingsHub.SwitchCategory then JP.SettingsHub.SwitchCategory("interrupts") end
+            if JP.SettingsHub.SwitchCategory then JP.SettingsHub.SwitchCategory("bindings") end
             if JP.InterruptAssist.SelectSettingsSection then JP.InterruptAssist.SelectSettingsSection(2) end
         end)
         local close = UI.Button(card, L("Понятно"), 140, 32)

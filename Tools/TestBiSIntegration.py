@@ -16,7 +16,7 @@ def test_guide():
         function GetSpecialization() return 1 end
         function GetSpecializationInfo() return spec end
         function issecretvalue() return false end''')
-    for path in ('Data/SeasonTop.lua', 'Data/AutoBiS.lua', 'Modules/BiSData.lua'):
+    for path in ('Contracts.lua', 'Data/SeasonTop.lua', 'Data/AutoBiS.lua', 'Modules/BiSData.lua'):
         load(lua, path)
     lua.execute('''
         local b=JP.BiSData
@@ -65,6 +65,7 @@ def test_raid_advice():
             RegisterModule=function() end,modules={}}
         function wipe(t) for k in pairs(t) do t[k]=nil end end
         function issecretvalue() return false end
+        C_Timer={After=function() end}
         spec=105; difficulty=8; previewCalls=0; scans=0; fail=false; empty=false; bagOwned=false
         function GetSpecialization() return 1 end
         function GetSpecializationInfo() return spec end
@@ -76,12 +77,13 @@ def test_raid_advice():
             GetItemInfoInstant=function(id) return id,nil,nil,'INVTYPE_TRINKET' end}
         C_Container={GetContainerNumSlots=function(bag) return bag==0 and bagOwned and 1 or 0 end,
             GetContainerItemID=function() return 270162 end,GetContainerItemLink=function() return '330' end}
-        EncounterJournal={instanceID=99}; selected=99; classFilter=1; specFilter=71; slotFilter=12
+        EncounterJournal={GetChildren=function() end,instanceID=99}; selected=99; classFilter=1; specFilter=71; slotFilter=12
         function EJ_GetDifficulty() return difficulty end
         function EJ_SetDifficulty(d) difficulty=d end
-        function EJ_SelectInstance(id) selected=id; difficulty=1 end
+        function EJ_SelectInstance(id) selected=id end
         function EJ_GetLootFilter() return classFilter,specFilter end
         function EJ_SetLootFilter(c,s) classFilter=c; specFilter=s end
+        function EJ_GetEncounterInfo() return nil,nil,nil,nil,nil,77 end
         function EJ_GetNumLoot() scans=scans+1; return empty and 0 or 3 end
         C_EncounterJournal={GetInstanceForGameMap=function() return 77 end,
             GetSlotFilter=function() return slotFilter end,SetSlotFilter=function(s) slotFilter=s end,
@@ -132,14 +134,14 @@ def test_raid_tooltip():
         GameTooltip={SetOwner=function() end,SetText=function(_,s) lines={s} end,
             AddLine=function(_,s) lines[#lines+1]=s end,Show=function() end}
         JP.BiSData={GetSourceStatus=function() return {source='AutoBiS',updatedAt='2026-09-08'} end}
-        JP.GroupSearchUI={LootDelta=function(item) return tostring(item.level) end}
+        JP.GroupSearchUI={LootDelta=function(item) return tostring(item.level) end, LootDeltaColor=function() return 1,1,1 end}
         local r=JP.RaidFinder; r.lootDifficulty=15
         r.loot={[55]={pending=false,upgrades={
             {name='First boss item',encounterID=201,level=320,recommendation={variant='Raid BiS',dropSource='First boss'}},
             {name='Second boss item',encounterID=202,level=327}}}}
         r:LootTooltip({groupID=55,boss='First boss',encounterID=201})
         local text=table.concat(lines,'|')
-        assert(text:find('First boss item',1,true) and text:find('Raid BiS',1,true))
+        assert(text:find('First boss item',1,true) and text:find('[BIS]',1,true) and text:find('First boss',1,true))
         assert(not text:find('Second boss item',1,true),'boss tooltip must filter the actual encounter')
         r:LootTooltip({groupID=55,boss='Unknown boss'})
         assert(not table.concat(lines,'|'):find('First boss item',1,true),'unknown encounter must not show entire raid loot')

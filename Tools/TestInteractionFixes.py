@@ -283,7 +283,7 @@ def test_loot_tooltip_fallback():
     tooltip = source('Modules/GroupSearchUI.lua').split('function GroupSearchUI.ShowLootItemTooltip', 1)[1].split('local function LayoutCardLoot', 1)[0]
     lua.execute(r'''
         function L(s) return s end
-        GroupSearchUI={LootDelta=function() return 'delta' end}
+        GroupSearchUI={LootDelta=function() return 'delta' end, LootDeltaColor=function() return 1,1,1 end}
         requests=0; compared=0; cached=false
         C_Item={RequestLoadItemDataByID=function() requests=requests+1 end,
             IsItemDataCachedByID=function() return cached end}
@@ -413,7 +413,7 @@ def test_temple_healer():
         for i=1,1000 do h:Update() end
         assert(allocations==built and not f.scripts.OnUpdate,'event-driven fixed frame')
         h:Apply(); assert(h.pending and f:GetAttribute('unit')=='boss1')
-        engine=true; driver(f,'none'); engine=false; assert(not f.shown and not f:GetAttribute('unit'))
+        engine=true; driver(f,'none'); engine=false; assert(not f.shown and f:GetAttribute('unit')=='boss1')
         combat=false; instance=1; h:Apply(); driver(f,'boss1'); assert(not f.shown)
         instance=1877; h:Apply(); driver(f,'boss1'); assert(f.shown)
         h:Disable(); driver(f,'boss1'); assert(not f.shown and not next(h.events.events))

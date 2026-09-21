@@ -25,9 +25,9 @@ C_CurveUtil={CreateCurve=function()
  return c
 end}
 C_Spell={IsSpellPassive=function() return false end,GetSpellTexture=function(id) return id end,
- IsSpellUsable=function() return true end,
+ GetSpellName=function(id) return 'Spell'..id end, IsSpellUsable=function() return true end,
  GetSpellCooldownDuration=function(id) return {id=id,secret=secret} end}
-C_Item={GetItemCount=function(id,bank) assert(bank==false); return inventory[id] or 0 end,
+C_Item={GetItemCount=function(id,bank,uses) assert(bank==false and uses==true); return inventory[id] or 0 end,
  IsUsableItem=function() return true end,GetItemIconByID=function(id) return id end,
  GetItemCooldown=function() return secret,secret,true end}
 unpack=table.unpack
@@ -85,6 +85,7 @@ assert(p.buttons[1].attrs.spell==108271 and p.buttons[2].attrs.spell==8004)
 assert(p.buttons[3].attrs.item=='item:5512' and p.buttons[1].attrs.unit=='player')
 assert(p.buttons[1].width==64 and p.buttons[2].width==48)
 assert(p.frame.driver=='[combat,nodead] show; hide')
+assert(p.sequence.attrs.type=='macro' and p.sequence.attrs.macrotext=='/castsequence [@player] reset=60 Spell108271, item:5512')
 for _,b in ipairs(p.buttons) do
  assert(b.alpha==1 and b.mouse and not b.glow.mouse and not b.cooldown.mouse)
  assert(#b.clicks==2 and b.attrs.useOnKeyDown==false and not b.scripts.OnClick)
@@ -96,14 +97,25 @@ hp=secret; p:Update(); assert(rawequal(p.buttons[1].glow.alpha,secret))
 assert(p.buttons[1].alpha==1 and p.buttons[1].attrs.spell==108271)
 known={}; inventory={[271884]=5}; p.events.scripts.OnEvent(nil,'BAG_UPDATE_DELAYED')
 assert(p.buttons[3].attrs.item=='item:5512' and p.buttons[3].texture.desaturated)
+assert(p.sequence.attrs.macrotext=='/castsequence [@player] reset=60 Spell108271, item:5512')
 assert(rawequal(p.buttons[3].cooldown.start,secret))
 dead=true; p:Update(); assert(p.buttons[1].glow.alpha==0); dead=false
 p:Disable(); assert(not p.events.events.UNIT_HEALTH and p.events.events.PLAYER_REGEN_ENABLED)
 assert(p.buttons[1].attrs.spell==108271)
 combat=false; p.events.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED')
 assert(not p.frame.shown and not next(p.events.events) and not p.buttons[1].attrs.type)
+assert(p.sequence.attrs.type==nil)
 p:Enable(); assert(#p.actions==1 and p.buttons[1].attrs.item=='item:271884')
-db.survivalPrompt.enabled=false; p:Enable(); assert(p.frame.driver=='hide' and not next(p.events.events))
+known={[108271]=true,[8004]=true}; inventory={[5512]=3,[241305]=81}
+C_Item.IsUsableItem=function() return false end
+p:Enable(); assert(#p.actions==4 and p.buttons[4].attrs.item=='item:241305')
+assert(p.sequence.attrs.macrotext=='/castsequence [@player] reset=60 Spell108271, item:5512, item:241305')
+inventory[224464]=1; p:Enable(); assert(p.actions[3].id==224464 and p.actions[4].id==241305)
+inventory[224464]=0; inventory[5512]=0; p:Enable()
+assert(#p.actions==3 and p.actions[3].id==241305)
+assert(p.sequence.attrs.macrotext=='/castsequence [@player] reset=60 Spell108271, item:241305')
+known={}
+db.survivalPrompt.enabled=false; p:Enable(); assert(p.frame.driver=='hide' and not next(p.events.events) and p.sequence.attrs.type==nil)
 db.survivalPrompt.threshold=999; assert(p:Settings().threshold==50)
 db.survivalPrompt.threshold=-1; assert(p:Settings().threshold==10)
 db.survivalPrompt.threshold='bad'; assert(p:Settings().threshold==30)
@@ -139,13 +151,15 @@ JP.InterruptAssist={Settings=function() return {} end,UpdateActions=function() e
 loader((ROOT/'MythicBoost/Modules/InterruptBindings.lua').read_text(encoding='utf-8'))
 lua.execute(r'''
 local a=JP.InterruptAssist
-for i=1,3 do
+for i=1,4 do
  assert(a:BindAction('survival'..i,'F'..i))
  assert(bindings['F'..i]=='CLICK MythicBoostSurvivalAction'..i..':LeftButton')
 end
 bindings.R='JUMP'; assert(not a:BindAction('survival1','R') and bindings.R=='JUMP')
-assert(a:BindAction('survival1','F4') and bindings.F1==nil)
+assert(a:BindAction('survival1','F6') and bindings.F1==nil)
 combat=true; assert(not a:BindAction('survival1','F5') and bindings.F5==nil)
-assert(saved==4)
+assert(a:BindAction('survivalSequence','F7')==false)
+combat=false; assert(a:BindAction('survivalSequence','F7'))
+assert(bindings.F7=='CLICK MythicBoostSurvivalSequence:LeftButton' and saved==6)
 ''')
 print('Survival keybindings: conflicts, reassignment, persistence and combat lock passed')

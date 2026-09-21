@@ -37,7 +37,7 @@ def test_loot():
             GetContainerItemID=function(bag,slot) return bags[bag][slot].id end,
             GetContainerItemLink=function(bag,slot) return bags[bag][slot] end}
         rewards={[2]=285,[10]=311,[12]=315}; preview=0; difficulty=2; journalID=99
-        classFilter=1; specFilter=71; slotFilter=14; EncounterJournal={instanceID=99}
+        classFilter=1; specFilter=71; slotFilter=14; EncounterJournal={GetChildren=function() end,instanceID=99}
         C_MythicPlus={GetRewardLevelForDifficultyLevel=function(key) return 999,rewards[key] end,
             RequestRewards=function() end}
         C_EncounterJournal={GetInstanceForGameMap=function(id) return id end,
@@ -50,10 +50,12 @@ def test_loot():
                 assert(classFilter==11 and specFilter==105 and slotFilter==0)
                 if journalFailure then error('journal loading failed') end
                 local item={}; for k,v in pairs(loot[index]) do item[k]=v end
+                item.encounterID=1
                 item.link='item:'..item.itemID..':'..(unscaled and 276 or rewards[preview] or 0)
                 return item
             end}
-        function EJ_SelectInstance(id) journalScans=journalScans+1; journalID=id; difficulty=2; preview=0 end
+        function EJ_SelectInstance(id) journalScans=journalScans+1; journalID=id end
+        function EJ_GetEncounterInfo() return nil,nil,nil,nil,nil,journalID end
         function EJ_GetDifficulty() return difficulty end
         function EJ_SetDifficulty(value) difficulty=value end
         function EJ_GetLootFilter() return classFilter,specFilter end

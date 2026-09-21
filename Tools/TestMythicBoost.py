@@ -420,6 +420,8 @@ def test_launch_decision():
     lua.execute("""
         local b=JP.ApplicantBoard
         b.partyPower={SetText=function() end}; b.partyPowerBaseText=''
+        b.launchLabel={SetText=function() end,SetTextColor=function() end}
+        b.launchBadge={SetBackdropColor=function() end,SetBackdropBorderColor=function() end}
         b.partySafeLevel=10; b.partyConfidence=100
         b.partyMemberCount=4; b.missingRoles={TANK=0,HEALER=1,DAMAGER=0}
         b:UpdateLaunchDecision({
@@ -785,7 +787,7 @@ def test_buff_button_is_prepared_before_combat():
     assert "SetAlpha" not in refresh and "button:Show()" in refresh and "button:Hide()" in refresh
     assert 'button.label:SetText("")' in refresh
     assert "if not missing then button:Hide(); return end" not in refresh
-    assert refresh.index("if InCombatLockdown() then") < refresh.index("self:GetSettings()")
+    assert refresh.index("if InCombatLockdown() then") < refresh.index("button = button or self:BuildBuffButton()")
     assert '"UNIT_SPELLCAST_SUCCEEDED"' in source
     assert 'event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" and not InCombatLockdown()' in source
     assert "BUFF[class] == spellID" in source
