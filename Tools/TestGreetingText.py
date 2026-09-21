@@ -98,8 +98,25 @@ def test_editor_persistence_and_reuse():
     ''')
 
 
+def test_reload_roster_is_not_a_join():
+    lua=fixture()
+    lua.execute(r'''
+        local g=JP.PartyGreeting
+        -- Reload may report logged-in before the home roster is restored.
+        grouped=false; g:Enable(); assert(g.ready)
+        grouped=true; g:OnEvent('GROUP_JOINED',1); assert(g.pending)
+        g:OnEvent('PLAYER_ENTERING_WORLD',false,true)
+        Flush(); assert(#sent==0 and not g.pending and g.grouped)
+        grouped=false; g:OnEvent('GROUP_ROSTER_UPDATE')
+        grouped=true; g:OnEvent('GROUP_ROSTER_UPDATE'); g:OnEvent('GROUP_JOINED',1)
+        Flush(); assert(#sent==0,'transient empty roster must not greet again')
+        g:OnEvent('GROUP_LEFT',1); g:OnEvent('GROUP_JOINED',1)
+        Flush(); assert(#sent==1,'a real subsequent join still greets')
+    ''')
+
+
 if __name__=='__main__':
-    for test in (test_greeting_text,test_editor_persistence_and_reuse):
+    for test in (test_greeting_text,test_editor_persistence_and_reuse,test_reload_roster_is_not_a_join):
         test(); print(test.__name__+': OK')
     settings=source('Modules/SettingsHub.lua')
     heading=int(re.search(r'Heading\(groupPage, L\("УМНЫЙ КЛИК"\), 28, (-\d+)',settings).group(1))

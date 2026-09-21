@@ -23,7 +23,7 @@ local DEFAULTS = {
     inviteKeyword = "inv",
     autoKeystone = true,
     movableKeystoneFrame = false,
-    hideBags = false,
+    hideBags = true,
 }
 
 function SettingsHub:GetSettings()
@@ -594,6 +594,12 @@ function SettingsHub:Build(_, parent)
     talentLab:SetScript("OnClick", function()
         if JP.TalentLab and JP.TalentLab.Show then JP.TalentLab:Show() end
     end)
+    local combatHelp = UI.Button(mainPage, L("Настрой прерывания и сейвы"), 300, 28)
+    combatHelp:SetPoint("TOPLEFT", 28, -444)
+    combatHelp:SetScript("OnClick", function()
+        local welcome = JP.modules and JP.modules.Welcome
+        if welcome then welcome:ShowCombatGuide(true) end
+    end)
     Heading(automationPage, L("ЗАДАНИЯ И ПРИГЛАШЕНИЯ"), 28, -84, 764)
     self:AddCheck(automationPage, "autoQuests", L("Автоматически принимать и сдавать задания"), 28, -118)
     self:AddCheck(automationPage, "summon", L("Автоматически принимать призыв вне боя"), 28, -152)
@@ -657,6 +663,7 @@ function SettingsHub:Build(_, parent)
         {"bossFrames", "BossFrames", L("Свои фреймы боссов слева от карты")},
         {"dungeonTimer", "DungeonTimer", L("Свой таймер ключа и полоса аффикса")},
         {"controlAssist", "ControlAssist", L("Показывать готовность ручного контроля")},
+        {"survivalPrompt", "SurvivalPrompt", L("Панель сейвов: подсветка при низком HP")},
         {"healerMana", "HealerMana", L("Танку: предупреждать о мане хила ≤20%")},
         {"templeHealer", "TempleHealer", L("Рамка лечения Аватары Сетралисс")},
         {"avoidableDamage", "AvoidableDamage", L("Сводка избегаемого урона после боя")},
@@ -666,6 +673,11 @@ function SettingsHub:Build(_, parent)
         self:AddStoredCheck(interfacePage, JP.Settings(section, {enabled=true}), "enabled",
             option[3], 28, -254-index*34, function() JP:ReloadModule(moduleName) end, section)
     end
+    local survivalSettings = JP.Settings("survivalPrompt", {enabled=true, threshold=30, showPotions=true})
+    self:AddStepper(interfacePage, survivalSettings, "threshold", L("Порог подсветки HP"), false, -534,
+        JP.Limits.SURVIVAL_HP_MIN, JP.Limits.SURVIVAL_HP_MAX, 5,
+        function(value) return value.."%" end, function() JP:ReloadModule("SurvivalPrompt") end,
+        "survivalThreshold")
 
     -----------------------------------------------------------------------
     -- Compact player/target capsule. It has its own category because these
@@ -1254,7 +1266,7 @@ function SettingsHub:Refresh()
         elseif key == "lootHistory" then value = MythicBoostDB.lootUI and MythicBoostDB.lootUI.showHistory ~= false
         elseif key == "interfaceUnlocked" then value = MythicBoostDB.interfaceUnlocked == true
         elseif key == "bossFrames" or key == "dungeonTimer" or key == "controlAssist" or key == "healerMana"
-            or key == "templeHealer" or key == "avoidableDamage" then
+            or key == "templeHealer" or key == "avoidableDamage" or key == "survivalPrompt" then
             value = JP.Settings(key, {enabled=true}).enabled ~= false
         elseif key == "positiveAuraEnabled" then
             value = MythicBoostDB.positiveAuraTracker and MythicBoostDB.positiveAuraTracker.enabled == true

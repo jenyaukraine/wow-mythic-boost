@@ -8,6 +8,9 @@ JP.Contracts = {
 }
 
 JP.Limits = {
+    SURVIVAL_BUTTONS = 3,
+    SURVIVAL_HP_MIN = 10,
+    SURVIVAL_HP_MAX = 50,
     LOG_ENTRIES = 200,
     SCANNED_PLAYERS = 300,
     SCANNED_PLAYER_TTL = 30 * 24 * 60 * 60,
@@ -84,6 +87,12 @@ end
 
 local API = {}
 JP.API = API
+
+function API.SurvivalItemCooldown(id)
+    if not C_Item or not C_Item.GetItemCooldown then return nil end
+    local start, duration, enabled = C_Item.GetItemCooldown(id)
+    return {start=start, duration=duration, enabled=enabled}
+end
 
 local function Call(owner, methodName, ...)
     local method = type(owner) == "table" and owner[methodName]

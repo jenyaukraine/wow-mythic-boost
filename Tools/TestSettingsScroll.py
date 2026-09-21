@@ -53,17 +53,22 @@ hud = source.split('    local hudOptions = {', 1)[1].split('    -------', 1)[0]
 lua.execute('''
 checks={}; db={}; interfacePage={}
 function L(s) return s end
-JP={Settings=function(k,defaults)
+JP={Limits={SURVIVAL_HP_MIN=10,SURVIVAL_HP_MAX=50},Settings=function(k,defaults)
  db[k]=db[k] or {}; for key,v in pairs(defaults) do if db[k][key]==nil then db[k][key]=v end end
  return db[k]
 end}
 function self:AddStoredCheck(parent,settings,key,label,x,y)
  checks[#checks+1]={y=y,enabled=settings[key]}
 end
+function self:AddStepper(parent,settings,key,label,right,y,minimum,maximum,step)
+ assert(key=='threshold' and settings[key]==30 and minimum==10 and maximum==50 and step==5)
+ assert(-y+28<=600,'survival threshold must fit the settings canvas')
+end
 ''')
 lua.execute('local hudOptions = {' + hud + '''
 assert(db.templeHealer.enabled==true)
 assert(db.avoidableDamage.enabled==true)
+assert(db.survivalPrompt.enabled==true)
 assert(-checks[#checks].y+22<=520)
 ''')
 assert 'MakePage("screenshots"' not in source

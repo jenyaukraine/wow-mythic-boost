@@ -1862,6 +1862,33 @@ if translations then
     }
     for key, value in pairs(extra) do translations[key] = value end
 end
+if translations then
+    local extra = locale == "deDE" and {
+        ["Панель сейвов: подсветка при низком HP"] = "Defensivleiste: Hervorhebung bei wenig Leben",
+        ["Клавиша сейва %d"] = "Taste für Defensivknopf %d",
+        ["Сейвы: кнопки слева направо. Назначь удобные клавиши; состав зависит от класса и предметов в сумках."] = "Defensivknöpfe von links nach rechts. Weise passende Tasten zu; die Auswahl hängt von Klasse und Tascheninhalt ab.",
+        ["Настрой прерывания и сейвы"] = "Unterbrechungen und Defensive einrichten",
+        ["Подсказка прерывания показывает, когда остановить каст врага. Клавиши фокуса и прерывания настраиваются отдельно; одна общая клавиша ставит фокус под мышью и прерывает."] = "Der Hinweis zeigt, wann du einen Gegner unterbrechen kannst. Fokus und Unterbrechung haben eigene Tasten; eine gemeinsame Taste setzt den Fokus unter der Maus und unterbricht.",
+        ["Новая панель сейвов включена по умолчанию: нажми иконку или назначенную клавишу. При HP ниже 30% кнопки выделяются красной рамкой."] = "Die neue Defensivleiste ist standardmäßig aktiv: Klicke ein Symbol oder drücke die zugewiesene Taste. Unter 30% Leben erscheint ein roter Rahmen.",
+        ["Перед подземельем проверь привязки и переназначь их под себя. Если стоит «Нет», клавиша ещё не назначена. Чужие привязки автоматически не заменяются."] = "Prüfe vor dem Dungeon deine Tasten und passe sie an. Bei „Keine“ ist noch keine Taste zugewiesen. Bestehende Belegungen werden nicht automatisch ersetzt.",
+        ["Настроить клавиши"] = "Tasten zuweisen",
+        ["Понятно"] = "Verstanden",
+        ["Порог подсветки HP"] = "Lebensschwelle für Hervorhebung",
+    } or {
+        ["Панель сейвов: подсветка при низком HP"] = "Survival buttons: highlight at low health",
+        ["Клавиша сейва %d"] = "Survival button %d key",
+        ["Сейвы: кнопки слева направо. Назначь удобные клавиши; состав зависит от класса и предметов в сумках."] = "Survival buttons run left to right. Assign comfortable keys; available actions depend on your class and bag items.",
+        ["Настрой прерывания и сейвы"] = "Set up interrupts and survival buttons",
+        ["Подсказка прерывания показывает, когда остановить каст врага. Клавиши фокуса и прерывания настраиваются отдельно; одна общая клавиша ставит фокус под мышью и прерывает."] = "The interrupt hint shows when to stop an enemy cast. Focus and interrupt have separate bindings; a shared key focuses the enemy under your mouse and interrupts.",
+        ["Новая панель сейвов включена по умолчанию: нажми иконку или назначенную клавишу. При HP ниже 30% кнопки выделяются красной рамкой."] = "The new survival panel is enabled by default: click an icon or press its assigned key. Below 30% health the buttons gain a red border.",
+        ["Перед подземельем проверь привязки и переназначь их под себя. Если стоит «Нет», клавиша ещё не назначена. Чужие привязки автоматически не заменяются."] = "Check your bindings before a dungeon and choose comfortable keys. None means no key is assigned yet. Existing bindings are never replaced automatically.",
+        ["Настроить клавиши"] = "Assign keys",
+        ["Понятно"] = "Got it",
+        ["Порог подсветки HP"] = "Health highlight threshold",
+    }
+    for key, value in pairs(extra) do translations[key] = value end
+end
+
 JP.L = function(text)
     if type(text) ~= "string" or not translations then return text end
     return translations[text] or text

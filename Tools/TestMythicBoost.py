@@ -127,6 +127,7 @@ def test_safe_defaults():
                     "avoidableDamage", "auctionMarket", "playerNetwork"):
         db[section].enabled = False
     db.convenience.autoQuests = False
+    db.convenience.hideBags = False
     db.smartClick.buff = False
     lua.execute("coreEvents(nil,'ADDON_LOADED','MythicBoost')")
     for section in ("unitFrames", "castBar", "lootUI", "rcLoot", "errorGuard", "interruptAssist",
@@ -134,6 +135,7 @@ def test_safe_defaults():
                     "avoidableDamage", "auctionMarket", "playerNetwork"):
         assert db[section].enabled is False
     assert db.convenience.autoQuests is False and db.smartClick.buff is False
+    assert db.convenience.hideBags is False
 
 
     # A non-empty legacy profile with no HUD keys must not be taken over by an
@@ -145,7 +147,7 @@ def test_safe_defaults():
     assert db.minimalUI is False and db.minimalUIOptions.minimap is False
     assert db.unitFrames.enabled is False and db.unitFrames.hideBlizzard is False
     assert db.castBar.enabled is False and db.lootUI.enabled is False
-    assert db.convenience.hideBags is False
+    assert db.convenience.hideBags is True
 
     # Explicit choices survive initialization, while the old automatically
     # raised leader-run threshold is migrated away once.

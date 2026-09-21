@@ -180,6 +180,10 @@ end
 -- поверх нашего квадратного края. Саму подсказку не теряем: гасим штатную
 -- картинку и перекладываем её состояние на цвет нашей рамки.
 local function MuteSuggestionGlow(self, button, object, animation)
+    -- This identifies the Single-Button Assistant action, not a proc or a
+    -- suggested spell. Blizzard owns its icon and animation; do not mute it
+    -- or mirror its visibility as a recommendation on our border.
+    if object == button.AssistedCombatRotationFrame then return end
     if not object or type(object.SetAlpha) ~= "function" then return end
     self.savedTextureAlpha = self.savedTextureAlpha or UI.WeakKeys()
     if self.savedTextureAlpha[object] == nil then self.savedTextureAlpha[object] = object:GetAlpha() end
@@ -221,9 +225,8 @@ local function MuteSuggestionGlow(self, button, object, animation)
         if muting then return end
         if not MythicBoostDB or not MythicBoostDB.minimalUI then return end
         muting = true
-        -- AssistedCombatRotationFrame owns its own animation group and may
-        -- restore alpha without calling Show(). Stop every group we can see
-        -- and mute the child textures as well as the parent frame.
+        -- Proc glows may restore alpha without calling Show(). Stop their
+        -- animation groups and mute their child textures as well.
         if animation and type(animation.Stop) == "function" then pcall(animation.Stop, animation) end
         MuteTree(object, {}, 0)
         muting = false
@@ -253,7 +256,6 @@ local function MuteActionSuggestionGlows(self, button)
     MuteSuggestionGlow(self, button, button.SpellHighlightTexture, button.SpellHighlightAnim)
     local seen = {}
     for _, object in pairs({
-        button.AssistedCombatRotationFrame,
         button.SpellActivationAlert,
         button.SpellActivationOverlay,
         button.SpellActivationOverlayFrame,
@@ -490,6 +492,37 @@ end
 local function HideLooseMinimapAddonButtons(self, enabled)
     self.looseMinimapButtons = self.looseMinimapButtons or UI.WeakKeys()
     self.looseMinimapVisibility = self.looseMinimapVisibility or UI.WeakKeys()
+    local nativeCompartment = _G.AddonCompartmentFrame
+    local function RegisterLauncher(button, name, data)
+        if not button or not nativeCompartment or type(nativeCompartment.RegisterAddon) ~= "function" then return end
+        if type(button.IsProtected) == "function" and button:IsProtected() then return end
+        local click = type(button.GetScript) == "function" and button:GetScript("OnClick")
+        local brokerClick = data and data.OnClick
+        if type(click) ~= "function" and type(brokerClick) ~= "function" then return end
+        local title = data and (data.label or data.text) or name
+        if type(title) ~= "string" or title == "" then title = name end
+        local function Key(text)
+            return type(text) == "string" and text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("%s+", ""):lower() or ""
+        end
+        for _, entry in ipairs(nativeCompartment.registeredAddons or {}) do
+            if Key(entry.text) == Key(title) or Key(entry.text) == Key(name) then
+                self.looseMinimapButtons[button] = true
+                return
+            end
+        end
+        local icon = data and data.icon
+        if not icon and button.icon and type(button.icon.GetTexture) == "function" then icon = button.icon:GetTexture() end
+        nativeCompartment:RegisterAddon({
+            text = title, icon = icon,
+            func = function(_, input)
+                local mouseButton = type(input) == "table" and input.buttonName or "LeftButton"
+                local handler = type(button.GetScript) == "function" and button:GetScript("OnClick")
+                if type(handler) == "function" then handler(button, mouseButton)
+                elseif type(brokerClick) == "function" then brokerClick(button, mouseButton) end
+            end,
+        })
+        self.looseMinimapButtons[button] = true
+    end
 
     if not enabled then
         for button, shown in pairs(self.looseMinimapVisibility) do
@@ -498,11 +531,15 @@ local function HideLooseMinimapAddonButtons(self, enabled)
         wipe(self.looseMinimapVisibility)
         return
     end
+    if not nativeCompartment or type(nativeCompartment.RegisterAddon) ~= "function" then return end
+    -- Let Blizzard populate TOC registrations first so we can avoid duplicates.
+    if type(nativeCompartment.IsEventRegistered) == "function"
+        and nativeCompartment:IsEventRegistered("PLAYER_ENTERING_WORLD") then return end
 
     if not self.looseMinimapScanned or self.minimapAddonScanDirty then
         for name, object in pairs(_G) do
             if type(name) == "string" and name:match("^LibDBIcon10_") then
-                self.looseMinimapButtons[object] = true
+                RegisterLauncher(object, name:sub(13), object.dataObject)
             end
         end
         self.looseMinimapScanned = true
@@ -511,11 +548,12 @@ local function HideLooseMinimapAddonButtons(self, enabled)
     if type(LibStub) == "table" or type(LibStub) == "function" then
         local ok, lib = pcall(LibStub, "LibDBIcon-1.0", true)
         if ok and type(lib) == "table" and type(lib.objects) == "table" then
-            for _, object in pairs(lib.objects) do self.looseMinimapButtons[object] = true end
+            for name, object in pairs(lib.objects) do RegisterLauncher(object, name, object.dataObject) end
         end
     end
 
-    local nativeCompartment = _G.AddonCompartmentFrame
+    -- Friend Finder uses its own launcher instead of LibDBIcon.
+    RegisterLauncher(_G.WMPI_MinimapButton, "Friend Finder")
     local function IsNativeCompartment(button)
         if not button then return false end
         if button == nativeCompartment or button == _G.AddonCompartmentFrame then return true end

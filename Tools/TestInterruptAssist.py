@@ -59,7 +59,7 @@ function MakeFrame(name)
 end
 function CreateFrame(_,name) frames=frames+1; return MakeFrame(name) end
 UIParent=MakeFrame(); GameFontNormal={GetFont=function() return 'font' end}; unpack=table.unpack
-JP={L=function(x) return x end, UI={}, RegisterModule=function() end,
+JP={L=function(x) return x end, UI={}, Limits={SURVIVAL_BUTTONS=3}, RegisterModule=function() end,
  Settings=function(_,defaults) for k,v in pairs(defaults) do if db[k]==nil then db[k]=v end end return db end}
 ''')
 loader = lua.eval("function(code) assert(load(code))('MythicBoost',JP) end")

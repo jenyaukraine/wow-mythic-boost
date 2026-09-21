@@ -79,16 +79,23 @@ function Greeting:Joined()
 end
 function Greeting:OnEvent(event, category)
     if event == "PLAYER_ENTERING_WORLD" then
-        if not self.ready then self.ready = true; self.grouped = InHomeParty() end
+        -- IsLoggedIn() can already be true while a /reload is still restoring
+        -- the roster. The first world event is a baseline, never a new join.
+        if not self.worldSeen then
+            self.worldSeen = true
+            self:Cancel()
+            self.ready = true
+            self.grouped = InHomeParty()
+        end
         return
     end
     if not self.ready then return end
     if event == "GROUP_ROSTER_UPDATE" then
         if InHomeParty() then
             self:Joined()
-        elseif JP.SafeOptionalBoolean(IsInGroup(LE_PARTY_CATEGORY_HOME)) == false and not self.deadline then
-            self.grouped = false
         end
+        -- Only GROUP_LEFT ends a membership. A temporarily empty roster on
+        -- loading screens must not turn the next update into another greeting.
         return
     end
     if event == "PLAYER_REGEN_ENABLED" then

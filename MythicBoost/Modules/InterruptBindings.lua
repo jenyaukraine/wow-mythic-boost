@@ -1,7 +1,9 @@
 local _, JP = ...
 local A = JP.InterruptAssist
 local names = {[true]="MythicBoostFocusAction", [false]="MythicBoostInterruptAction",
-    shared="MythicBoostFocusInterruptAction", control="MythicBoostControlSequence"}
+    shared="MythicBoostFocusInterruptAction", control="MythicBoostControlSequence",
+    survival1="MythicBoostSurvivalAction1", survival2="MythicBoostSurvivalAction2",
+    survival3="MythicBoostSurvivalAction3"}
 local function Command(kind) return "CLICK " .. names[kind] .. ":LeftButton" end
 function A:BindingKey(kind)
     if type(kind) == "boolean" then

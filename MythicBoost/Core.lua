@@ -367,7 +367,7 @@ local function InitializeDatabase()
         autoKeystone = true,
         autoQuests = true,
         guildRepair = true,
-        hideBags = false,
+        hideBags = true,
         merchantSummary = true,
         repair = true,
         resurrection = true,

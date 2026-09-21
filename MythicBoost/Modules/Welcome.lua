@@ -169,6 +169,35 @@ function Welcome:ShowGuide()
     -- harmless compatibility method for saved UI callbacks from older builds.
 end
 
+function Welcome:ShowCombatGuide(force)
+    if InCombatLockdown() or (not force and MythicBoostDB.combatGuideSeen == true) then return end
+    if not self.combatGuide then
+        local card = UI.Panel(self.frame, C.surface, C.edge)
+        card:SetSize(700, 330); card:SetPoint("CENTER")
+        card:SetFrameLevel(self.frame:GetFrameLevel()+60); card:EnableMouse(true)
+        local title = UI.Text(card, "GameFontNormalLarge", L("Настрой прерывания и сейвы"), C.accent)
+        title:SetPoint("TOPLEFT", 24, -22)
+        local body = UI.Text(card, "GameFontHighlight", L("Подсказка прерывания показывает, когда остановить каст врага. Клавиши фокуса и прерывания настраиваются отдельно; одна общая клавиша ставит фокус под мышью и прерывает.")
+            .. "\n\n" .. L("Новая панель сейвов включена по умолчанию: нажми иконку или назначенную клавишу. При HP ниже 30% кнопки выделяются красной рамкой.")
+            .. "\n\n" .. L("Перед подземельем проверь привязки и переназначь их под себя. Если стоит «Нет», клавиша ещё не назначена. Чужие привязки автоматически не заменяются."), C.text)
+        body:SetPoint("TOPLEFT", 24, -62); body:SetPoint("TOPRIGHT", -24, -62)
+        body:SetHeight(190); body:SetJustifyH("LEFT"); body:SetWordWrap(true)
+        local function Dismiss() MythicBoostDB.combatGuideSeen=true; card:Hide() end
+        local setup = UI.Button(card, L("Настроить клавиши"), 240, 32)
+        setup:SetPoint("BOTTOMLEFT", 24, 22)
+        setup:SetScript("OnClick", function()
+            if InCombatLockdown() then return end
+            Dismiss(); self:SwitchPage("settings")
+            if JP.SettingsHub.SwitchCategory then JP.SettingsHub.SwitchCategory("interrupts") end
+            if JP.InterruptAssist.SelectSettingsSection then JP.InterruptAssist.SelectSettingsSection(2) end
+        end)
+        local close = UI.Button(card, L("Понятно"), 140, 32)
+        close:SetPoint("BOTTOMRIGHT", -24, 22); close:SetScript("OnClick", Dismiss)
+        self.combatGuide=card
+    end
+    self.combatGuide:Show()
+end
+
 -- Пустая выдача без объяснения — худшее, что может показать поиск: «0 из 100»
 -- не даёт понять, ослаблять фильтр по лидеру или по подземельям. Поэтому
 -- называем три главные причины отсева с числами.
@@ -376,6 +405,7 @@ function Welcome:Create()
         if JP.SmartClick then JP.SmartClick:RefreshBuffButton() end
         JP.GroupSearchUI:HideBlizzardResultTooltip()
         self:Refresh()
+        self:ShowCombatGuide()
     end)
     frame:SetScript("OnHide", function()
         if JP.GroupSearchUI.groupTooltip then JP.GroupSearchUI.groupTooltip:Hide() end

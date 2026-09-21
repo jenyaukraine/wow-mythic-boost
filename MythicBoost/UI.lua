@@ -228,6 +228,36 @@ function UI.HUDBar(parent, height, color)
     return bar
 end
 
+-- Fixed protected action; only the decorative low-health border fades.
+function UI.SurvivalButton(parent, name, size)
+    local button = UI.HUDPanel(parent, name, size, size, "SecureActionButtonTemplate")
+    button:RegisterForClicks("AnyDown", "AnyUp")
+    button:SetAttribute("useOnKeyDown", false)
+    button:EnableMouse(true)
+    button.texture = button:CreateTexture(nil, "ARTWORK")
+    button.texture:SetPoint("TOPLEFT", 3, -3); button.texture:SetPoint("BOTTOMRIGHT", -3, 3)
+    button.texture:SetTexCoord(.08, .92, .08, .92)
+    button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    button.cooldown:SetAllPoints(button.texture)
+    button.cooldown:SetDrawEdge(false); button.cooldown:SetHideCountdownNumbers(false)
+    button.cooldown:EnableMouse(false)
+    button.cooldown:SetMouseClickEnabled(false); button.cooldown:SetMouseMotionEnabled(false)
+    button:SetHighlightTexture("Interface/Buttons/ButtonHilight-Square", "ADD")
+    local glow = UI.Panel(button, {0, 0, 0, 0}, C.red)
+    UI.Backdrop(glow, {0, 0, 0, 0}, C.red, 3)
+    glow:SetPoint("TOPLEFT", -3, 3); glow:SetPoint("BOTTOMRIGHT", 3, -3)
+    glow:SetFrameLevel(button.cooldown:GetFrameLevel() + 1)
+    glow:EnableMouse(false); glow:SetAlpha(0)
+    button.glow = glow
+    return button
+end
+
+function UI.EventFrame(callback)
+    local frame = CreateFrame("Frame")
+    frame:SetScript("OnEvent", callback)
+    return frame
+end
+
 function UI.HUDMover(frame, settings, unlocked)
     frame:SetMovable(true); frame:SetClampedToScreen(true)
     frame:RegisterForDrag("LeftButton")

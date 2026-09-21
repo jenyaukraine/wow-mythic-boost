@@ -146,6 +146,17 @@ function A:Build(parent)
     end)
     bindingButtons.control = {button=controlBind, label=controlLabel}
     Text(L("Контроль своего класса и расы. Один успешный каст на шаг; КД не пропускаются. Сброс через 60 сек. Вихрь друида — у ног; остальные области — вручную."), -818)
+    for i = 1, JP.Limits.SURVIVAL_BUTTONS do
+        local kind = "survival"..i
+        local label = (L("Клавиша сейва %d")):format(i)
+        local button = Button(label, -888-(i-1)*36, function()
+            capture.focusAction=kind; capture.label=label
+            capture:Show()
+            status:SetText(L("Нажми сочетание клавиш. Esc — отмена. Занятые клавиши сохраняются."))
+        end)
+        bindingButtons[kind] = {button=button, label=label}
+    end
+    Text(L("Сейвы: кнопки слева направо. Назначь удобные клавиши; состав зависит от класса и предметов в сумках."), -1006)
     RefreshBindings()
     activeSection, origin = 3, 810
     Text(L("3. Метки группы"),-810)
@@ -165,8 +176,10 @@ function A:Build(parent)
             for _, widget in ipairs(widgets) do widget:SetShown(i==index) end
             tabs[i]:SetEnabled(i~=index)
         end
+        page:SetHeight(index == 2 and 740 or 520)
         scroll:SetVerticalScroll(0)
     end
+    self.SelectSettingsSection = SelectSection
     local labels={L("1. Подсказка"),L("2. Горячие клавиши"),L("3. Метки группы")}
     for i,label in ipairs(labels) do
         local tab=UI.Button(parent,label,170,32)
